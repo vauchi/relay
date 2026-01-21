@@ -12,6 +12,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 use tracing::{debug, error, warn};
 
+use crate::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
 use crate::rate_limit::RateLimiter;
 use crate::recovery_storage::{RecoveryProofStore, StoredRecoveryProof};
 use crate::storage::{BlobStore, StoredBlob};
@@ -82,8 +83,36 @@ mod protocol {
         RecoveryProofStore(RecoveryProofStore),
         RecoveryProofQuery(RecoveryProofQuery),
         RecoveryProofResponse(RecoveryProofResponse),
+        // Device sync operations (inter-device synchronization)
+        DeviceSyncMessage(DeviceSyncMessage),
+        DeviceSyncAck(DeviceSyncAck),
         #[serde(other)]
         Unknown,
+    }
+
+    /// Inter-device sync message for syncing changes between devices of the same identity.
+    /// Routes by (identity_id, target_device_id) rather than just recipient_id.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct DeviceSyncMessage {
+        /// User's public identity ID (for routing).
+        pub identity_id: String,
+        /// Target device ID (hex-encoded, 64 chars = 32 bytes).
+        pub target_device_id: String,
+        /// Sender device ID (hex-encoded, 64 chars = 32 bytes).
+        pub sender_device_id: String,
+        /// ECDH-encrypted payload containing SyncItems.
+        pub encrypted_payload: Vec<u8>,
+        /// Version number for ordering and deduplication.
+        pub version: u64,
+    }
+
+    /// Acknowledgment for device sync messages.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct DeviceSyncAck {
+        /// The message_id being acknowledged.
+        pub message_id: String,
+        /// Version that was synced to.
+        pub synced_version: u64,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +138,10 @@ mod protocol {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct Handshake {
         pub client_id: String,
+        /// Optional device ID for inter-device sync (hex-encoded, 64 chars).
+        /// If present, device sync messages will be delivered.
+        #[serde(default)]
+        pub device_id: Option<String>,
     }
 
     // =========================================================================
@@ -217,6 +250,48 @@ mod protocol {
             payload: MessagePayload::RecoveryProofResponse(RecoveryProofResponse { proofs }),
         }
     }
+
+    /// Creates a device sync message delivery envelope.
+    pub fn create_device_sync_delivery(
+        message_id: &str,
+        identity_id: &str,
+        target_device_id: &str,
+        sender_device_id: &str,
+        encrypted_payload: &[u8],
+        version: u64,
+    ) -> MessageEnvelope {
+        MessageEnvelope {
+            version: PROTOCOL_VERSION,
+            message_id: message_id.to_string(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            payload: MessagePayload::DeviceSyncMessage(DeviceSyncMessage {
+                identity_id: identity_id.to_string(),
+                target_device_id: target_device_id.to_string(),
+                sender_device_id: sender_device_id.to_string(),
+                encrypted_payload: encrypted_payload.to_vec(),
+                version,
+            }),
+        }
+    }
+
+    /// Creates a device sync acknowledgment envelope.
+    pub fn create_device_sync_ack(message_id: &str, synced_version: u64) -> MessageEnvelope {
+        MessageEnvelope {
+            version: PROTOCOL_VERSION,
+            message_id: uuid::Uuid::new_v4().to_string(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            payload: MessagePayload::DeviceSyncAck(DeviceSyncAck {
+                message_id: message_id.to_string(),
+                synced_version,
+            }),
+        }
+    }
 }
 
 /// Handles a WebSocket connection.
@@ -224,14 +299,15 @@ pub async fn handle_connection(
     ws_stream: WebSocketStream<TcpStream>,
     storage: Arc<dyn BlobStore>,
     recovery_storage: Arc<dyn RecoveryProofStore>,
+    device_sync_storage: Arc<dyn DeviceSyncStore>,
     rate_limiter: Arc<RateLimiter>,
     max_message_size: usize,
     idle_timeout: Duration,
 ) {
     let (mut write, mut read) = ws_stream.split();
 
-    // Wait for handshake to get client ID (with timeout)
-    let client_id = match timeout(idle_timeout, read.next()).await {
+    // Wait for handshake to get client ID and optional device ID (with timeout)
+    let (client_id, device_id) = match timeout(idle_timeout, read.next()).await {
         Ok(Some(Ok(Message::Binary(data)))) => match protocol::decode_message(&data) {
             Ok(envelope) => {
                 if let protocol::MessagePayload::Handshake(hs) = envelope.payload {
@@ -243,7 +319,17 @@ pub async fn handle_connection(
                         );
                         return;
                     }
-                    hs.client_id
+                    // Validate device_id format if present
+                    if let Some(ref did) = hs.device_id {
+                        if !validate_client_id(did) {
+                            warn!(
+                                "Invalid device_id format: {}",
+                                &did.get(..16).unwrap_or("")
+                            );
+                            return;
+                        }
+                    }
+                    (hs.client_id, hs.device_id)
                 } else {
                     warn!("Expected Handshake, got {:?}", envelope.payload);
                     return;
@@ -272,7 +358,11 @@ pub async fn handle_connection(
         }
     };
 
-    debug!("Client identified as: {}", client_id);
+    debug!(
+        "Client identified as: {} (device: {:?})",
+        client_id,
+        device_id.as_ref().map(|d| &d[..16])
+    );
 
     // Send any pending blobs for this client
     let pending = storage.peek(&client_id);
@@ -289,6 +379,41 @@ pub async fn handle_connection(
             Err(e) => {
                 error!("Failed to encode blob delivery: {}", e);
             }
+        }
+    }
+
+    // Send any pending device sync messages if device_id is present
+    if let Some(ref did) = device_id {
+        let pending_sync = device_sync_storage.peek(&client_id, did);
+        let pending_count = pending_sync.len();
+        for msg in pending_sync {
+            let envelope = protocol::create_device_sync_delivery(
+                &msg.id,
+                &msg.identity_id,
+                &msg.target_device_id,
+                &msg.sender_device_id,
+                &msg.encrypted_payload,
+                msg.version,
+            );
+            match protocol::encode_message(&envelope) {
+                Ok(data) => {
+                    if write.send(Message::Binary(data)).await.is_err() {
+                        warn!("Failed to send pending device sync to {} / {}", client_id, did);
+                        return;
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to encode device sync delivery: {}", e);
+                }
+            }
+        }
+        if pending_count > 0 {
+            debug!(
+                "Sent {} pending device sync messages to {} / {}",
+                pending_count,
+                client_id,
+                did
+            );
         }
     }
 
@@ -410,6 +535,56 @@ pub async fn handle_connection(
                     protocol::MessagePayload::RecoveryProofResponse(_) => {
                         // Clients shouldn't send responses, ignore
                         debug!("Unexpected RecoveryProofResponse from {}", client_id);
+                    }
+                    protocol::MessagePayload::DeviceSyncMessage(sync_msg) => {
+                        // Validate that sender is the connected client
+                        if sync_msg.identity_id != client_id {
+                            warn!(
+                                "DeviceSyncMessage identity mismatch: {} != {}",
+                                sync_msg.identity_id, client_id
+                            );
+                            continue;
+                        }
+
+                        // Store the device sync message for the target device
+                        let stored = StoredDeviceSyncMessage::new(
+                            sync_msg.identity_id.clone(),
+                            sync_msg.target_device_id.clone(),
+                            sync_msg.sender_device_id,
+                            sync_msg.encrypted_payload,
+                            sync_msg.version,
+                        );
+                        device_sync_storage.store(stored);
+
+                        // Send acknowledgment
+                        let ack = protocol::create_ack(
+                            &envelope.message_id,
+                            protocol::AckStatus::Delivered,
+                        );
+                        if let Ok(ack_data) = protocol::encode_message(&ack) {
+                            let _ = write.send(Message::Binary(ack_data)).await;
+                        }
+
+                        debug!(
+                            "Stored device sync for {} / {} (version {})",
+                            sync_msg.identity_id, sync_msg.target_device_id, sync_msg.version
+                        );
+                    }
+                    protocol::MessagePayload::DeviceSyncAck(ack) => {
+                        // Client acknowledging receipt of a device sync message
+                        if let Some(ref did) = device_id {
+                            if device_sync_storage.acknowledge(&client_id, did, &ack.message_id) {
+                                debug!(
+                                    "Device sync {} acknowledged by {} / {} (version {})",
+                                    ack.message_id, client_id, did, ack.synced_version
+                                );
+                            }
+                        } else {
+                            debug!(
+                                "DeviceSyncAck received but no device_id in handshake from {}",
+                                client_id
+                            );
+                        }
                     }
                     protocol::MessagePayload::Unknown => {
                         debug!("Unknown message type from {}", client_id);

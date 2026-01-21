@@ -16,6 +16,7 @@ use tracing::{error, info};
 
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_limit::ConnectionLimiter;
+use vauchi_relay::device_sync_storage::{DeviceSyncStore, MemoryDeviceSyncStore, SqliteDeviceSyncStore};
 use vauchi_relay::handler;
 use vauchi_relay::http::{create_router, HttpState};
 use vauchi_relay::metrics::RelayMetrics;
@@ -113,6 +114,17 @@ async fn main() {
         }
     };
 
+    // Initialize device sync storage
+    let device_sync_storage: Arc<dyn DeviceSyncStore> = match config.storage_backend {
+        StorageBackend::Memory => Arc::new(MemoryDeviceSyncStore::new()),
+        StorageBackend::Sqlite => {
+            let path = config.data_dir.join("device_sync.db");
+            Arc::new(
+                SqliteDeviceSyncStore::open(&path).expect("Failed to open device sync database"),
+            )
+        }
+    };
+
     // Check for metrics auth token (optional additional protection)
     let metrics_token = std::env::var("RELAY_METRICS_TOKEN").ok();
     if metrics_token.is_some() {
@@ -167,6 +179,19 @@ async fn main() {
         }
     });
 
+    // Start cleanup task for device sync messages
+    let cleanup_device_sync = device_sync_storage.clone();
+    let device_sync_ttl = blob_ttl; // Use same TTL as blobs
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(cleanup_interval).await;
+            let removed = cleanup_device_sync.cleanup_expired(device_sync_ttl);
+            if removed > 0 {
+                info!("Cleaned up {} expired device sync messages", removed);
+            }
+        }
+    });
+
     // Start cleanup task for rate limiter (remove stale client buckets)
     let cleanup_rate_limiter = rate_limiter.clone();
     tokio::spawn(async move {
@@ -209,6 +234,7 @@ async fn main() {
 
         let storage = storage.clone();
         let recovery_storage = recovery_storage.clone();
+        let device_sync_storage = device_sync_storage.clone();
         let rate_limiter = rate_limiter.clone();
         let metrics = metrics.clone();
         let max_message_size = config.max_message_size;
@@ -301,6 +327,7 @@ async fn main() {
                         ws_stream,
                         storage,
                         recovery_storage,
+                        device_sync_storage,
                         rate_limiter,
                         max_message_size,
                         idle_timeout,

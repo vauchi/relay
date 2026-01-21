@@ -1,5 +1,6 @@
 pub mod config;
 pub mod connection_limit;
+pub mod device_sync_storage;
 pub mod handler;
 pub mod http;
 pub mod metrics;
