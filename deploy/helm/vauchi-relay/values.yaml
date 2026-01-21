@@ -1,0 +1,86 @@
+# Default values for vauchi-relay
+
+replicaCount: 1
+
+image:
+  repository: vauchi-relay
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: relay.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: relay-tls
+    #   hosts:
+    #     - relay.example.com
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+
+# Relay configuration
+relay:
+  listenAddr: "0.0.0.0:8080"
+  maxConnections: 1000
+  maxMessageSize: 1048576
+  blobTtlSecs: 7776000
+  rateLimit: 60
+  cleanupInterval: 3600
+  storageBackend: "sqlite"
+  logLevel: "vauchi_relay=info"
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

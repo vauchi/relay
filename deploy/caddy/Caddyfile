@@ -1,0 +1,74 @@
+# Vauchi Relay - Caddy reverse proxy configuration
+# Caddy handles TLS automatically via Let's Encrypt
+
+relay.vauchi.example.com {
+    # Automatic HTTPS with Let's Encrypt
+    # Caddy handles certificate provisioning and renewal
+
+    # Enable compression
+    encode gzip
+
+    # Logging
+    log {
+        output file /var/log/caddy/vauchi-relay.log {
+            roll_size 100mb
+            roll_keep 10
+        }
+        format json
+    }
+
+    # Rate limiting (requires caddy-ratelimit plugin)
+    # Uncomment if plugin is installed:
+    # rate_limit {
+    #     zone relay {
+    #         key {remote_host}
+    #         events 60
+    #         window 1m
+    #     }
+    # }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=63072000"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+        -Server
+    }
+
+    # Health check endpoint
+    handle /health {
+        reverse_proxy localhost:8080 {
+            header_up Host {host}
+            health_timeout 5s
+        }
+    }
+
+    # Metrics endpoint (internal only)
+    handle /metrics {
+        @internal {
+            remote_ip 127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+        }
+        handle @internal {
+            reverse_proxy localhost:8080
+        }
+        respond "Forbidden" 403
+    }
+
+    # WebSocket relay endpoint
+    handle {
+        reverse_proxy localhost:8080 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+
+            # WebSocket support (automatic in Caddy 2)
+            # Long timeouts for persistent connections
+            transport http {
+                read_timeout 3600s
+                write_timeout 3600s
+            }
+        }
+    }
+}

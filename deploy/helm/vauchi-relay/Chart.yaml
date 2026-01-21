@@ -1,0 +1,17 @@
+apiVersion: v2
+name: vauchi-relay
+description: Vauchi Relay Server - Privacy-focused contact card exchange
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - vauchi
+  - relay
+  - websocket
+  - privacy
+  - contacts
+home: https://github.com/megloff1/Vauchi
+sources:
+  - https://github.com/megloff1/Vauchi
+maintainers:
+  - name: megloff1

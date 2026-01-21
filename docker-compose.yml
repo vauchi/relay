@@ -1,0 +1,33 @@
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: vauchi-relay/Dockerfile
+    image: vauchi-relay:latest
+    container_name: vauchi-relay
+    ports:
+      - "8080:8080"
+    volumes:
+      - relay-data:/data
+    environment:
+      # Server configuration
+      - RELAY_LISTEN_ADDR=0.0.0.0:8080
+      - RELAY_MAX_CONNECTIONS=1000
+      - RELAY_MAX_MESSAGE_SIZE=1048576
+      # Storage configuration
+      - RELAY_STORAGE_BACKEND=sqlite
+      - RELAY_DATA_DIR=/data
+      # Blob retention (90 days in seconds)
+      - RELAY_BLOB_TTL_SECS=7776000
+      # Rate limiting (messages per minute per client)
+      - RELAY_RATE_LIMIT=60
+      # Cleanup interval (1 hour in seconds)
+      - RELAY_CLEANUP_INTERVAL=3600
+      # Logging
+      - RUST_LOG=vauchi_relay=info
+    restart: unless-stopped
+    # Healthcheck defined in Dockerfile (TCP port check)
+
+volumes:
+  relay-data:
+    driver: local

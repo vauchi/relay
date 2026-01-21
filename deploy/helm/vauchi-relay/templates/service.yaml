@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vauchi-relay.fullname" . }}
+  labels:
+    {{- include "vauchi-relay.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: websocket
+      protocol: TCP
+      name: websocket
+  selector:
+    {{- include "vauchi-relay.selectorLabels" . | nindent 4 }}

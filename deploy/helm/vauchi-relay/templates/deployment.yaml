@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vauchi-relay.fullname" . }}
+  labels:
+    {{- include "vauchi-relay.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "vauchi-relay.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "vauchi-relay.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "vauchi-relay.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: RELAY_LISTEN_ADDR
+              value: {{ .Values.relay.listenAddr | quote }}
+            - name: RELAY_MAX_CONNECTIONS
+              value: {{ .Values.relay.maxConnections | quote }}
+            - name: RELAY_MAX_MESSAGE_SIZE
+              value: {{ .Values.relay.maxMessageSize | quote }}
+            - name: RELAY_BLOB_TTL_SECS
+              value: {{ .Values.relay.blobTtlSecs | quote }}
+            - name: RELAY_RATE_LIMIT
+              value: {{ .Values.relay.rateLimit | quote }}
+            - name: RELAY_CLEANUP_INTERVAL
+              value: {{ .Values.relay.cleanupInterval | quote }}
+            - name: RELAY_STORAGE_BACKEND
+              value: {{ .Values.relay.storageBackend | quote }}
+            - name: RELAY_DATA_DIR
+              value: "/data"
+            - name: RUST_LOG
+              value: {{ .Values.relay.logLevel | quote }}
+          ports:
+            - name: websocket
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: websocket
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: websocket
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "vauchi-relay.fullname" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
