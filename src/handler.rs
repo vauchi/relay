@@ -128,10 +128,15 @@ mod protocol {
         pub status: AckStatus,
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub enum AckStatus {
+        /// Message received by relay and stored for delivery
+        Stored,
+        /// Message delivered to recipient (recipient came online)
         Delivered,
+        /// Recipient acknowledged receipt (end-to-end confirmation)
         ReceivedByRecipient,
+        /// Delivery failed
         Failed,
     }
 
@@ -463,10 +468,10 @@ pub async fn handle_connection(
                         let blob = StoredBlob::new(update.sender_id, update.ciphertext);
                         storage.store(&update.recipient_id, blob);
 
-                        // Send acknowledgment
+                        // Send acknowledgment - Stored means relay has persisted the message
                         let ack = protocol::create_ack(
                             &envelope.message_id,
-                            protocol::AckStatus::Delivered,
+                            protocol::AckStatus::Stored,
                         );
                         if let Ok(ack_data) = protocol::encode_message(&ack) {
                             let _ = write.send(Message::Binary(ack_data)).await;
@@ -489,10 +494,10 @@ pub async fn handle_connection(
                             let proof = StoredRecoveryProof::new(key_hash, store_msg.proof_data);
                             recovery_storage.store(proof);
 
-                            // Send acknowledgment
+                            // Send acknowledgment - Stored means relay has persisted the proof
                             let ack = protocol::create_ack(
                                 &envelope.message_id,
-                                protocol::AckStatus::Delivered,
+                                protocol::AckStatus::Stored,
                             );
                             if let Ok(ack_data) = protocol::encode_message(&ack) {
                                 let _ = write.send(Message::Binary(ack_data)).await;
@@ -556,10 +561,10 @@ pub async fn handle_connection(
                         );
                         device_sync_storage.store(stored);
 
-                        // Send acknowledgment
+                        // Send acknowledgment - Stored means relay has persisted the sync message
                         let ack = protocol::create_ack(
                             &envelope.message_id,
-                            protocol::AckStatus::Delivered,
+                            protocol::AckStatus::Stored,
                         );
                         if let Ok(ack_data) = protocol::encode_message(&ack) {
                             let _ = write.send(Message::Binary(ack_data)).await;
