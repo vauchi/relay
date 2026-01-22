@@ -316,9 +316,10 @@ async fn main() {
                 _ => {}
             }
 
-            // Proceed with WebSocket handshake
-            match accept_async(stream).await {
-                Ok(ws_stream) => {
+            // Proceed with WebSocket handshake with timeout
+            // This prevents slowloris attacks where clients connect but never complete handshake
+            match tokio::time::timeout(idle_timeout, accept_async(stream)).await {
+                Ok(Ok(ws_stream)) => {
                     info!("New connection from {}", addr);
                     metrics.connections_total.inc();
                     metrics.connections_active.inc();
@@ -337,8 +338,15 @@ async fn main() {
                     metrics.connections_active.dec();
                     info!("Connection closed: {}", addr);
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     error!("WebSocket handshake failed for {}: {}", addr, e);
+                    metrics.connection_errors.inc();
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "WebSocket handshake timeout for {} (slowloris protection)",
+                        addr
+                    );
                     metrics.connection_errors.inc();
                 }
             }
