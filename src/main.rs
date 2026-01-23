@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async;
 use tracing::{error, info};
@@ -254,7 +255,6 @@ async fn main() {
                     // Check if this is an HTTP request without WebSocket upgrade
                     // Use case-insensitive check since HTTP headers are case-insensitive
                     let peek_lower = peek_str.to_ascii_lowercase();
-                    info!("Peek from {}: {}", addr, peek_lower);
 
                     let is_websocket_upgrade = peek_lower.contains("upgrade: websocket")
                         && peek_lower.contains("connection:")
@@ -295,8 +295,11 @@ async fn main() {
                                     health_response.len(),
                                     health_response
                                 );
-                                let _ = stream.try_write(response.as_bytes());
-                                info!("Handled HTTP {} from {}", path, addr);
+                                // Properly write and close the connection to prevent leaks
+                                let mut stream = stream;
+                                let _ = stream.write_all(response.as_bytes()).await;
+                                let _ = stream.shutdown().await;
+                                tracing::debug!("Handled HTTP {} from {}", path, addr);
                                 return;
                             }
 
@@ -307,8 +310,11 @@ async fn main() {
                                 body.len(),
                                 body
                             );
-                            let _ = stream.try_write(response.as_bytes());
-                            info!("Handled HTTP root/other from {}", addr);
+                            // Properly write and close the connection to prevent leaks
+                            let mut stream = stream;
+                            let _ = stream.write_all(response.as_bytes()).await;
+                            let _ = stream.shutdown().await;
+                            tracing::debug!("Handled HTTP root/other from {}", addr);
                             return;
                         }
                     }
