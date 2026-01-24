@@ -1,14 +1,37 @@
 # GitLab CI for vauchi-relay
 #
 # WebSocket relay server
+#
+# GitLab Ultimate Features:
+#   - SAST: Static application security testing
+#   - Dependency Scanning: Cargo.lock vulnerability scanning
+#   - Secret Detection: Prevent credential leaks
+#   - Container Scanning: Docker image vulnerability scanning
+
+# GitLab Ultimate Templates
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Dependency-Scanning.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
 
 stages:
   - lint
   - test
+  - security
+  - build
 
 variables:
   CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
   RUST_BACKTRACE: "1"
+
+  # GitLab Ultimate Security Configuration
+  SAST_EXCLUDED_PATHS: "target/"
+  DS_EXCLUDED_PATHS: "target/"
+  SECRET_DETECTION_EXCLUDED_PATHS: "target/"
+
+  # Container scanning for relay image
+  CS_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
 
 .rust-cache: &rust-cache
   cache:
@@ -20,22 +43,27 @@ variables:
       - .cargo/git/db/
       - target/
 
-lint:format:
-  stage: lint
+.rust-job:
   image: rust:latest
   <<: *rust-cache
+
+# ============================================================
+# Lint Stage
+# ============================================================
+
+lint:format:
+  extends: .rust-job
+  stage: lint
   script:
     - rustup component add rustfmt
     - cargo fmt --all -- --check
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
-  allow_failure: true  # Advisory until codebase is formatted
 
 lint:clippy:
+  extends: .rust-job
   stage: lint
-  image: rust:latest
-  <<: *rust-cache
   script:
     - rustup component add clippy
     - cargo clippy --all-targets -- -D warnings
@@ -44,13 +72,123 @@ lint:clippy:
     - if: $CI_COMMIT_BRANCH == "main"
   allow_failure: true  # May fail on git dependency issues
 
+# ============================================================
+# Test Stage
+# ============================================================
+
 test:unit:
+  extends: .rust-job
   stage: test
-  image: rust:latest
-  <<: *rust-cache
   script:
     - cargo test --all-targets
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
   allow_failure: true  # May fail on git dependency issues
+
+test:coverage:
+  extends: .rust-job
+  stage: test
+  before_script:
+    - rustup component add llvm-tools-preview
+    - cargo install cargo-llvm-cov --locked || true
+  script:
+    - cargo llvm-cov --lcov --output-path lcov.info || true
+    - cargo llvm-cov report || true
+  coverage: '/Total:\s+(\d+(?:\.\d+)?%)/'
+  artifacts:
+    paths:
+      - lcov.info
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+  allow_failure: true
+
+# ============================================================
+# Security Stage
+# ============================================================
+
+# Override GitLab templates
+sast:
+  stage: security
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+dependency_scanning:
+  stage: security
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+secret_detection:
+  stage: security
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+container_scanning:
+  stage: security
+  needs:
+    - job: build:docker
+      optional: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+
+# Rust-specific security
+security:audit:
+  extends: .rust-job
+  stage: security
+  script:
+    - cargo install cargo-audit || true
+    - cargo audit
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - "Cargo.toml"
+        - "Cargo.lock"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  allow_failure: true
+
+# ============================================================
+# Build Stage
+# ============================================================
+
+build:release:
+  extends: .rust-job
+  stage: build
+  script:
+    - cargo build --release
+  artifacts:
+    paths:
+      - target/release/vauchi-relay
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+
+build:docker:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest
+    - |
+      if [ -n "$CI_REGISTRY_PASSWORD" ]; then
+        echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+        docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+        docker push $CI_REGISTRY_IMAGE:latest
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  allow_failure: true
