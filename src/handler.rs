@@ -327,10 +327,7 @@ pub async fn handle_connection(
                     // Validate device_id format if present
                     if let Some(ref did) = hs.device_id {
                         if !validate_client_id(did) {
-                            warn!(
-                                "Invalid device_id format: {}",
-                                &did.get(..16).unwrap_or("")
-                            );
+                            warn!("Invalid device_id format: {}", &did.get(..16).unwrap_or(""));
                             return;
                         }
                     }
@@ -403,7 +400,10 @@ pub async fn handle_connection(
             match protocol::encode_message(&envelope) {
                 Ok(data) => {
                     if write.send(Message::Binary(data)).await.is_err() {
-                        warn!("Failed to send pending device sync to {} / {}", client_id, did);
+                        warn!(
+                            "Failed to send pending device sync to {} / {}",
+                            client_id, did
+                        );
                         return;
                     }
                 }
@@ -415,9 +415,7 @@ pub async fn handle_connection(
         if pending_count > 0 {
             debug!(
                 "Sent {} pending device sync messages to {} / {}",
-                pending_count,
-                client_id,
-                did
+                pending_count, client_id, did
             );
         }
     }
@@ -469,10 +467,8 @@ pub async fn handle_connection(
                         storage.store(&update.recipient_id, blob);
 
                         // Send acknowledgment - Stored means relay has persisted the message
-                        let ack = protocol::create_ack(
-                            &envelope.message_id,
-                            protocol::AckStatus::Stored,
-                        );
+                        let ack =
+                            protocol::create_ack(&envelope.message_id, protocol::AckStatus::Stored);
                         if let Ok(ack_data) = protocol::encode_message(&ack) {
                             let _ = write.send(Message::Binary(ack_data)).await;
                         }
@@ -562,10 +558,8 @@ pub async fn handle_connection(
                         device_sync_storage.store(stored);
 
                         // Send acknowledgment - Stored means relay has persisted the sync message
-                        let ack = protocol::create_ack(
-                            &envelope.message_id,
-                            protocol::AckStatus::Stored,
-                        );
+                        let ack =
+                            protocol::create_ack(&envelope.message_id, protocol::AckStatus::Stored);
                         if let Ok(ack_data) = protocol::encode_message(&ack) {
                             let _ = write.send(Message::Binary(ack_data)).await;
                         }

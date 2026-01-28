@@ -17,7 +17,9 @@ use tracing::{error, info};
 
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_limit::ConnectionLimiter;
-use vauchi_relay::device_sync_storage::{DeviceSyncStore, MemoryDeviceSyncStore, SqliteDeviceSyncStore};
+use vauchi_relay::device_sync_storage::{
+    DeviceSyncStore, MemoryDeviceSyncStore, SqliteDeviceSyncStore,
+};
 use vauchi_relay::handler;
 use vauchi_relay::http::{create_router, HttpState};
 use vauchi_relay::metrics::RelayMetrics;
