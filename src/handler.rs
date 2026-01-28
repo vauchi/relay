@@ -287,6 +287,7 @@ mod protocol {
     }
 
     /// Creates a device sync acknowledgment envelope.
+    #[allow(dead_code)] // Prepared for future device sync acknowledgment feature
     pub fn create_device_sync_ack(message_id: &str, synced_version: u64) -> MessageEnvelope {
         MessageEnvelope {
             version: PROTOCOL_VERSION,

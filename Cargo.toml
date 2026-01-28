@@ -35,7 +35,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 axum = "0.7"
 
 # Prometheus metrics
-prometheus = "0.13"
+prometheus = "0.14"
 
 [dev-dependencies]
 tokio-test = "0.4"

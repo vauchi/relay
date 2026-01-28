@@ -131,7 +131,7 @@ impl DeviceSyncStore for MemoryDeviceSyncStore {
     fn peek(&self, identity_id: &str, target_device_id: &str) -> Vec<StoredDeviceSyncMessage> {
         let messages = self.messages.read().unwrap();
         let key = (identity_id.to_string(), target_device_id.to_string());
-        messages.get(&key).map(|v| v.clone()).unwrap_or_default()
+        messages.get(&key).cloned().unwrap_or_default()
     }
 
     fn acknowledge(&self, identity_id: &str, target_device_id: &str, message_id: &str) -> bool {
