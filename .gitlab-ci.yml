@@ -8,8 +8,13 @@
 #   - Secret Detection: Prevent credential leaks
 #   - Container Scanning: Docker image vulnerability scanning
 
-# GitLab Ultimate Templates
+# Shared templates + GitLab Ultimate Templates
 include:
+  - project: 'vauchi/scripts'
+    ref: main
+    file:
+      - '/ci-templates/rust-base.yml'
+      - '/ci-templates/mr-rules.yml'
   - template: Security/SAST.gitlab-ci.yml
   - template: Security/Dependency-Scanning.gitlab-ci.yml
   - template: Security/Secret-Detection.gitlab-ci.yml
@@ -23,9 +28,6 @@ stages:
   - build
 
 variables:
-  CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
-  RUST_BACKTRACE: "1"
-
   # GitLab Ultimate Security Configuration
   SAST_EXCLUDED_PATHS: "target/"
   DS_EXCLUDED_PATHS: "target/"
@@ -34,43 +36,23 @@ variables:
   # Container scanning for relay image
   CS_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
 
-.rust-cache: &rust-cache
-  cache:
-    key: ${CI_COMMIT_REF_SLUG}-rust
-    paths:
-      - .cargo/bin/
-      - .cargo/registry/index/
-      - .cargo/registry/cache/
-      - .cargo/git/db/
-      - target/
-
-.rust-job:
-  image: rust:latest
-  <<: *rust-cache
-
 # ============================================================
 # Lint Stage
 # ============================================================
 
 lint:format:
-  extends: .rust-job
+  extends: [.rust-job, .mr-or-main]
   stage: lint
   script:
     - rustup component add rustfmt
     - cargo fmt --all -- --check
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == "main"
 
 lint:clippy:
-  extends: .rust-job
+  extends: [.rust-job, .mr-or-main]
   stage: lint
   script:
     - rustup component add clippy
     - cargo clippy --all-targets -- -D warnings
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == "main"
   allow_failure: true  # May fail on git dependency issues
 
 # ============================================================
@@ -78,17 +60,14 @@ lint:clippy:
 # ============================================================
 
 test:unit:
-  extends: .rust-job
+  extends: [.rust-job, .mr-or-main]
   stage: test
   script:
     - cargo test --all-targets
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == "main"
   allow_failure: true  # May fail on git dependency issues
 
 test:coverage:
-  extends: .rust-job
+  extends: [.rust-job, .mr-or-main]
   stage: test
   before_script:
     - rustup component add llvm-tools-preview
@@ -101,9 +80,6 @@ test:coverage:
     paths:
       - lcov.info
     expire_in: 1 week
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == "main"
   allow_failure: true
 
 # ============================================================
@@ -158,7 +134,7 @@ security:audit:
       changes:
         - "Cargo.toml"
         - "Cargo.lock"
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_PIPELINE_SOURCE == "schedule"
   allow_failure: true
 
