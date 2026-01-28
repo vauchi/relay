@@ -45,33 +45,6 @@ variables:
   CS_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
 
 # ============================================================
-# Local Template Definitions (until scripts MR is merged)
-# ============================================================
-
-.validation-rust:
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - "**/*.rs"
-        - "**/Cargo.toml"
-        - "**/Cargo.lock"
-        - ".gitlab-ci.yml"
-
-.validation-deps:
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - "**/Cargo.toml"
-        - "**/Cargo.lock"
-        - ".gitlab-ci.yml"
-
-.timeout-quick:
-  timeout: 10 minutes
-
-.timeout-standard:
-  timeout: 30 minutes
-
-# ============================================================
 # Lint Stage (change-based)
 # ============================================================
 
