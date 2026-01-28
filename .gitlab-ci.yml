@@ -6,6 +6,11 @@
 #
 # WebSocket relay server
 #
+# Performance optimizations:
+#   - Change-based rules: Jobs run only when relevant files change
+#   - Timeouts: Prevent runaway jobs from blocking runners
+#   - Interruptible: Auto-cancel on new commits (via templates)
+#
 # GitLab Ultimate Features:
 #   - SAST: Static application security testing
 #   - Dependency Scanning: Cargo.lock vulnerability scanning
@@ -40,37 +45,41 @@ variables:
   CS_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
 
 # ============================================================
-# Lint Stage
+# Lint Stage (change-based)
 # ============================================================
 
 lint:format:
-  extends: [.rust-job, .mr-or-main]
+  extends: [.rust-job, .validation-rust, .timeout-quick]
   stage: lint
+  cache:
+    policy: pull  # Read-only cache for lint
   script:
     - rustup component add rustfmt
     - cargo fmt --all -- --check
 
 lint:clippy:
-  extends: [.rust-job, .mr-or-main]
+  extends: [.rust-job, .validation-rust, .timeout-quick]
   stage: lint
+  cache:
+    policy: pull  # Read-only cache for lint
   script:
     - rustup component add clippy
     - cargo clippy --all-targets -- -D warnings
   allow_failure: true  # May fail on git dependency issues
 
 # ============================================================
-# Test Stage
+# Test Stage (change-based)
 # ============================================================
 
 test:unit:
-  extends: [.rust-job, .mr-or-main]
+  extends: [.rust-job, .validation-rust, .timeout-standard]
   stage: test
   script:
     - cargo test --all-targets
   allow_failure: true  # May fail on git dependency issues
 
 test:coverage:
-  extends: [.rust-job, .mr-or-main]
+  extends: [.rust-job, .validation-rust, .timeout-standard]
   stage: test
   before_script:
     - rustup component add llvm-tools-preview
@@ -86,7 +95,7 @@ test:coverage:
   allow_failure: true
 
 # ============================================================
-# Security Stage
+# Security Stage (change-based)
 # ============================================================
 
 # GitLab security templates configuration
@@ -96,6 +105,9 @@ semgrep-sast:
   tags: [docker]
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - "**/*.rs"
+        - ".gitlab-ci.yml"
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_PIPELINE_SOURCE == "schedule"
 
@@ -111,20 +123,15 @@ secret_detection:
     - if: $CI_COMMIT_BRANCH == "main"
 
 
-# Rust-specific security
+# Rust-specific security (runs on dependency changes)
 security:audit:
-  extends: .rust-job
+  extends: [.rust-job, .validation-deps, .timeout-quick]
   stage: security
+  cache:
+    policy: pull  # Read-only cache
   script:
     - cargo install cargo-audit || true
     - cargo audit
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - "Cargo.toml"
-        - "Cargo.lock"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "schedule"
   allow_failure: true
 
 # ============================================================
@@ -132,7 +139,7 @@ security:audit:
 # ============================================================
 
 build:release:
-  extends: .rust-job
+  extends: [.rust-job, .timeout-standard]
   stage: build
   script:
     - cargo build --release
@@ -145,6 +152,7 @@ build:release:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
 
 build:docker:
+  extends: .timeout-standard
   stage: build
   image: docker:latest
   services:
