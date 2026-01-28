@@ -297,12 +297,7 @@ async fn main() {
                                     blob_count
                                 );
                                 let response = format!(
-                                    "HTTP/1.1 200 OK
-Content-Type: application/json
-Content-Length: {}
-Connection: close
-
-{}",
+                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                                     health_response.len(),
                                     health_response
                                 );
@@ -317,12 +312,7 @@ Connection: close
                             // Root or other paths - return info/error
                             let body = r#"{"error":"This is a WebSocket relay endpoint"}"#;
                             let response = format!(
-                                "HTTP/1.1 200 OK
-Content-Type: application/json
-Content-Length: {}
-Connection: close
-
-{}",
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                                 body.len(),
                                 body
                             );
