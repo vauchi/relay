@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! HTTP Server for Health and Metrics Endpoints
 //!
 //! Provides REST endpoints for monitoring and health checks.

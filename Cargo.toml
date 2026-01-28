@@ -1,9 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 [package]
 name = "vauchi-relay"
 version = "0.1.0"
 edition = "2021"
 description = "Relay server for Vauchi - encrypted blob storage and forwarding"
-license = "MIT"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 # Async runtime

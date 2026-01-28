@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Vauchi Relay Server
 //!
 //! A lightweight relay server for forwarding encrypted contact card updates.
@@ -293,7 +297,12 @@ async fn main() {
                                     blob_count
                                 );
                                 let response = format!(
-                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                    "HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: {}
+Connection: close
+
+{}",
                                     health_response.len(),
                                     health_response
                                 );
@@ -308,7 +317,12 @@ async fn main() {
                             // Root or other paths - return info/error
                             let body = r#"{"error":"This is a WebSocket relay endpoint"}"#;
                             let response = format!(
-                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                "HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: {}
+Connection: close
+
+{}",
                                 body.len(),
                                 body
                             );
