@@ -8,12 +8,10 @@ FROM rust:1.78-bookworm AS builder
 WORKDIR /app
 
 
-# Copy only needed crates for relay
-#COPY ./core/ .
-COPY ./relay ./relay
+# Copy source (CI context is the relay repo root)
+COPY . ./relay
 
-#RUN cargo build --release -p ./core &&\
-RUN cd relay && cargo build --release 
+RUN cd relay && cargo build --release
 
 # Runtime stage
 FROM debian:bookworm-slim
