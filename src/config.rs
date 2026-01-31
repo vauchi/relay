@@ -33,6 +33,10 @@ pub struct RelayConfig {
     pub data_dir: PathBuf,
     /// Idle timeout in seconds (for slowloris protection).
     pub idle_timeout_secs: u64,
+    /// Maximum blobs stored per recipient (0 = unlimited).
+    pub max_blobs_per_user: usize,
+    /// Maximum total storage bytes per recipient (0 = unlimited).
+    pub max_storage_per_user: usize,
 }
 
 impl Default for RelayConfig {
@@ -46,7 +50,9 @@ impl Default for RelayConfig {
             cleanup_interval_secs: 3600,             // 1 hour
             storage_backend: StorageBackend::Sqlite, // Persistent by default
             data_dir: PathBuf::from("./data"),
-            idle_timeout_secs: 300, // 5 minutes (slowloris protection)
+            idle_timeout_secs: 300,       // 5 minutes (slowloris protection)
+            max_blobs_per_user: 1000,     // 1000 blobs per recipient
+            max_storage_per_user: 50_000_000, // 50 MB per recipient
         }
     }
 }
@@ -109,6 +115,18 @@ impl RelayConfig {
             }
         }
 
+        if let Ok(val) = std::env::var("RELAY_MAX_BLOBS_PER_USER") {
+            if let Ok(parsed) = val.parse() {
+                config.max_blobs_per_user = parsed;
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_MAX_STORAGE_PER_USER") {
+            if let Ok(parsed) = val.parse() {
+                config.max_storage_per_user = parsed;
+            }
+        }
+
         config
     }
 
@@ -145,6 +163,8 @@ mod tests {
         assert_eq!(config.cleanup_interval_secs, 3600);
         assert_eq!(config.storage_backend, StorageBackend::Sqlite);
         assert_eq!(config.data_dir, std::path::PathBuf::from("./data"));
+        assert_eq!(config.max_blobs_per_user, 1000);
+        assert_eq!(config.max_storage_per_user, 50_000_000);
     }
 
     #[test]

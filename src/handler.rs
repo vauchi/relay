@@ -319,6 +319,13 @@ pub fn new_blob_sender_map() -> BlobSenderMap {
     Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()))
 }
 
+/// Per-user quota limits. Zero means unlimited.
+#[derive(Debug, Clone, Copy)]
+pub struct QuotaLimits {
+    pub max_blobs: usize,
+    pub max_bytes: usize,
+}
+
 /// Handles a WebSocket connection.
 pub async fn handle_connection(
     ws_stream: WebSocketStream<TcpStream>,
@@ -330,6 +337,7 @@ pub async fn handle_connection(
     blob_sender_map: BlobSenderMap,
     max_message_size: usize,
     idle_timeout: Duration,
+    quota: QuotaLimits,
 ) {
     // Generate a random session label for logging.
     // The relay must never log client_id (identity fingerprint) to prevent
@@ -505,6 +513,24 @@ pub async fn handle_connection(
 
                 match envelope.payload {
                     protocol::MessagePayload::EncryptedUpdate(update) => {
+                        // Check per-recipient quota before storing
+                        if (quota.max_blobs > 0
+                            && storage.blob_count_for(&update.recipient_id) >= quota.max_blobs)
+                            || (quota.max_bytes > 0
+                                && storage.storage_size_for(&update.recipient_id) + update.ciphertext.len()
+                                    > quota.max_bytes)
+                        {
+                            let ack = protocol::create_ack(
+                                &envelope.message_id,
+                                protocol::AckStatus::Failed,
+                            );
+                            if let Ok(ack_data) = protocol::encode_message(&ack) {
+                                let _ = write.send(Message::Binary(ack_data)).await;
+                            }
+                            debug!("[{}] Quota exceeded for recipient", session);
+                            continue;
+                        }
+
                         // Store blob for recipient (sender_id deliberately not stored)
                         let blob = StoredBlob::new(update.ciphertext);
                         let blob_id = blob.id.clone();

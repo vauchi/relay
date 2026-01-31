@@ -79,6 +79,12 @@ pub trait BlobStore: Send + Sync {
     /// Returns storage size in bytes (approximate).
     /// Used for monitoring and federation offload decisions.
     fn storage_size_bytes(&self) -> usize;
+
+    /// Returns the number of blobs stored for a specific recipient.
+    fn blob_count_for(&self, recipient_id: &str) -> usize;
+
+    /// Returns the total storage size in bytes for a specific recipient.
+    fn storage_size_for(&self, recipient_id: &str) -> usize;
 }
 
 // ============================================================================
@@ -185,6 +191,19 @@ impl BlobStore for MemoryBlobStore {
             .flat_map(|q| q.iter())
             .map(|b| b.data.len() + b.id.len() + 8)
             .sum()
+    }
+
+    fn blob_count_for(&self, recipient_id: &str) -> usize {
+        let blobs = self.blobs.read().unwrap();
+        blobs.get(recipient_id).map(|q| q.len()).unwrap_or(0)
+    }
+
+    fn storage_size_for(&self, recipient_id: &str) -> usize {
+        let blobs = self.blobs.read().unwrap();
+        blobs
+            .get(recipient_id)
+            .map(|q| q.iter().map(|b| b.data.len() + b.id.len() + 8).sum())
+            .unwrap_or(0)
     }
 }
 
@@ -375,6 +394,26 @@ impl BlobStore for SqliteBlobStore {
             .query_row("PRAGMA page_size", [], |row| row.get(0))
             .unwrap_or(4096);
         (page_count * page_size) as usize
+    }
+
+    fn blob_count_for(&self, recipient_id: &str) -> usize {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM blobs WHERE recipient_id = ?1",
+            params![recipient_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as usize
+    }
+
+    fn storage_size_for(&self, recipient_id: &str) -> usize {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(data) + LENGTH(id) + 8), 0) FROM blobs WHERE recipient_id = ?1",
+            params![recipient_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as usize
     }
 }
 
@@ -587,6 +626,64 @@ mod tests {
         assert!(!blob.id.is_empty());
         assert_eq!(blob.data, vec![1, 2, 3]);
         assert!(blob.created_at_secs > 0);
+    }
+
+    #[test]
+    fn test_blob_count_for_recipient() {
+        let store = MemoryBlobStore::new();
+
+        assert_eq!(store.blob_count_for("recipient-1"), 0);
+
+        store.store("recipient-1", StoredBlob::new(vec![1]));
+        store.store("recipient-1", StoredBlob::new(vec![2]));
+        store.store("recipient-2", StoredBlob::new(vec![3]));
+
+        assert_eq!(store.blob_count_for("recipient-1"), 2);
+        assert_eq!(store.blob_count_for("recipient-2"), 1);
+        assert_eq!(store.blob_count_for("nonexistent"), 0);
+    }
+
+    #[test]
+    fn test_storage_size_for_recipient() {
+        let store = MemoryBlobStore::new();
+
+        assert_eq!(store.storage_size_for("recipient-1"), 0);
+
+        store.store("recipient-1", StoredBlob::new(vec![0u8; 100]));
+        store.store("recipient-1", StoredBlob::new(vec![0u8; 200]));
+
+        let size = store.storage_size_for("recipient-1");
+        // Each blob: data_len + id_len (UUID ~36 chars) + 8 bytes overhead
+        assert!(size >= 300, "Expected at least 300 bytes, got {}", size);
+
+        assert_eq!(store.storage_size_for("nonexistent"), 0);
+    }
+
+    #[test]
+    fn test_sqlite_blob_count_for_recipient() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+
+        assert_eq!(store.blob_count_for("r1"), 0);
+
+        store.store("r1", StoredBlob::new(vec![1]));
+        store.store("r1", StoredBlob::new(vec![2]));
+        store.store("r2", StoredBlob::new(vec![3]));
+
+        assert_eq!(store.blob_count_for("r1"), 2);
+        assert_eq!(store.blob_count_for("r2"), 1);
+        assert_eq!(store.blob_count_for("nonexistent"), 0);
+    }
+
+    #[test]
+    fn test_sqlite_storage_size_for_recipient() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+
+        store.store("r1", StoredBlob::new(vec![0u8; 100]));
+        store.store("r1", StoredBlob::new(vec![0u8; 200]));
+
+        let size = store.storage_size_for("r1");
+        assert!(size >= 300, "Expected at least 300 bytes, got {}", size);
+        assert_eq!(store.storage_size_for("nonexistent"), 0);
     }
 
     #[test]

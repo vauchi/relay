@@ -253,6 +253,10 @@ async fn main() {
         let metrics = metrics.clone();
         let max_message_size = config.max_message_size;
         let idle_timeout = config.idle_timeout();
+        let quota = handler::QuotaLimits {
+            max_blobs: config.max_blobs_per_user,
+            max_bytes: config.max_storage_per_user,
+        };
 
         tokio::spawn(async move {
             // Keep the guard alive for the duration of the connection
@@ -353,6 +357,7 @@ async fn main() {
                         blob_sender_map,
                         max_message_size,
                         idle_timeout,
+                        quota,
                     )
                     .await;
 
