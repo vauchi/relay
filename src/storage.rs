@@ -85,6 +85,9 @@ pub trait BlobStore: Send + Sync {
 
     /// Returns the total storage size in bytes for a specific recipient.
     fn storage_size_for(&self, recipient_id: &str) -> usize;
+
+    /// Deletes all blobs for a recipient. Returns the number removed.
+    fn delete_all_for(&self, recipient_id: &str) -> usize;
 }
 
 // ============================================================================
@@ -203,6 +206,14 @@ impl BlobStore for MemoryBlobStore {
         blobs
             .get(recipient_id)
             .map(|q| q.iter().map(|b| b.data.len() + b.id.len() + 8).sum())
+            .unwrap_or(0)
+    }
+
+    fn delete_all_for(&self, recipient_id: &str) -> usize {
+        let mut blobs = self.blobs.write().unwrap();
+        blobs
+            .remove(recipient_id)
+            .map(|q| q.len())
             .unwrap_or(0)
     }
 }
@@ -414,6 +425,15 @@ impl BlobStore for SqliteBlobStore {
             |row| row.get::<_, i64>(0),
         )
         .unwrap_or(0) as usize
+    }
+
+    fn delete_all_for(&self, recipient_id: &str) -> usize {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM blobs WHERE recipient_id = ?1",
+            params![recipient_id],
+        )
+        .unwrap_or(0)
     }
 }
 
@@ -765,5 +785,42 @@ mod tests {
             journal_mode, "wal",
             "WAL mode should be enabled for file-based database"
         );
+    }
+
+    #[test]
+    fn test_delete_all_for_memory() {
+        let store = MemoryBlobStore::new();
+
+        store.store("recipient-1", StoredBlob::new(vec![1]));
+        store.store("recipient-1", StoredBlob::new(vec![2]));
+        store.store("recipient-2", StoredBlob::new(vec![3]));
+
+        let removed = store.delete_all_for("recipient-1");
+        assert_eq!(removed, 2);
+        assert_eq!(store.blob_count(), 1);
+        assert!(store.peek("recipient-1").is_empty());
+        assert_eq!(store.peek("recipient-2").len(), 1);
+    }
+
+    #[test]
+    fn test_delete_all_for_nonexistent() {
+        let store = MemoryBlobStore::new();
+        let removed = store.delete_all_for("nonexistent");
+        assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn test_sqlite_delete_all_for() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+
+        store.store("r1", StoredBlob::new(vec![1]));
+        store.store("r1", StoredBlob::new(vec![2]));
+        store.store("r2", StoredBlob::new(vec![3]));
+
+        let removed = store.delete_all_for("r1");
+        assert_eq!(removed, 2);
+        assert_eq!(store.blob_count(), 1);
+        assert!(store.peek("r1").is_empty());
+        assert_eq!(store.peek("r2").len(), 1);
     }
 }

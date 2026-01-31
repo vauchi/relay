@@ -226,14 +226,13 @@ async fn main() {
     info!("WebSocket server listening on {}", config.listen_addr);
 
     // Accept connections
-    while let Ok((stream, addr)) = listener.accept().await {
+    while let Ok((stream, _addr)) = listener.accept().await {
         // Enforce connection limit
         let connection_guard = match connection_limiter.try_acquire() {
             Some(guard) => guard,
             None => {
                 tracing::warn!(
-                    "Connection rejected from {}: at max capacity ({}/{})",
-                    addr,
+                    "Connection rejected: at max capacity ({}/{})",
                     connection_limiter.active_count(),
                     config.max_connections
                 );
@@ -279,7 +278,7 @@ async fn main() {
 
                     // 1. WebSocket upgrade MUST be handled first
                     if is_websocket_upgrade {
-                        info!("Handling WebSocket upgrade from {}", addr);
+                        info!("Handling WebSocket upgrade");
                         // We break out of the peek block and proceed to accept_async
                     } else {
                         let is_http_get = peek_lower.starts_with("get ");
@@ -316,7 +315,7 @@ async fn main() {
                                 let mut stream = stream;
                                 let _ = stream.write_all(response.as_bytes()).await;
                                 let _ = stream.shutdown().await;
-                                tracing::debug!("Handled HTTP {} from {}", path, addr);
+                                tracing::debug!("Handled HTTP {}", path);
                                 return;
                             }
 
@@ -331,7 +330,7 @@ async fn main() {
                             let mut stream = stream;
                             let _ = stream.write_all(response.as_bytes()).await;
                             let _ = stream.shutdown().await;
-                            tracing::debug!("Handled HTTP root/other from {}", addr);
+                            tracing::debug!("Handled HTTP root/other");
                             return;
                         }
                     }
@@ -343,7 +342,7 @@ async fn main() {
             // This prevents slowloris attacks where clients connect but never complete handshake
             match tokio::time::timeout(idle_timeout, accept_async(stream)).await {
                 Ok(Ok(ws_stream)) => {
-                    info!("New connection from {}", addr);
+                    info!("New WebSocket connection");
                     metrics.connections_total.inc();
                     metrics.connections_active.inc();
 
@@ -362,17 +361,14 @@ async fn main() {
                     .await;
 
                     metrics.connections_active.dec();
-                    info!("Connection closed: {}", addr);
+                    info!("WebSocket connection closed");
                 }
                 Ok(Err(e)) => {
-                    error!("WebSocket handshake failed for {}: {}", addr, e);
+                    error!("WebSocket handshake failed: {}", e);
                     metrics.connection_errors.inc();
                 }
                 Err(_) => {
-                    tracing::warn!(
-                        "WebSocket handshake timeout for {} (slowloris protection)",
-                        addr
-                    );
+                    tracing::warn!("WebSocket handshake timeout (slowloris protection)");
                     metrics.connection_errors.inc();
                 }
             }

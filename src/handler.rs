@@ -91,6 +91,9 @@ mod protocol {
         // Device sync operations (inter-device synchronization)
         DeviceSyncMessage(DeviceSyncMessage),
         DeviceSyncAck(DeviceSyncAck),
+        // Data purge (GDPR-friendly: allows clients to delete all their stored data)
+        PurgeRequest(PurgeRequest),
+        PurgeResponse(PurgeResponse),
         #[serde(other)]
         Unknown,
     }
@@ -200,6 +203,49 @@ mod protocol {
     pub struct RecoveryProofEntry {
         pub key_hash: String,
         pub proof_data: Vec<u8>,
+    }
+
+    // =========================================================================
+    // Data Purge Messages
+    // =========================================================================
+
+    /// Request to delete all stored data for the connected client.
+    /// The relay will remove all blobs, device sync messages, and
+    /// any ephemeral state associated with the client's routing ID.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PurgeRequest {
+        /// If true, also purge device sync messages (requires client_id-based identity).
+        #[serde(default)]
+        pub include_device_sync: bool,
+    }
+
+    /// Response to a purge request with counts of deleted items.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PurgeResponse {
+        /// Number of blobs deleted.
+        pub blobs_deleted: usize,
+        /// Number of device sync messages deleted.
+        pub device_sync_deleted: usize,
+    }
+
+    /// Creates a purge response envelope.
+    pub fn create_purge_response(
+        message_id: &str,
+        blobs_deleted: usize,
+        device_sync_deleted: usize,
+    ) -> MessageEnvelope {
+        MessageEnvelope {
+            version: PROTOCOL_VERSION,
+            message_id: message_id.to_string(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            payload: MessagePayload::PurgeResponse(PurgeResponse {
+                blobs_deleted,
+                device_sync_deleted,
+            }),
+        }
     }
 
     /// Decodes a message from binary data (with length prefix).
@@ -690,6 +736,36 @@ pub async fn handle_connection(
                             debug!("[{}] DeviceSyncAck received but no device_id in handshake", session);
                         }
                     }
+                    protocol::MessagePayload::PurgeRequest(purge) => {
+                        // Delete all stored blobs for this client's routing ID
+                        let blobs_deleted = storage.delete_all_for(&routing_id);
+
+                        // Optionally delete device sync messages (identity-based)
+                        let device_sync_deleted = if purge.include_device_sync {
+                            device_sync_storage.delete_all_for(&client_id)
+                        } else {
+                            0
+                        };
+
+                        // Send purge response
+                        let response = protocol::create_purge_response(
+                            &envelope.message_id,
+                            blobs_deleted,
+                            device_sync_deleted,
+                        );
+                        if let Ok(data) = protocol::encode_message(&response) {
+                            let _ = write.send(Message::Binary(data)).await;
+                        }
+
+                        debug!(
+                            "[{}] Purged {} blobs, {} device sync messages",
+                            session, blobs_deleted, device_sync_deleted
+                        );
+                    }
+                    protocol::MessagePayload::PurgeResponse(_) => {
+                        // Clients shouldn't send responses, ignore
+                        debug!("[{}] Unexpected PurgeResponse", session);
+                    }
                     protocol::MessagePayload::Unknown => {
                         debug!("[{}] Unknown message type", session);
                     }
@@ -799,5 +875,53 @@ mod tests {
 
         let too_short = "b".repeat(32);
         assert!(!validate_client_id(&too_short));
+    }
+
+    #[test]
+    fn test_purge_request_serialization() {
+        let purge = protocol::PurgeRequest {
+            include_device_sync: true,
+        };
+        let json = serde_json::to_string(&purge).unwrap();
+        let parsed: protocol::PurgeRequest = serde_json::from_str(&json).unwrap();
+        assert!(parsed.include_device_sync);
+    }
+
+    #[test]
+    fn test_purge_request_default_no_device_sync() {
+        // When include_device_sync is omitted, defaults to false
+        let json = r#"{}"#;
+        let parsed: protocol::PurgeRequest = serde_json::from_str(json).unwrap();
+        assert!(!parsed.include_device_sync);
+    }
+
+    #[test]
+    fn test_purge_response_creation() {
+        let response = protocol::create_purge_response("msg-123", 5, 2);
+        if let protocol::MessagePayload::PurgeResponse(pr) = response.payload {
+            assert_eq!(pr.blobs_deleted, 5);
+            assert_eq!(pr.device_sync_deleted, 2);
+        } else {
+            panic!("Expected PurgeResponse payload");
+        }
+    }
+
+    #[test]
+    fn test_purge_request_roundtrip_in_envelope() {
+        let envelope = protocol::MessageEnvelope {
+            version: protocol::PROTOCOL_VERSION,
+            message_id: "test-purge".to_string(),
+            timestamp: 1234567890,
+            payload: protocol::MessagePayload::PurgeRequest(protocol::PurgeRequest {
+                include_device_sync: false,
+            }),
+        };
+        let encoded = protocol::encode_message(&envelope).unwrap();
+        let decoded = protocol::decode_message(&encoded).unwrap();
+        if let protocol::MessagePayload::PurgeRequest(pr) = decoded.payload {
+            assert!(!pr.include_device_sync);
+        } else {
+            panic!("Expected PurgeRequest payload after roundtrip");
+        }
     }
 }

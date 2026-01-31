@@ -93,6 +93,9 @@ pub trait DeviceSyncStore: Send + Sync {
 
     /// Returns storage size in bytes (approximate).
     fn storage_size_bytes(&self) -> usize;
+
+    /// Deletes all messages for an identity. Returns the number removed.
+    fn delete_all_for(&self, identity_id: &str) -> usize;
 }
 
 // ============================================================================
@@ -193,6 +196,22 @@ impl DeviceSyncStore for MemoryDeviceSyncStore {
                     + 16 // version + created_at_secs
             })
             .sum()
+    }
+
+    fn delete_all_for(&self, identity_id: &str) -> usize {
+        let mut messages = self.messages.write().unwrap();
+        let keys_to_remove: Vec<(String, String)> = messages
+            .keys()
+            .filter(|(id, _)| id == identity_id)
+            .cloned()
+            .collect();
+        let mut removed = 0;
+        for key in keys_to_remove {
+            if let Some(vec) = messages.remove(&key) {
+                removed += vec.len();
+            }
+        }
+        removed
     }
 }
 
@@ -348,6 +367,15 @@ impl DeviceSyncStore for SqliteDeviceSyncStore {
             .query_row("PRAGMA page_size", [], |row| row.get(0))
             .unwrap_or(4096);
         (page_count * page_size) as usize
+    }
+
+    fn delete_all_for(&self, identity_id: &str) -> usize {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM device_sync_messages WHERE identity_id = ?1",
+            params![identity_id],
+        )
+        .unwrap_or(0)
     }
 }
 
