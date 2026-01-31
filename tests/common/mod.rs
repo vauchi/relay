@@ -20,7 +20,7 @@ pub fn create_test_store_with_data(
         for b in 0..blobs_per_recipient {
             store.store(
                 &format!("recipient-{}", r),
-                StoredBlob::new(format!("sender-{}", b % 10), vec![r as u8, b as u8]),
+                StoredBlob::new(vec![r as u8, b as u8]),
             );
         }
     }

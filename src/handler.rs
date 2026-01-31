@@ -122,7 +122,11 @@ mod protocol {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct EncryptedUpdate {
         pub recipient_id: String,
-        pub sender_id: String,
+        /// Accepted for backward compatibility with older clients but not stored or forwarded.
+        /// The relay must not learn who sent a message — sender identity belongs inside the
+        /// encrypted ciphertext.
+        #[serde(default)]
+        pub sender_id: Option<String>,
         pub ciphertext: Vec<u8>,
     }
 
@@ -226,9 +230,9 @@ mod protocol {
     }
 
     /// Creates an encrypted update envelope for delivery.
+    /// The relay does not include sender identity — it only forwards the opaque ciphertext.
     pub fn create_update_delivery(
         blob_id: &str,
-        sender_id: &str,
         recipient_id: &str,
         data: &[u8],
     ) -> MessageEnvelope {
@@ -241,7 +245,7 @@ mod protocol {
                 .as_secs(),
             payload: MessagePayload::EncryptedUpdate(EncryptedUpdate {
                 recipient_id: recipient_id.to_string(),
-                sender_id: sender_id.to_string(),
+                sender_id: None,
                 ciphertext: data.to_vec(),
             }),
         }
@@ -374,8 +378,7 @@ pub async fn handle_connection(
     // Send any pending blobs for this client
     let pending = storage.peek(&client_id);
     for blob in pending {
-        let envelope =
-            protocol::create_update_delivery(&blob.id, &blob.sender_id, &client_id, &blob.data);
+        let envelope = protocol::create_update_delivery(&blob.id, &client_id, &blob.data);
         match protocol::encode_message(&envelope) {
             Ok(data) => {
                 if write.send(Message::Binary(data)).await.is_err() {
@@ -467,8 +470,8 @@ pub async fn handle_connection(
 
                 match envelope.payload {
                     protocol::MessagePayload::EncryptedUpdate(update) => {
-                        // Store blob for recipient
-                        let blob = StoredBlob::new(update.sender_id, update.ciphertext);
+                        // Store blob for recipient (sender_id deliberately not stored)
+                        let blob = StoredBlob::new(update.ciphertext);
                         storage.store(&update.recipient_id, blob);
 
                         // Send acknowledgment - Stored means relay has persisted the message

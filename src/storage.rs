@@ -19,8 +19,6 @@ use rusqlite::{params, Connection};
 pub struct StoredBlob {
     /// Unique blob ID.
     pub id: String,
-    /// Sender's identity (for tracking, not revealed to recipient).
-    pub sender_id: String,
     /// The encrypted data (opaque to the relay).
     pub data: Vec<u8>,
     /// When the blob was stored (Unix timestamp in seconds).
@@ -29,7 +27,7 @@ pub struct StoredBlob {
 
 impl StoredBlob {
     /// Creates a new stored blob.
-    pub fn new(sender_id: String, data: Vec<u8>) -> Self {
+    pub fn new(data: Vec<u8>) -> Self {
         let created_at_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -37,7 +35,6 @@ impl StoredBlob {
 
         StoredBlob {
             id: uuid::Uuid::new_v4().to_string(),
-            sender_id,
             data,
             created_at_secs,
         }
@@ -186,7 +183,7 @@ impl BlobStore for MemoryBlobStore {
         blobs
             .values()
             .flat_map(|q| q.iter())
-            .map(|b| b.data.len() + b.id.len() + b.sender_id.len() + 8)
+            .map(|b| b.data.len() + b.id.len() + 8)
             .sum()
     }
 }
@@ -213,17 +210,19 @@ impl SqliteBlobStore {
              PRAGMA cache_size=10000;",
         )?;
 
-        // Create table if not exists
+        // Create table if not exists (v2 schema: no sender_id)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS blobs (
                 id TEXT PRIMARY KEY,
                 recipient_id TEXT NOT NULL,
-                sender_id TEXT NOT NULL,
                 data BLOB NOT NULL,
                 created_at_secs INTEGER NOT NULL
             )",
             [],
         )?;
+
+        // Migrate from v1 schema (with sender_id) to v2 (without)
+        Self::migrate_drop_sender_id(&conn)?;
 
         // Create index for recipient lookups
         conn.execute(
@@ -242,6 +241,34 @@ impl SqliteBlobStore {
         })
     }
 
+    /// Migrates v1 schema (with sender_id column) to v2 (without).
+    /// No-op if the column doesn't exist.
+    fn migrate_drop_sender_id(conn: &Connection) -> Result<(), rusqlite::Error> {
+        // Check if sender_id column exists
+        let has_sender_id: bool = conn
+            .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='blobs'")?
+            .query_row([], |row| row.get::<_, String>(0))
+            .map(|sql| sql.contains("sender_id"))
+            .unwrap_or(false);
+
+        if has_sender_id {
+            conn.execute_batch(
+                "CREATE TABLE blobs_v2 (
+                    id TEXT PRIMARY KEY,
+                    recipient_id TEXT NOT NULL,
+                    data BLOB NOT NULL,
+                    created_at_secs INTEGER NOT NULL
+                );
+                INSERT INTO blobs_v2 (id, recipient_id, data, created_at_secs)
+                    SELECT id, recipient_id, data, created_at_secs FROM blobs;
+                DROP TABLE blobs;
+                ALTER TABLE blobs_v2 RENAME TO blobs;",
+            )?;
+        }
+
+        Ok(())
+    }
+
     /// Creates an in-memory SQLite database (for testing).
     #[cfg(test)]
     pub fn in_memory() -> Result<Self, rusqlite::Error> {
@@ -253,12 +280,11 @@ impl BlobStore for SqliteBlobStore {
     fn store(&self, recipient_id: &str, blob: StoredBlob) {
         let conn = self.conn.lock().unwrap();
         let _ = conn.execute(
-            "INSERT INTO blobs (id, recipient_id, sender_id, data, created_at_secs)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO blobs (id, recipient_id, data, created_at_secs)
+             VALUES (?1, ?2, ?3, ?4)",
             params![
                 blob.id,
                 recipient_id,
-                blob.sender_id,
                 blob.data,
                 blob.created_at_secs as i64
             ],
@@ -269,7 +295,7 @@ impl BlobStore for SqliteBlobStore {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, sender_id, data, created_at_secs
+                "SELECT id, data, created_at_secs
                  FROM blobs WHERE recipient_id = ?1
                  ORDER BY created_at_secs ASC",
             )
@@ -278,9 +304,8 @@ impl BlobStore for SqliteBlobStore {
         stmt.query_map(params![recipient_id], |row| {
             Ok(StoredBlob {
                 id: row.get(0)?,
-                sender_id: row.get(1)?,
-                data: row.get(2)?,
-                created_at_secs: row.get::<_, i64>(3)? as u64,
+                data: row.get(1)?,
+                created_at_secs: row.get::<_, i64>(2)? as u64,
             })
         })
         .unwrap()
@@ -396,7 +421,7 @@ mod tests {
     use super::*;
 
     fn test_store_impl(store: &dyn BlobStore) {
-        let blob = StoredBlob::new("sender-1".to_string(), vec![1, 2, 3]);
+        let blob = StoredBlob::new(vec![1, 2, 3]);
         let blob_id = blob.id.clone();
 
         store.store("recipient-1", blob);
@@ -412,14 +437,8 @@ mod tests {
     }
 
     fn test_take_impl(store: &dyn BlobStore) {
-        store.store(
-            "recipient-1",
-            StoredBlob::new("sender-1".to_string(), vec![1]),
-        );
-        store.store(
-            "recipient-1",
-            StoredBlob::new("sender-2".to_string(), vec![2]),
-        );
+        store.store("recipient-1", StoredBlob::new(vec![1]));
+        store.store("recipient-1", StoredBlob::new(vec![2]));
 
         let taken = store.take("recipient-1");
         assert_eq!(taken.len(), 2);
@@ -430,8 +449,8 @@ mod tests {
     }
 
     fn test_acknowledge_impl(store: &dyn BlobStore) {
-        let blob1 = StoredBlob::new("sender-1".to_string(), vec![1]);
-        let blob2 = StoredBlob::new("sender-2".to_string(), vec![2]);
+        let blob1 = StoredBlob::new(vec![1]);
+        let blob2 = StoredBlob::new(vec![2]);
         let blob1_id = blob1.id.clone();
 
         store.store("recipient-1", blob1);
@@ -446,10 +465,7 @@ mod tests {
     }
 
     fn test_cleanup_impl(store: &dyn BlobStore) {
-        store.store(
-            "recipient-1",
-            StoredBlob::new("sender-1".to_string(), vec![1]),
-        );
+        store.store("recipient-1", StoredBlob::new(vec![1]));
 
         // With a long TTL, nothing should be removed
         let removed = store.cleanup_expired(Duration::from_secs(3600));
@@ -512,14 +528,8 @@ mod tests {
         // Store some blobs
         {
             let store = SqliteBlobStore::open(&db_path).unwrap();
-            store.store(
-                "recipient-1",
-                StoredBlob::new("sender-1".to_string(), vec![1, 2, 3]),
-            );
-            store.store(
-                "recipient-2",
-                StoredBlob::new("sender-2".to_string(), vec![4, 5, 6]),
-            );
+            store.store("recipient-1", StoredBlob::new(vec![1, 2, 3]));
+            store.store("recipient-2", StoredBlob::new(vec![4, 5, 6]));
             assert_eq!(store.blob_count(), 2);
         }
 
@@ -541,18 +551,9 @@ mod tests {
 
         assert_eq!(store.blob_count(), 0);
 
-        store.store(
-            "recipient-1",
-            StoredBlob::new("sender-1".to_string(), vec![1]),
-        );
-        store.store(
-            "recipient-1",
-            StoredBlob::new("sender-2".to_string(), vec![2]),
-        );
-        store.store(
-            "recipient-2",
-            StoredBlob::new("sender-3".to_string(), vec![3]),
-        );
+        store.store("recipient-1", StoredBlob::new(vec![1]));
+        store.store("recipient-1", StoredBlob::new(vec![2]));
+        store.store("recipient-2", StoredBlob::new(vec![3]));
 
         assert_eq!(store.blob_count(), 3);
         assert_eq!(store.recipient_count(), 2);
@@ -562,10 +563,7 @@ mod tests {
     fn test_acknowledge_nonexistent() {
         let store = MemoryBlobStore::new();
 
-        store.store(
-            "recipient-1",
-            StoredBlob::new("sender-1".to_string(), vec![1]),
-        );
+        store.store("recipient-1", StoredBlob::new(vec![1]));
 
         let removed = store.acknowledge("recipient-1", "nonexistent-id");
         assert!(!removed);
@@ -579,6 +577,61 @@ mod tests {
         let store = MemoryBlobStore::new();
         let peeked = store.peek("nonexistent");
         assert!(peeked.is_empty());
+    }
+
+    #[test]
+    fn test_stored_blob_has_no_sender_metadata() {
+        let blob = StoredBlob::new(vec![1, 2, 3]);
+        // StoredBlob must not contain any sender-identifying information.
+        // The relay is zero-knowledge: it only knows recipient routing IDs and opaque ciphertext.
+        assert!(!blob.id.is_empty());
+        assert_eq!(blob.data, vec![1, 2, 3]);
+        assert!(blob.created_at_secs > 0);
+    }
+
+    #[test]
+    fn test_sqlite_migration_from_v1_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("migration_test.db");
+
+        // Create a v1 database with sender_id column
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE blobs (
+                    id TEXT PRIMARY KEY,
+                    recipient_id TEXT NOT NULL,
+                    sender_id TEXT NOT NULL,
+                    data BLOB NOT NULL,
+                    created_at_secs INTEGER NOT NULL
+                );
+                INSERT INTO blobs VALUES ('blob-1', 'recipient-1', 'sender-should-be-dropped', X'010203', 1000);",
+            ).unwrap();
+        }
+
+        // Open with new code — migration should drop sender_id
+        let store = SqliteBlobStore::open(&db_path).unwrap();
+        assert_eq!(store.blob_count(), 1);
+
+        let blobs = store.peek("recipient-1");
+        assert_eq!(blobs.len(), 1);
+        assert_eq!(blobs[0].id, "blob-1");
+        assert_eq!(blobs[0].data, vec![1, 2, 3]);
+
+        // Verify sender_id column no longer exists
+        let conn = store.conn.lock().unwrap();
+        let schema: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='blobs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            !schema.contains("sender_id"),
+            "sender_id column should be removed after migration, got: {}",
+            schema
+        );
     }
 
     #[test]

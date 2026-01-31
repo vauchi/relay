@@ -21,7 +21,7 @@ mod common;
 fn test_blob_store_and_retrieve() {
     let store = MemoryBlobStore::new();
 
-    let blob = StoredBlob::new("sender-abc".to_string(), vec![1, 2, 3, 4, 5]);
+    let blob = StoredBlob::new(vec![1, 2, 3, 4, 5]);
     let blob_id = blob.id.clone();
 
     store.store("recipient-xyz", blob);
@@ -29,7 +29,6 @@ fn test_blob_store_and_retrieve() {
     let pending = store.peek("recipient-xyz");
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].id, blob_id);
-    assert_eq!(pending[0].sender_id, "sender-abc");
     assert_eq!(pending[0].data, vec![1, 2, 3, 4, 5]);
 }
 
@@ -41,15 +40,15 @@ fn test_multiple_blobs_for_recipient() {
 
     store.store(
         "recipient-1",
-        StoredBlob::new("sender-a".to_string(), vec![1]),
+        StoredBlob::new(vec![1]),
     );
     store.store(
         "recipient-1",
-        StoredBlob::new("sender-b".to_string(), vec![2]),
+        StoredBlob::new(vec![2]),
     );
     store.store(
         "recipient-1",
-        StoredBlob::new("sender-a".to_string(), vec![3]),
+        StoredBlob::new(vec![3]),
     );
 
     let pending = store.peek("recipient-1");
@@ -64,15 +63,15 @@ fn test_blobs_separate_per_recipient() {
 
     store.store(
         "recipient-1",
-        StoredBlob::new("sender".to_string(), vec![1]),
+        StoredBlob::new(vec![1]),
     );
     store.store(
         "recipient-2",
-        StoredBlob::new("sender".to_string(), vec![2]),
+        StoredBlob::new(vec![2]),
     );
     store.store(
         "recipient-3",
-        StoredBlob::new("sender".to_string(), vec![3]),
+        StoredBlob::new(vec![3]),
     );
 
     assert_eq!(store.peek("recipient-1").len(), 1);
@@ -89,8 +88,8 @@ fn test_blobs_separate_per_recipient() {
 fn test_acknowledge_removes_blob() {
     let store = MemoryBlobStore::new();
 
-    let blob1 = StoredBlob::new("sender".to_string(), vec![1]);
-    let blob2 = StoredBlob::new("sender".to_string(), vec![2]);
+    let blob1 = StoredBlob::new(vec![1]);
+    let blob2 = StoredBlob::new(vec![2]);
     let blob1_id = blob1.id.clone();
 
     store.store("recipient", blob1);
@@ -117,7 +116,7 @@ fn test_acknowledge_removes_blob() {
 fn test_acknowledge_nonexistent_returns_false() {
     let store = MemoryBlobStore::new();
 
-    store.store("recipient", StoredBlob::new("sender".to_string(), vec![1]));
+    store.store("recipient", StoredBlob::new(vec![1]));
 
     let result = store.acknowledge("recipient", "nonexistent-id");
     assert!(!result);
@@ -133,8 +132,8 @@ fn test_acknowledge_nonexistent_returns_false() {
 fn test_take_removes_all() {
     let store = MemoryBlobStore::new();
 
-    store.store("recipient", StoredBlob::new("sender".to_string(), vec![1]));
-    store.store("recipient", StoredBlob::new("sender".to_string(), vec![2]));
+    store.store("recipient", StoredBlob::new(vec![1]));
+    store.store("recipient", StoredBlob::new(vec![2]));
 
     let taken = store.take("recipient");
     assert_eq!(taken.len(), 2);
@@ -151,7 +150,7 @@ fn test_take_removes_all() {
 fn test_cleanup_expired() {
     let store = MemoryBlobStore::new();
 
-    store.store("recipient", StoredBlob::new("sender".to_string(), vec![1]));
+    store.store("recipient", StoredBlob::new(vec![1]));
 
     // With long TTL, nothing should expire
     let removed = store.cleanup_expired(Duration::from_secs(3600));
@@ -175,15 +174,15 @@ fn test_storage_metrics() {
 
     store.store(
         "recipient-1",
-        StoredBlob::new("sender".to_string(), vec![1, 2, 3]),
+        StoredBlob::new(vec![1, 2, 3]),
     );
     store.store(
         "recipient-1",
-        StoredBlob::new("sender".to_string(), vec![4, 5]),
+        StoredBlob::new(vec![4, 5]),
     );
     store.store(
         "recipient-2",
-        StoredBlob::new("sender".to_string(), vec![6]),
+        StoredBlob::new(vec![6]),
     );
 
     assert_eq!(store.blob_count(), 3);
@@ -211,7 +210,7 @@ fn test_concurrent_access() {
             for j in 0..100 {
                 store.store(
                     &format!("recipient-{}", i),
-                    StoredBlob::new("sender".to_string(), vec![j as u8]),
+                    StoredBlob::new(vec![j as u8]),
                 );
             }
         }));
@@ -240,7 +239,7 @@ fn test_peek_idempotent() {
 
     store.store(
         "recipient",
-        StoredBlob::new("sender".to_string(), vec![1, 2, 3]),
+        StoredBlob::new(vec![1, 2, 3]),
     );
 
     // Multiple peeks should return the same data

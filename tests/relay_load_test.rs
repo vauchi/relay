@@ -30,7 +30,7 @@ fn test_high_throughput_storage() {
     for i in 0..num_operations {
         store.store(
             &format!("recipient-{}", i % 100),
-            StoredBlob::new("sender".to_string(), vec![i as u8; 256]),
+            StoredBlob::new(vec![i as u8; 256]),
         );
     }
 
@@ -71,7 +71,7 @@ fn test_concurrent_read_write() {
             for i in 0..ops_per_thread {
                 store.store(
                     &format!("recipient-{}", w),
-                    StoredBlob::new("sender".to_string(), vec![i as u8]),
+                    StoredBlob::new(vec![i as u8]),
                 );
                 // Small yield to increase interleaving
                 if i % 100 == 0 {
@@ -146,7 +146,7 @@ fn test_memory_bounded_with_cleanup() {
     for i in 0..1000 {
         store.store(
             &format!("recipient-{}", i),
-            StoredBlob::new("sender".to_string(), vec![0u8; 1024]),
+            StoredBlob::new(vec![0u8; 1024]),
         );
     }
 
@@ -172,7 +172,7 @@ fn test_large_blob_handling() {
 
     store.store(
         "recipient",
-        StoredBlob::new("sender".to_string(), large_data.clone()),
+        StoredBlob::new(large_data.clone()),
     );
 
     let retrieved = store.peek("recipient");
@@ -193,7 +193,7 @@ fn test_many_recipients() {
     for i in 0..num_recipients {
         store.store(
             &format!("recipient-{:05}", i),
-            StoredBlob::new("sender".to_string(), vec![i as u8]),
+            StoredBlob::new(vec![i as u8]),
         );
     }
 
@@ -262,7 +262,7 @@ fn test_concurrent_acknowledgments() {
     // Store blobs with known IDs
     let mut blob_ids = vec![];
     for i in 0..100 {
-        let blob = StoredBlob::new("sender".to_string(), vec![i as u8]);
+        let blob = StoredBlob::new(vec![i as u8]);
         blob_ids.push(blob.id.clone());
         store.store("recipient", blob);
     }
@@ -300,7 +300,7 @@ fn test_storage_memory_pressure() {
         for b in 0..100 {
             store.store(
                 &format!("recipient-{}", r),
-                StoredBlob::new(format!("sender-{}", b), vec![r as u8, b as u8]),
+                StoredBlob::new(vec![r as u8, b as u8]),
             );
         }
     }
