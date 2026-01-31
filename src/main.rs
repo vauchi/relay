@@ -21,6 +21,7 @@ use tracing::{error, info};
 
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_limit::ConnectionLimiter;
+use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::{
     DeviceSyncStore, MemoryDeviceSyncStore, SqliteDeviceSyncStore,
 };
@@ -131,6 +132,10 @@ async fn main() {
             )
         }
     };
+
+    // Initialize connection registry for delivery notifications
+    let registry = Arc::new(ConnectionRegistry::new());
+    let blob_sender_map = handler::new_blob_sender_map();
 
     // Check for metrics auth token (optional additional protection)
     let metrics_token = std::env::var("RELAY_METRICS_TOKEN").ok();
@@ -243,6 +248,8 @@ async fn main() {
         let recovery_storage = recovery_storage.clone();
         let device_sync_storage = device_sync_storage.clone();
         let rate_limiter = rate_limiter.clone();
+        let registry = registry.clone();
+        let blob_sender_map = blob_sender_map.clone();
         let metrics = metrics.clone();
         let max_message_size = config.max_message_size;
         let idle_timeout = config.idle_timeout();
@@ -342,6 +349,8 @@ async fn main() {
                         recovery_storage,
                         device_sync_storage,
                         rate_limiter,
+                        registry,
+                        blob_sender_map,
                         max_message_size,
                         idle_timeout,
                     )

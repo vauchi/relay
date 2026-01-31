@@ -16,6 +16,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 use tracing::{debug, error, warn};
 
+use crate::connection_registry::{ConnectionRegistry, RegistryMessage};
 use crate::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
 use crate::rate_limit::RateLimiter;
 use crate::recovery_storage::{RecoveryProofStore, StoredRecoveryProof};
@@ -308,6 +309,16 @@ mod protocol {
     }
 }
 
+/// In-memory map of blob_id → sender_client_id for delivery notifications.
+/// This is ephemeral (not persisted) — delivery acks only work when the
+/// sender is still connected when the recipient picks up the blob.
+pub type BlobSenderMap = Arc<std::sync::RwLock<std::collections::HashMap<String, String>>>;
+
+/// Creates a new empty blob sender map.
+pub fn new_blob_sender_map() -> BlobSenderMap {
+    Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
 /// Handles a WebSocket connection.
 pub async fn handle_connection(
     ws_stream: WebSocketStream<TcpStream>,
@@ -315,6 +326,8 @@ pub async fn handle_connection(
     recovery_storage: Arc<dyn RecoveryProofStore>,
     device_sync_storage: Arc<dyn DeviceSyncStore>,
     rate_limiter: Arc<RateLimiter>,
+    registry: Arc<ConnectionRegistry>,
+    blob_sender_map: BlobSenderMap,
     max_message_size: usize,
     idle_timeout: Duration,
 ) {
@@ -373,20 +386,40 @@ pub async fn handle_connection(
 
     debug!("[{}] Client connected (has_device_id: {})", session, device_id.is_some());
 
-    // Send any pending blobs for this client
+    // Register in connection registry for delivery notifications
+    let mut registry_rx = registry.register(&client_id);
+
+    // Send any pending blobs for this client and notify senders
     let pending = storage.peek(&client_id);
+    let pending_blob_ids: Vec<String> = pending.iter().map(|b| b.id.clone()).collect();
     for blob in pending {
         let envelope = protocol::create_update_delivery(&blob.id, &client_id, &blob.data);
         match protocol::encode_message(&envelope) {
             Ok(data) => {
                 if write.send(Message::Binary(data)).await.is_err() {
                     warn!("[{}] Failed to send pending blob", session);
+                    registry.unregister(&client_id);
                     return;
                 }
             }
             Err(e) => {
                 error!("[{}] Failed to encode blob delivery: {}", session, e);
             }
+        }
+    }
+
+    // Send Delivered acks to senders for blobs we just delivered
+    for blob_id in &pending_blob_ids {
+        let sender_client_id = {
+            blob_sender_map.read().unwrap().get(blob_id).cloned()
+        };
+        if let Some(sender_id) = sender_client_id {
+            let ack = protocol::create_ack(blob_id, protocol::AckStatus::Delivered);
+            if let Ok(ack_data) = protocol::encode_message(&ack) {
+                registry.try_send(&sender_id, RegistryMessage { data: ack_data });
+            }
+            // Remove from sender map after delivery notification
+            blob_sender_map.write().unwrap().remove(blob_id);
         }
     }
 
@@ -420,17 +453,30 @@ pub async fn handle_connection(
         }
     }
 
-    // Process incoming messages with idle timeout
+    // Process incoming messages with idle timeout.
+    // Uses select! to multiplex between WebSocket reads and registry messages
+    // (delivery notifications from other client handlers).
     loop {
-        let msg = match timeout(idle_timeout, read.next()).await {
-            Ok(Some(msg)) => msg,
-            Ok(None) => {
-                debug!("[{}] Disconnected", session);
-                break;
+        let msg = tokio::select! {
+            // WebSocket message from client
+            ws_msg = timeout(idle_timeout, read.next()) => {
+                match ws_msg {
+                    Ok(Some(msg)) => msg,
+                    Ok(None) => {
+                        debug!("[{}] Disconnected", session);
+                        break;
+                    }
+                    Err(_) => {
+                        warn!("[{}] Idle timeout (slowloris protection)", session);
+                        break;
+                    }
+                }
             }
-            Err(_) => {
-                warn!("[{}] Idle timeout (slowloris protection)", session);
-                break;
+            // Registry message (delivery notification from another handler)
+            Some(registry_msg) = registry_rx.recv() => {
+                // Forward the pre-encoded message to this client's WebSocket
+                let _ = write.send(Message::Binary(registry_msg.data)).await;
+                continue;
             }
         };
 
@@ -461,7 +507,14 @@ pub async fn handle_connection(
                     protocol::MessagePayload::EncryptedUpdate(update) => {
                         // Store blob for recipient (sender_id deliberately not stored)
                         let blob = StoredBlob::new(update.ciphertext);
+                        let blob_id = blob.id.clone();
                         storage.store(&update.recipient_id, blob);
+
+                        // Track sender for delivery notification (ephemeral, in-memory only)
+                        blob_sender_map
+                            .write()
+                            .unwrap()
+                            .insert(blob_id, client_id.clone());
 
                         // Send acknowledgment - Stored means relay has persisted the message
                         let ack =
@@ -476,6 +529,26 @@ pub async fn handle_connection(
                         // Client acknowledging receipt of a blob
                         if storage.acknowledge(&client_id, &ack.message_id) {
                             debug!("[{}] Blob acknowledged", session);
+
+                            // If this is ReceivedByRecipient, forward to the original sender
+                            if ack.status == protocol::AckStatus::ReceivedByRecipient {
+                                let sender_client_id = {
+                                    blob_sender_map.read().unwrap().get(&ack.message_id).cloned()
+                                };
+                                if let Some(sender_id) = sender_client_id {
+                                    let fwd_ack = protocol::create_ack(
+                                        &ack.message_id,
+                                        protocol::AckStatus::ReceivedByRecipient,
+                                    );
+                                    if let Ok(ack_data) = protocol::encode_message(&fwd_ack) {
+                                        registry.try_send(
+                                            &sender_id,
+                                            RegistryMessage { data: ack_data },
+                                        );
+                                    }
+                                    blob_sender_map.write().unwrap().remove(&ack.message_id);
+                                }
+                            }
                         }
                     }
                     protocol::MessagePayload::Handshake(_) => {
@@ -587,4 +660,7 @@ pub async fn handle_connection(
             }
         }
     }
+
+    // Unregister from connection registry on disconnect
+    registry.unregister(&client_id);
 }
