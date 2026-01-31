@@ -91,6 +91,8 @@ mod protocol {
         // Device sync operations (inter-device synchronization)
         DeviceSyncMessage(DeviceSyncMessage),
         DeviceSyncAck(DeviceSyncAck),
+        // Server response to client handshake (version negotiation)
+        HandshakeAck(HandshakeAck),
         // Data purge (GDPR-friendly: allows clients to delete all their stored data)
         PurgeRequest(PurgeRequest),
         PurgeResponse(PurgeResponse),
@@ -169,6 +171,40 @@ mod protocol {
         /// for this client's blobs, preventing online status inference.
         #[serde(default)]
         pub suppress_presence: bool,
+    }
+
+    /// Server response to client handshake for version negotiation.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct HandshakeAck {
+        /// Server protocol version.
+        pub protocol_version: u8,
+        /// Server software version.
+        pub server_version: String,
+        /// Supported features list.
+        pub features: Vec<String>,
+    }
+
+    /// Creates a handshake acknowledgment envelope.
+    pub fn create_handshake_ack() -> MessageEnvelope {
+        MessageEnvelope {
+            version: PROTOCOL_VERSION,
+            message_id: uuid::Uuid::new_v4().to_string(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            payload: MessagePayload::HandshakeAck(HandshakeAck {
+                protocol_version: PROTOCOL_VERSION,
+                server_version: env!("CARGO_PKG_VERSION").to_string(),
+                features: vec![
+                    "routing_token".to_string(),
+                    "suppress_presence".to_string(),
+                    "purge".to_string(),
+                    "device_sync".to_string(),
+                    "recovery_proof".to_string(),
+                ],
+            }),
+        }
     }
 
     // =========================================================================
@@ -382,6 +418,13 @@ pub struct QuotaLimits {
     pub max_bytes: usize,
 }
 
+/// Rate limit configuration for recovery proof operations.
+/// Stricter than general message rate limit to prevent key hash enumeration.
+#[derive(Debug, Clone, Copy)]
+pub struct RecoveryRateLimit {
+    pub per_min: u32,
+}
+
 /// Handles a WebSocket connection.
 pub async fn handle_connection(
     ws_stream: WebSocketStream<TcpStream>,
@@ -389,6 +432,7 @@ pub async fn handle_connection(
     recovery_storage: Arc<dyn RecoveryProofStore>,
     device_sync_storage: Arc<dyn DeviceSyncStore>,
     rate_limiter: Arc<RateLimiter>,
+    recovery_rate_limiter: Arc<RateLimiter>,
     registry: Arc<ConnectionRegistry>,
     blob_sender_map: BlobSenderMap,
     max_message_size: usize,
@@ -460,6 +504,15 @@ pub async fn handle_connection(
     let routing_id = routing_token.unwrap_or_else(|| client_id.clone());
 
     debug!("[{}] Client connected (has_device_id: {}, suppress_presence: {})", session, device_id.is_some(), suppress_presence);
+
+    // Send HandshakeAck with server version and supported features
+    let hs_ack = protocol::create_handshake_ack();
+    if let Ok(ack_data) = protocol::encode_message(&hs_ack) {
+        if write.send(Message::Binary(ack_data)).await.is_err() {
+            warn!("[{}] Failed to send HandshakeAck", session);
+            return;
+        }
+    }
 
     // Register in connection registry for delivery notifications
     let mut registry_rx = registry.register(&routing_id);
@@ -652,6 +705,11 @@ pub async fn handle_connection(
                         // Ignore duplicate handshakes
                     }
                     protocol::MessagePayload::RecoveryProofStore(store_msg) => {
+                        // Recovery operations have a stricter rate limit (anti-enumeration)
+                        if !recovery_rate_limiter.consume(&routing_id) {
+                            warn!("[{}] Recovery rate limited", session);
+                            continue;
+                        }
                         // Store a recovery proof
                         if let Ok(key_hash) = hex_to_hash(&store_msg.key_hash) {
                             let proof = StoredRecoveryProof::new(key_hash, store_msg.proof_data);
@@ -672,6 +730,11 @@ pub async fn handle_connection(
                         }
                     }
                     protocol::MessagePayload::RecoveryProofQuery(query) => {
+                        // Recovery operations have a stricter rate limit (anti-enumeration)
+                        if !recovery_rate_limiter.consume(&routing_id) {
+                            warn!("[{}] Recovery rate limited", session);
+                            continue;
+                        }
                         // Batch query for recovery proofs
                         let key_hashes: Vec<[u8; 32]> = query
                             .key_hashes
@@ -699,6 +762,10 @@ pub async fn handle_connection(
                     protocol::MessagePayload::RecoveryProofResponse(_) => {
                         // Clients shouldn't send responses, ignore
                         debug!("[{}] Unexpected RecoveryProofResponse", session);
+                    }
+                    protocol::MessagePayload::HandshakeAck(_) => {
+                        // Server-only message, clients shouldn't send this
+                        debug!("[{}] Unexpected HandshakeAck", session);
                     }
                     protocol::MessagePayload::DeviceSyncMessage(sync_msg) => {
                         // Validate that sender is the connected client
@@ -903,6 +970,34 @@ mod tests {
             assert_eq!(pr.device_sync_deleted, 2);
         } else {
             panic!("Expected PurgeResponse payload");
+        }
+    }
+
+    #[test]
+    fn test_handshake_ack_creation() {
+        let ack = protocol::create_handshake_ack();
+        if let protocol::MessagePayload::HandshakeAck(hs_ack) = ack.payload {
+            assert_eq!(hs_ack.protocol_version, protocol::PROTOCOL_VERSION);
+            assert!(!hs_ack.server_version.is_empty());
+            assert!(hs_ack.features.contains(&"routing_token".to_string()));
+            assert!(hs_ack.features.contains(&"suppress_presence".to_string()));
+            assert!(hs_ack.features.contains(&"purge".to_string()));
+            assert!(hs_ack.features.contains(&"recovery_proof".to_string()));
+            assert!(hs_ack.features.contains(&"device_sync".to_string()));
+        } else {
+            panic!("Expected HandshakeAck payload");
+        }
+    }
+
+    #[test]
+    fn test_handshake_ack_roundtrip() {
+        let ack = protocol::create_handshake_ack();
+        let encoded = protocol::encode_message(&ack).unwrap();
+        let decoded = protocol::decode_message(&encoded).unwrap();
+        if let protocol::MessagePayload::HandshakeAck(hs_ack) = decoded.payload {
+            assert_eq!(hs_ack.protocol_version, protocol::PROTOCOL_VERSION);
+        } else {
+            panic!("Expected HandshakeAck payload after roundtrip");
         }
     }
 

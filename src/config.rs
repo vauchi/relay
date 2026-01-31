@@ -37,6 +37,9 @@ pub struct RelayConfig {
     pub max_blobs_per_user: usize,
     /// Maximum total storage bytes per recipient (0 = unlimited).
     pub max_storage_per_user: usize,
+    /// Recovery proof rate limit (queries per minute per client).
+    /// Stricter than general rate limit to prevent key hash enumeration.
+    pub recovery_rate_limit_per_min: u32,
 }
 
 impl Default for RelayConfig {
@@ -53,6 +56,7 @@ impl Default for RelayConfig {
             idle_timeout_secs: 300,       // 5 minutes (slowloris protection)
             max_blobs_per_user: 1000,     // 1000 blobs per recipient
             max_storage_per_user: 50_000_000, // 50 MB per recipient
+            recovery_rate_limit_per_min: 10,  // 10 recovery queries per minute (anti-enumeration)
         }
     }
 }
@@ -127,6 +131,12 @@ impl RelayConfig {
             }
         }
 
+        if let Ok(val) = std::env::var("RELAY_RECOVERY_RATE_LIMIT") {
+            if let Ok(parsed) = val.parse() {
+                config.recovery_rate_limit_per_min = parsed;
+            }
+        }
+
         config
     }
 
@@ -165,6 +175,7 @@ mod tests {
         assert_eq!(config.data_dir, std::path::PathBuf::from("./data"));
         assert_eq!(config.max_blobs_per_user, 1000);
         assert_eq!(config.max_storage_per_user, 50_000_000);
+        assert_eq!(config.recovery_rate_limit_per_min, 10);
     }
 
     #[test]

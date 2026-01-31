@@ -77,6 +77,7 @@ async fn main() {
     }
 
     let rate_limiter = Arc::new(RateLimiter::new(config.rate_limit_per_min));
+    let recovery_rate_limiter = Arc::new(RateLimiter::new(config.recovery_rate_limit_per_min));
     let connection_limiter = ConnectionLimiter::new(config.max_connections);
     let start_time = Instant::now();
 
@@ -204,16 +205,23 @@ async fn main() {
         }
     });
 
-    // Start cleanup task for rate limiter (remove stale client buckets)
+    // Start cleanup task for rate limiters (remove stale client buckets)
     let cleanup_rate_limiter = rate_limiter.clone();
+    let cleanup_recovery_rate_limiter = recovery_rate_limiter.clone();
     tokio::spawn(async move {
         loop {
             // Clean up every 10 minutes, removing clients idle for 30 minutes
             tokio::time::sleep(std::time::Duration::from_secs(600)).await;
             let removed =
                 cleanup_rate_limiter.cleanup_inactive(std::time::Duration::from_secs(1800));
-            if removed > 0 {
-                info!("Cleaned up {} stale rate limiter entries", removed);
+            let recovery_removed =
+                cleanup_recovery_rate_limiter.cleanup_inactive(std::time::Duration::from_secs(1800));
+            if removed + recovery_removed > 0 {
+                info!(
+                    "Cleaned up {} stale rate limiter entries ({} recovery)",
+                    removed + recovery_removed,
+                    recovery_removed
+                );
             }
         }
     });
@@ -247,6 +255,7 @@ async fn main() {
         let recovery_storage = recovery_storage.clone();
         let device_sync_storage = device_sync_storage.clone();
         let rate_limiter = rate_limiter.clone();
+        let recovery_rate_limiter = recovery_rate_limiter.clone();
         let registry = registry.clone();
         let blob_sender_map = blob_sender_map.clone();
         let metrics = metrics.clone();
@@ -352,6 +361,7 @@ async fn main() {
                         recovery_storage,
                         device_sync_storage,
                         rate_limiter,
+                        recovery_rate_limiter,
                         registry,
                         blob_sender_map,
                         max_message_size,
