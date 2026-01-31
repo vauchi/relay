@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # Build stage
-FROM rust:1.78-bookworm AS builder
+FROM rust:1.84-bookworm AS builder
 
 WORKDIR /app
 
