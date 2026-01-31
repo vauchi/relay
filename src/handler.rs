@@ -318,6 +318,11 @@ pub async fn handle_connection(
     max_message_size: usize,
     idle_timeout: Duration,
 ) {
+    // Generate a random session label for logging.
+    // The relay must never log client_id (identity fingerprint) to prevent
+    // relay operators from identifying users in logs.
+    let session = &uuid::Uuid::new_v4().to_string()[..8];
+
     let (mut write, mut read) = ws_stream.split();
 
     // Wait for handshake to get client ID and optional device ID (with timeout)
@@ -327,53 +332,46 @@ pub async fn handle_connection(
                 if let protocol::MessagePayload::Handshake(hs) = envelope.payload {
                     // Validate client_id format
                     if !validate_client_id(&hs.client_id) {
-                        warn!(
-                            "Invalid client_id format: {}",
-                            &hs.client_id.get(..16).unwrap_or("")
-                        );
+                        warn!("[{}] Invalid client_id format", session);
                         return;
                     }
                     // Validate device_id format if present
                     if let Some(ref did) = hs.device_id {
                         if !validate_client_id(did) {
-                            warn!("Invalid device_id format: {}", &did.get(..16).unwrap_or(""));
+                            warn!("[{}] Invalid device_id format", session);
                             return;
                         }
                     }
                     (hs.client_id, hs.device_id)
                 } else {
-                    warn!("Expected Handshake, got {:?}", envelope.payload);
+                    warn!("[{}] Expected Handshake, got {:?}", session, envelope.payload);
                     return;
                 }
             }
             Err(e) => {
-                warn!("Failed to decode handshake: {}", e);
+                warn!("[{}] Failed to decode handshake: {}", session, e);
                 return;
             }
         },
         Ok(Some(Ok(_))) => {
-            warn!("Expected binary message for handshake");
+            warn!("[{}] Expected binary message for handshake", session);
             return;
         }
         Ok(Some(Err(e))) => {
-            warn!("Error reading handshake: {}", e);
+            warn!("[{}] Error reading handshake: {}", session, e);
             return;
         }
         Ok(None) => {
-            debug!("Connection closed before handshake");
+            debug!("[{}] Connection closed before handshake", session);
             return;
         }
         Err(_) => {
-            warn!("Handshake timeout (slowloris protection)");
+            warn!("[{}] Handshake timeout (slowloris protection)", session);
             return;
         }
     };
 
-    debug!(
-        "Client identified as: {} (device: {:?})",
-        client_id,
-        device_id.as_ref().map(|d| &d[..16])
-    );
+    debug!("[{}] Client connected (has_device_id: {})", session, device_id.is_some());
 
     // Send any pending blobs for this client
     let pending = storage.peek(&client_id);
@@ -382,12 +380,12 @@ pub async fn handle_connection(
         match protocol::encode_message(&envelope) {
             Ok(data) => {
                 if write.send(Message::Binary(data)).await.is_err() {
-                    warn!("Failed to send pending blob to {}", client_id);
+                    warn!("[{}] Failed to send pending blob", session);
                     return;
                 }
             }
             Err(e) => {
-                error!("Failed to encode blob delivery: {}", e);
+                error!("[{}] Failed to encode blob delivery: {}", session, e);
             }
         }
     }
@@ -408,23 +406,17 @@ pub async fn handle_connection(
             match protocol::encode_message(&envelope) {
                 Ok(data) => {
                     if write.send(Message::Binary(data)).await.is_err() {
-                        warn!(
-                            "Failed to send pending device sync to {} / {}",
-                            client_id, did
-                        );
+                        warn!("[{}] Failed to send pending device sync", session);
                         return;
                     }
                 }
                 Err(e) => {
-                    error!("Failed to encode device sync delivery: {}", e);
+                    error!("[{}] Failed to encode device sync delivery: {}", session, e);
                 }
             }
         }
         if pending_count > 0 {
-            debug!(
-                "Sent {} pending device sync messages to {} / {}",
-                pending_count, client_id, did
-            );
+            debug!("[{}] Sent {} pending device sync messages", session, pending_count);
         }
     }
 
@@ -433,14 +425,11 @@ pub async fn handle_connection(
         let msg = match timeout(idle_timeout, read.next()).await {
             Ok(Some(msg)) => msg,
             Ok(None) => {
-                debug!("Client {} disconnected", client_id);
+                debug!("[{}] Disconnected", session);
                 break;
             }
             Err(_) => {
-                warn!(
-                    "Idle timeout for client {} (slowloris protection)",
-                    client_id
-                );
+                warn!("[{}] Idle timeout (slowloris protection)", session);
                 break;
             }
         };
@@ -449,13 +438,13 @@ pub async fn handle_connection(
             Ok(Message::Binary(data)) => {
                 // Check message size
                 if data.len() > max_message_size {
-                    warn!("Message too large from {}: {} bytes", client_id, data.len());
+                    warn!("[{}] Message too large: {} bytes", session, data.len());
                     continue;
                 }
 
                 // Rate limit check
                 if !rate_limiter.consume(&client_id) {
-                    warn!("Rate limited: {}", client_id);
+                    warn!("[{}] Rate limited", session);
                     continue;
                 }
 
@@ -463,7 +452,7 @@ pub async fn handle_connection(
                 let envelope = match protocol::decode_message(&data) {
                     Ok(e) => e,
                     Err(e) => {
-                        warn!("Failed to decode message from {}: {}", client_id, e);
+                        warn!("[{}] Failed to decode message: {}", session, e);
                         continue;
                     }
                 };
@@ -481,12 +470,12 @@ pub async fn handle_connection(
                             let _ = write.send(Message::Binary(ack_data)).await;
                         }
 
-                        debug!("Stored blob for {}", update.recipient_id);
+                        debug!("[{}] Stored blob", session);
                     }
                     protocol::MessagePayload::Acknowledgment(ack) => {
                         // Client acknowledging receipt of a blob
                         if storage.acknowledge(&client_id, &ack.message_id) {
-                            debug!("Blob {} acknowledged by {}", ack.message_id, client_id);
+                            debug!("[{}] Blob acknowledged", session);
                         }
                     }
                     protocol::MessagePayload::Handshake(_) => {
@@ -507,9 +496,9 @@ pub async fn handle_connection(
                                 let _ = write.send(Message::Binary(ack_data)).await;
                             }
 
-                            debug!("Stored recovery proof for key hash {}", store_msg.key_hash);
+                            debug!("[{}] Stored recovery proof", session);
                         } else {
-                            warn!("Invalid key hash format from {}", client_id);
+                            warn!("[{}] Invalid key hash format", session);
                         }
                     }
                     protocol::MessagePayload::RecoveryProofQuery(query) => {
@@ -535,23 +524,16 @@ pub async fn handle_connection(
                             let _ = write.send(Message::Binary(data)).await;
                         }
 
-                        debug!(
-                            "Processed recovery query with {} hashes from {}",
-                            query.key_hashes.len(),
-                            client_id
-                        );
+                        debug!("[{}] Processed recovery query with {} hashes", session, query.key_hashes.len());
                     }
                     protocol::MessagePayload::RecoveryProofResponse(_) => {
                         // Clients shouldn't send responses, ignore
-                        debug!("Unexpected RecoveryProofResponse from {}", client_id);
+                        debug!("[{}] Unexpected RecoveryProofResponse", session);
                     }
                     protocol::MessagePayload::DeviceSyncMessage(sync_msg) => {
                         // Validate that sender is the connected client
                         if sync_msg.identity_id != client_id {
-                            warn!(
-                                "DeviceSyncMessage identity mismatch: {} != {}",
-                                sync_msg.identity_id, client_id
-                            );
+                            warn!("[{}] DeviceSyncMessage identity mismatch", session);
                             continue;
                         }
 
@@ -572,29 +554,20 @@ pub async fn handle_connection(
                             let _ = write.send(Message::Binary(ack_data)).await;
                         }
 
-                        debug!(
-                            "Stored device sync for {} / {} (version {})",
-                            sync_msg.identity_id, sync_msg.target_device_id, sync_msg.version
-                        );
+                        debug!("[{}] Stored device sync (version {})", session, sync_msg.version);
                     }
                     protocol::MessagePayload::DeviceSyncAck(ack) => {
                         // Client acknowledging receipt of a device sync message
                         if let Some(ref did) = device_id {
                             if device_sync_storage.acknowledge(&client_id, did, &ack.message_id) {
-                                debug!(
-                                    "Device sync {} acknowledged by {} / {} (version {})",
-                                    ack.message_id, client_id, did, ack.synced_version
-                                );
+                                debug!("[{}] Device sync acknowledged (version {})", session, ack.synced_version);
                             }
                         } else {
-                            debug!(
-                                "DeviceSyncAck received but no device_id in handshake from {}",
-                                client_id
-                            );
+                            debug!("[{}] DeviceSyncAck received but no device_id in handshake", session);
                         }
                     }
                     protocol::MessagePayload::Unknown => {
-                        debug!("Unknown message type from {}", client_id);
+                        debug!("[{}] Unknown message type", session);
                     }
                 }
             }
@@ -602,14 +575,14 @@ pub async fn handle_connection(
                 let _ = write.send(Message::Pong(data)).await;
             }
             Ok(Message::Close(_)) => {
-                debug!("Client {} sent close", client_id);
+                debug!("[{}] Client sent close", session);
                 break;
             }
             Ok(_) => {
                 // Ignore text, pong, etc.
             }
             Err(e) => {
-                warn!("Error from {}: {}", client_id, e);
+                warn!("[{}] Connection error: {}", session, e);
                 break;
             }
         }
