@@ -35,6 +35,7 @@ stages:
   - test
   - security
   - build
+  - scan
 
 variables:
   # GitLab Ultimate Security Configuration
@@ -131,6 +132,13 @@ secret_detection:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
 
+container_scanning:
+  stage: scan
+  needs: ["build:docker"]
+  tags: [docker]
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
 
 # Rust-specific security (runs on dependency changes)
 security:audit:
