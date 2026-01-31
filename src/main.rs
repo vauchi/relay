@@ -214,8 +214,8 @@ async fn main() {
             tokio::time::sleep(std::time::Duration::from_secs(600)).await;
             let removed =
                 cleanup_rate_limiter.cleanup_inactive(std::time::Duration::from_secs(1800));
-            let recovery_removed =
-                cleanup_recovery_rate_limiter.cleanup_inactive(std::time::Duration::from_secs(1800));
+            let recovery_removed = cleanup_recovery_rate_limiter
+                .cleanup_inactive(std::time::Duration::from_secs(1800));
             if removed + recovery_removed > 0 {
                 info!(
                     "Cleaned up {} stale rate limiter entries ({} recovery)",
@@ -357,16 +357,18 @@ async fn main() {
 
                     handler::handle_connection(
                         ws_stream,
-                        storage,
-                        recovery_storage,
-                        device_sync_storage,
-                        rate_limiter,
-                        recovery_rate_limiter,
-                        registry,
-                        blob_sender_map,
-                        max_message_size,
-                        idle_timeout,
-                        quota,
+                        handler::ConnectionDeps {
+                            storage,
+                            recovery_storage,
+                            device_sync_storage,
+                            rate_limiter,
+                            recovery_rate_limiter,
+                            registry,
+                            blob_sender_map,
+                            max_message_size,
+                            idle_timeout,
+                            quota,
+                        },
                     )
                     .await;
 

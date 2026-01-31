@@ -38,18 +38,9 @@ fn test_blob_store_and_retrieve() {
 fn test_multiple_blobs_for_recipient() {
     let store = MemoryBlobStore::new();
 
-    store.store(
-        "recipient-1",
-        StoredBlob::new(vec![1]),
-    );
-    store.store(
-        "recipient-1",
-        StoredBlob::new(vec![2]),
-    );
-    store.store(
-        "recipient-1",
-        StoredBlob::new(vec![3]),
-    );
+    store.store("recipient-1", StoredBlob::new(vec![1]));
+    store.store("recipient-1", StoredBlob::new(vec![2]));
+    store.store("recipient-1", StoredBlob::new(vec![3]));
 
     let pending = store.peek("recipient-1");
     assert_eq!(pending.len(), 3);
@@ -61,18 +52,9 @@ fn test_multiple_blobs_for_recipient() {
 fn test_blobs_separate_per_recipient() {
     let store = MemoryBlobStore::new();
 
-    store.store(
-        "recipient-1",
-        StoredBlob::new(vec![1]),
-    );
-    store.store(
-        "recipient-2",
-        StoredBlob::new(vec![2]),
-    );
-    store.store(
-        "recipient-3",
-        StoredBlob::new(vec![3]),
-    );
+    store.store("recipient-1", StoredBlob::new(vec![1]));
+    store.store("recipient-2", StoredBlob::new(vec![2]));
+    store.store("recipient-3", StoredBlob::new(vec![3]));
 
     assert_eq!(store.peek("recipient-1").len(), 1);
     assert_eq!(store.peek("recipient-2").len(), 1);
@@ -172,18 +154,9 @@ fn test_storage_metrics() {
     assert_eq!(store.blob_count(), 0);
     assert_eq!(store.recipient_count(), 0);
 
-    store.store(
-        "recipient-1",
-        StoredBlob::new(vec![1, 2, 3]),
-    );
-    store.store(
-        "recipient-1",
-        StoredBlob::new(vec![4, 5]),
-    );
-    store.store(
-        "recipient-2",
-        StoredBlob::new(vec![6]),
-    );
+    store.store("recipient-1", StoredBlob::new(vec![1, 2, 3]));
+    store.store("recipient-1", StoredBlob::new(vec![4, 5]));
+    store.store("recipient-2", StoredBlob::new(vec![6]));
 
     assert_eq!(store.blob_count(), 3);
     assert_eq!(store.recipient_count(), 2);
@@ -208,10 +181,7 @@ fn test_concurrent_access() {
         let store = Arc::clone(&store);
         handles.push(thread::spawn(move || {
             for j in 0..100 {
-                store.store(
-                    &format!("recipient-{}", i),
-                    StoredBlob::new(vec![j as u8]),
-                );
+                store.store(&format!("recipient-{}", i), StoredBlob::new(vec![j as u8]));
             }
         }));
     }
@@ -237,10 +207,7 @@ fn test_concurrent_access() {
 fn test_peek_idempotent() {
     let store = MemoryBlobStore::new();
 
-    store.store(
-        "recipient",
-        StoredBlob::new(vec![1, 2, 3]),
-    );
+    store.store("recipient", StoredBlob::new(vec![1, 2, 3]));
 
     // Multiple peeks should return the same data
     for _ in 0..5 {

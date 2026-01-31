@@ -4,7 +4,7 @@
 
 [package]
 name = "vauchi-relay"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Relay server for Vauchi - encrypted blob storage and forwarding"
 license = "GPL-3.0-or-later"

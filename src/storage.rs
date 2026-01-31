@@ -211,10 +211,7 @@ impl BlobStore for MemoryBlobStore {
 
     fn delete_all_for(&self, recipient_id: &str) -> usize {
         let mut blobs = self.blobs.write().unwrap();
-        blobs
-            .remove(recipient_id)
-            .map(|q| q.len())
-            .unwrap_or(0)
+        blobs.remove(recipient_id).map(|q| q.len()).unwrap_or(0)
     }
 }
 

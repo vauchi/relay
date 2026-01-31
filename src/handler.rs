@@ -418,27 +418,35 @@ pub struct QuotaLimits {
     pub max_bytes: usize,
 }
 
-/// Rate limit configuration for recovery proof operations.
-/// Stricter than general message rate limit to prevent key hash enumeration.
-#[derive(Debug, Clone, Copy)]
-pub struct RecoveryRateLimit {
-    pub per_min: u32,
+/// Shared dependencies for handling a WebSocket connection.
+pub struct ConnectionDeps {
+    pub storage: Arc<dyn BlobStore>,
+    pub recovery_storage: Arc<dyn RecoveryProofStore>,
+    pub device_sync_storage: Arc<dyn DeviceSyncStore>,
+    pub rate_limiter: Arc<RateLimiter>,
+    pub recovery_rate_limiter: Arc<RateLimiter>,
+    pub registry: Arc<ConnectionRegistry>,
+    pub blob_sender_map: BlobSenderMap,
+    pub max_message_size: usize,
+    pub idle_timeout: Duration,
+    pub quota: QuotaLimits,
 }
 
 /// Handles a WebSocket connection.
-pub async fn handle_connection(
-    ws_stream: WebSocketStream<TcpStream>,
-    storage: Arc<dyn BlobStore>,
-    recovery_storage: Arc<dyn RecoveryProofStore>,
-    device_sync_storage: Arc<dyn DeviceSyncStore>,
-    rate_limiter: Arc<RateLimiter>,
-    recovery_rate_limiter: Arc<RateLimiter>,
-    registry: Arc<ConnectionRegistry>,
-    blob_sender_map: BlobSenderMap,
-    max_message_size: usize,
-    idle_timeout: Duration,
-    quota: QuotaLimits,
-) {
+#[allow(clippy::too_many_lines)]
+pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: ConnectionDeps) {
+    let ConnectionDeps {
+        storage,
+        recovery_storage,
+        device_sync_storage,
+        rate_limiter,
+        recovery_rate_limiter,
+        registry,
+        blob_sender_map,
+        max_message_size,
+        idle_timeout,
+        quota,
+    } = deps;
     // Generate a random session label for logging.
     // The relay must never log client_id (identity fingerprint) to prevent
     // relay operators from identifying users in logs.
@@ -447,63 +455,77 @@ pub async fn handle_connection(
     let (mut write, mut read) = ws_stream.split();
 
     // Wait for handshake to get client ID and optional device ID (with timeout)
-    let (client_id, device_id, routing_token, suppress_presence) = match timeout(idle_timeout, read.next()).await {
-        Ok(Some(Ok(Message::Binary(data)))) => match protocol::decode_message(&data) {
-            Ok(envelope) => {
-                if let protocol::MessagePayload::Handshake(hs) = envelope.payload {
-                    // Validate client_id format
-                    if !validate_client_id(&hs.client_id) {
-                        warn!("[{}] Invalid client_id format", session);
+    let (client_id, device_id, routing_token, suppress_presence) =
+        match timeout(idle_timeout, read.next()).await {
+            Ok(Some(Ok(Message::Binary(data)))) => match protocol::decode_message(&data) {
+                Ok(envelope) => {
+                    if let protocol::MessagePayload::Handshake(hs) = envelope.payload {
+                        // Validate client_id format
+                        if !validate_client_id(&hs.client_id) {
+                            warn!("[{}] Invalid client_id format", session);
+                            return;
+                        }
+                        // Validate device_id format if present
+                        if let Some(ref did) = hs.device_id {
+                            if !validate_client_id(did) {
+                                warn!("[{}] Invalid device_id format", session);
+                                return;
+                            }
+                        }
+                        // Validate routing_token format if present
+                        if let Some(ref rt) = hs.routing_token {
+                            if !validate_client_id(rt) {
+                                warn!("[{}] Invalid routing_token format", session);
+                                return;
+                            }
+                        }
+                        (
+                            hs.client_id,
+                            hs.device_id,
+                            hs.routing_token,
+                            hs.suppress_presence,
+                        )
+                    } else {
+                        warn!(
+                            "[{}] Expected Handshake, got {:?}",
+                            session, envelope.payload
+                        );
                         return;
                     }
-                    // Validate device_id format if present
-                    if let Some(ref did) = hs.device_id {
-                        if !validate_client_id(did) {
-                            warn!("[{}] Invalid device_id format", session);
-                            return;
-                        }
-                    }
-                    // Validate routing_token format if present
-                    if let Some(ref rt) = hs.routing_token {
-                        if !validate_client_id(rt) {
-                            warn!("[{}] Invalid routing_token format", session);
-                            return;
-                        }
-                    }
-                    (hs.client_id, hs.device_id, hs.routing_token, hs.suppress_presence)
-                } else {
-                    warn!("[{}] Expected Handshake, got {:?}", session, envelope.payload);
+                }
+                Err(e) => {
+                    warn!("[{}] Failed to decode handshake: {}", session, e);
                     return;
                 }
-            }
-            Err(e) => {
-                warn!("[{}] Failed to decode handshake: {}", session, e);
+            },
+            Ok(Some(Ok(_))) => {
+                warn!("[{}] Expected binary message for handshake", session);
                 return;
             }
-        },
-        Ok(Some(Ok(_))) => {
-            warn!("[{}] Expected binary message for handshake", session);
-            return;
-        }
-        Ok(Some(Err(e))) => {
-            warn!("[{}] Error reading handshake: {}", session, e);
-            return;
-        }
-        Ok(None) => {
-            debug!("[{}] Connection closed before handshake", session);
-            return;
-        }
-        Err(_) => {
-            warn!("[{}] Handshake timeout (slowloris protection)", session);
-            return;
-        }
-    };
+            Ok(Some(Err(e))) => {
+                warn!("[{}] Error reading handshake: {}", session, e);
+                return;
+            }
+            Ok(None) => {
+                debug!("[{}] Connection closed before handshake", session);
+                return;
+            }
+            Err(_) => {
+                warn!("[{}] Handshake timeout (slowloris protection)", session);
+                return;
+            }
+        };
 
     // Compute the routing ID: use routing_token if provided, otherwise client_id.
     // routing_token allows clients to route blobs without revealing their identity fingerprint.
     let routing_id = routing_token.unwrap_or_else(|| client_id.clone());
 
-    debug!("[{}] Client connected (has_device_id: {}, suppress_presence: {})", session, device_id.is_some(), suppress_presence);
+    debug!(
+        "[{}] Client connected (has_device_id: {}, suppress_presence: {})",
+        session,
+        device_id.is_some(),
+        suppress_presence
+    );
 
     // Send HandshakeAck with server version and supported features
     let hs_ack = protocol::create_handshake_ack();
@@ -540,9 +562,7 @@ pub async fn handle_connection(
     // Suppressed when recipient requested suppress_presence to prevent online status inference.
     if !suppress_presence {
         for blob_id in &pending_blob_ids {
-            let sender_client_id = {
-                blob_sender_map.read().unwrap().get(blob_id).cloned()
-            };
+            let sender_client_id = { blob_sender_map.read().unwrap().get(blob_id).cloned() };
             if let Some(sender_id) = sender_client_id {
                 let ack = protocol::create_ack(blob_id, protocol::AckStatus::Delivered);
                 if let Ok(ack_data) = protocol::encode_message(&ack) {
@@ -580,7 +600,10 @@ pub async fn handle_connection(
             }
         }
         if pending_count > 0 {
-            debug!("[{}] Sent {} pending device sync messages", session, pending_count);
+            debug!(
+                "[{}] Sent {} pending device sync messages",
+                session, pending_count
+            );
         }
     }
 
@@ -640,7 +663,8 @@ pub async fn handle_connection(
                         if (quota.max_blobs > 0
                             && storage.blob_count_for(&update.recipient_id) >= quota.max_blobs)
                             || (quota.max_bytes > 0
-                                && storage.storage_size_for(&update.recipient_id) + update.ciphertext.len()
+                                && storage.storage_size_for(&update.recipient_id)
+                                    + update.ciphertext.len()
                                     > quota.max_bytes)
                         {
                             let ack = protocol::create_ack(
@@ -681,9 +705,15 @@ pub async fn handle_connection(
 
                             // If this is ReceivedByRecipient, forward to the original sender.
                             // Suppressed when recipient requested suppress_presence.
-                            if !suppress_presence && ack.status == protocol::AckStatus::ReceivedByRecipient {
+                            if !suppress_presence
+                                && ack.status == protocol::AckStatus::ReceivedByRecipient
+                            {
                                 let sender_client_id = {
-                                    blob_sender_map.read().unwrap().get(&ack.message_id).cloned()
+                                    blob_sender_map
+                                        .read()
+                                        .unwrap()
+                                        .get(&ack.message_id)
+                                        .cloned()
                                 };
                                 if let Some(sender_id) = sender_client_id {
                                     let fwd_ack = protocol::create_ack(
@@ -757,7 +787,11 @@ pub async fn handle_connection(
                             let _ = write.send(Message::Binary(data)).await;
                         }
 
-                        debug!("[{}] Processed recovery query with {} hashes", session, query.key_hashes.len());
+                        debug!(
+                            "[{}] Processed recovery query with {} hashes",
+                            session,
+                            query.key_hashes.len()
+                        );
                     }
                     protocol::MessagePayload::RecoveryProofResponse(_) => {
                         // Clients shouldn't send responses, ignore
@@ -791,16 +825,25 @@ pub async fn handle_connection(
                             let _ = write.send(Message::Binary(ack_data)).await;
                         }
 
-                        debug!("[{}] Stored device sync (version {})", session, sync_msg.version);
+                        debug!(
+                            "[{}] Stored device sync (version {})",
+                            session, sync_msg.version
+                        );
                     }
                     protocol::MessagePayload::DeviceSyncAck(ack) => {
                         // Client acknowledging receipt of a device sync message
                         if let Some(ref did) = device_id {
                             if device_sync_storage.acknowledge(&client_id, did, &ack.message_id) {
-                                debug!("[{}] Device sync acknowledged (version {})", session, ack.synced_version);
+                                debug!(
+                                    "[{}] Device sync acknowledged (version {})",
+                                    session, ack.synced_version
+                                );
                             }
                         } else {
-                            debug!("[{}] DeviceSyncAck received but no device_id in handshake", session);
+                            debug!(
+                                "[{}] DeviceSyncAck received but no device_id in handshake",
+                                session
+                            );
                         }
                     }
                     protocol::MessagePayload::PurgeRequest(purge) => {
@@ -927,7 +970,8 @@ mod tests {
     #[test]
     fn test_handshake_backward_compat_missing_fields() {
         // Old clients won't send routing_token or suppress_presence
-        let json = r#"{"client_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#;
+        let json =
+            r#"{"client_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#;
         let parsed: protocol::Handshake = serde_json::from_str(json).unwrap();
         assert!(parsed.routing_token.is_none());
         assert!(!parsed.suppress_presence);

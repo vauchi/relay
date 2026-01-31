@@ -151,18 +151,8 @@ mod tests {
 
         assert_eq!(registry.connected_count(), 2);
 
-        registry.try_send(
-            "client-1",
-            RegistryMessage {
-                data: vec![1],
-            },
-        );
-        registry.try_send(
-            "client-2",
-            RegistryMessage {
-                data: vec![2],
-            },
-        );
+        registry.try_send("client-1", RegistryMessage { data: vec![1] });
+        registry.try_send("client-2", RegistryMessage { data: vec![2] });
 
         assert_eq!(rx1.recv().await.unwrap().data, vec![1]);
         assert_eq!(rx2.recv().await.unwrap().data, vec![2]);

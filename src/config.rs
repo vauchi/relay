@@ -53,10 +53,10 @@ impl Default for RelayConfig {
             cleanup_interval_secs: 3600,             // 1 hour
             storage_backend: StorageBackend::Sqlite, // Persistent by default
             data_dir: PathBuf::from("./data"),
-            idle_timeout_secs: 300,       // 5 minutes (slowloris protection)
-            max_blobs_per_user: 1000,     // 1000 blobs per recipient
+            idle_timeout_secs: 300,   // 5 minutes (slowloris protection)
+            max_blobs_per_user: 1000, // 1000 blobs per recipient
             max_storage_per_user: 50_000_000, // 50 MB per recipient
-            recovery_rate_limit_per_min: 10,  // 10 recovery queries per minute (anti-enumeration)
+            recovery_rate_limit_per_min: 10, // 10 recovery queries per minute (anti-enumeration)
         }
     }
 }

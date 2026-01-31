@@ -69,10 +69,7 @@ fn test_concurrent_read_write() {
         let store = Arc::clone(&store);
         handles.push(thread::spawn(move || {
             for i in 0..ops_per_thread {
-                store.store(
-                    &format!("recipient-{}", w),
-                    StoredBlob::new(vec![i as u8]),
-                );
+                store.store(&format!("recipient-{}", w), StoredBlob::new(vec![i as u8]));
                 // Small yield to increase interleaving
                 if i % 100 == 0 {
                     thread::yield_now();
@@ -170,10 +167,7 @@ fn test_large_blob_handling() {
     // 1MB blob
     let large_data = vec![0u8; 1024 * 1024];
 
-    store.store(
-        "recipient",
-        StoredBlob::new(large_data.clone()),
-    );
+    store.store("recipient", StoredBlob::new(large_data.clone()));
 
     let retrieved = store.peek("recipient");
     assert_eq!(retrieved.len(), 1);
