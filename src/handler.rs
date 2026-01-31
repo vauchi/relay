@@ -156,6 +156,16 @@ mod protocol {
         /// If present, device sync messages will be delivered.
         #[serde(default)]
         pub device_id: Option<String>,
+        /// Optional anonymous routing token (hex-encoded, 64 chars).
+        /// When present, used for blob routing instead of client_id.
+        /// Enables clients to route messages without revealing their identity
+        /// fingerprint to the relay.
+        #[serde(default)]
+        pub routing_token: Option<String>,
+        /// When true, the relay will not send delivery notifications
+        /// for this client's blobs, preventing online status inference.
+        #[serde(default)]
+        pub suppress_presence: bool,
     }
 
     // =========================================================================
@@ -347,7 +357,7 @@ pub async fn handle_connection(
     let (mut write, mut read) = ws_stream.split();
 
     // Wait for handshake to get client ID and optional device ID (with timeout)
-    let (client_id, device_id) = match timeout(idle_timeout, read.next()).await {
+    let (client_id, device_id, routing_token, suppress_presence) = match timeout(idle_timeout, read.next()).await {
         Ok(Some(Ok(Message::Binary(data)))) => match protocol::decode_message(&data) {
             Ok(envelope) => {
                 if let protocol::MessagePayload::Handshake(hs) = envelope.payload {
@@ -363,7 +373,14 @@ pub async fn handle_connection(
                             return;
                         }
                     }
-                    (hs.client_id, hs.device_id)
+                    // Validate routing_token format if present
+                    if let Some(ref rt) = hs.routing_token {
+                        if !validate_client_id(rt) {
+                            warn!("[{}] Invalid routing_token format", session);
+                            return;
+                        }
+                    }
+                    (hs.client_id, hs.device_id, hs.routing_token, hs.suppress_presence)
                 } else {
                     warn!("[{}] Expected Handshake, got {:?}", session, envelope.payload);
                     return;
@@ -392,21 +409,25 @@ pub async fn handle_connection(
         }
     };
 
-    debug!("[{}] Client connected (has_device_id: {})", session, device_id.is_some());
+    // Compute the routing ID: use routing_token if provided, otherwise client_id.
+    // routing_token allows clients to route blobs without revealing their identity fingerprint.
+    let routing_id = routing_token.unwrap_or_else(|| client_id.clone());
+
+    debug!("[{}] Client connected (has_device_id: {}, suppress_presence: {})", session, device_id.is_some(), suppress_presence);
 
     // Register in connection registry for delivery notifications
-    let mut registry_rx = registry.register(&client_id);
+    let mut registry_rx = registry.register(&routing_id);
 
     // Send any pending blobs for this client and notify senders
-    let pending = storage.peek(&client_id);
+    let pending = storage.peek(&routing_id);
     let pending_blob_ids: Vec<String> = pending.iter().map(|b| b.id.clone()).collect();
     for blob in pending {
-        let envelope = protocol::create_update_delivery(&blob.id, &client_id, &blob.data);
+        let envelope = protocol::create_update_delivery(&blob.id, &routing_id, &blob.data);
         match protocol::encode_message(&envelope) {
             Ok(data) => {
                 if write.send(Message::Binary(data)).await.is_err() {
                     warn!("[{}] Failed to send pending blob", session);
-                    registry.unregister(&client_id);
+                    registry.unregister(&routing_id);
                     return;
                 }
             }
@@ -416,18 +437,21 @@ pub async fn handle_connection(
         }
     }
 
-    // Send Delivered acks to senders for blobs we just delivered
-    for blob_id in &pending_blob_ids {
-        let sender_client_id = {
-            blob_sender_map.read().unwrap().get(blob_id).cloned()
-        };
-        if let Some(sender_id) = sender_client_id {
-            let ack = protocol::create_ack(blob_id, protocol::AckStatus::Delivered);
-            if let Ok(ack_data) = protocol::encode_message(&ack) {
-                registry.try_send(&sender_id, RegistryMessage { data: ack_data });
+    // Send Delivered acks to senders for blobs we just delivered.
+    // Suppressed when recipient requested suppress_presence to prevent online status inference.
+    if !suppress_presence {
+        for blob_id in &pending_blob_ids {
+            let sender_client_id = {
+                blob_sender_map.read().unwrap().get(blob_id).cloned()
+            };
+            if let Some(sender_id) = sender_client_id {
+                let ack = protocol::create_ack(blob_id, protocol::AckStatus::Delivered);
+                if let Ok(ack_data) = protocol::encode_message(&ack) {
+                    registry.try_send(&sender_id, RegistryMessage { data: ack_data });
+                }
+                // Remove from sender map after delivery notification
+                blob_sender_map.write().unwrap().remove(blob_id);
             }
-            // Remove from sender map after delivery notification
-            blob_sender_map.write().unwrap().remove(blob_id);
         }
     }
 
@@ -497,7 +521,7 @@ pub async fn handle_connection(
                 }
 
                 // Rate limit check
-                if !rate_limiter.consume(&client_id) {
+                if !rate_limiter.consume(&routing_id) {
                     warn!("[{}] Rate limited", session);
                     continue;
                 }
@@ -540,7 +564,7 @@ pub async fn handle_connection(
                         blob_sender_map
                             .write()
                             .unwrap()
-                            .insert(blob_id, client_id.clone());
+                            .insert(blob_id, routing_id.clone());
 
                         // Send acknowledgment - Stored means relay has persisted the message
                         let ack =
@@ -553,11 +577,12 @@ pub async fn handle_connection(
                     }
                     protocol::MessagePayload::Acknowledgment(ack) => {
                         // Client acknowledging receipt of a blob
-                        if storage.acknowledge(&client_id, &ack.message_id) {
+                        if storage.acknowledge(&routing_id, &ack.message_id) {
                             debug!("[{}] Blob acknowledged", session);
 
-                            // If this is ReceivedByRecipient, forward to the original sender
-                            if ack.status == protocol::AckStatus::ReceivedByRecipient {
+                            // If this is ReceivedByRecipient, forward to the original sender.
+                            // Suppressed when recipient requested suppress_presence.
+                            if !suppress_presence && ack.status == protocol::AckStatus::ReceivedByRecipient {
                                 let sender_client_id = {
                                     blob_sender_map.read().unwrap().get(&ack.message_id).cloned()
                                 };
@@ -688,5 +713,91 @@ pub async fn handle_connection(
     }
 
     // Unregister from connection registry on disconnect
-    registry.unregister(&client_id);
+    registry.unregister(&routing_id);
+}
+
+// INLINE_TEST_REQUIRED: Binary crate without lib.rs - tests cannot be external
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_client_id_valid() {
+        let valid = "a".repeat(64);
+        assert!(validate_client_id(&valid));
+    }
+
+    #[test]
+    fn test_validate_client_id_too_short() {
+        let short = "a".repeat(63);
+        assert!(!validate_client_id(&short));
+    }
+
+    #[test]
+    fn test_validate_client_id_non_hex() {
+        let mut bad = "a".repeat(63);
+        bad.push('g');
+        assert!(!validate_client_id(&bad));
+    }
+
+    #[test]
+    fn test_handshake_serialization_without_routing_token() {
+        let hs = protocol::Handshake {
+            client_id: "a".repeat(64),
+            device_id: None,
+            routing_token: None,
+            suppress_presence: false,
+        };
+        let json = serde_json::to_string(&hs).unwrap();
+        let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.client_id, hs.client_id);
+        assert!(parsed.routing_token.is_none());
+        assert!(!parsed.suppress_presence);
+    }
+
+    #[test]
+    fn test_handshake_serialization_with_routing_token() {
+        let hs = protocol::Handshake {
+            client_id: "a".repeat(64),
+            device_id: None,
+            routing_token: Some("b".repeat(64)),
+            suppress_presence: false,
+        };
+        let json = serde_json::to_string(&hs).unwrap();
+        let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.routing_token, Some("b".repeat(64)));
+    }
+
+    #[test]
+    fn test_handshake_serialization_suppress_presence() {
+        let hs = protocol::Handshake {
+            client_id: "a".repeat(64),
+            device_id: None,
+            routing_token: None,
+            suppress_presence: true,
+        };
+        let json = serde_json::to_string(&hs).unwrap();
+        let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
+        assert!(parsed.suppress_presence);
+    }
+
+    #[test]
+    fn test_handshake_backward_compat_missing_fields() {
+        // Old clients won't send routing_token or suppress_presence
+        let json = r#"{"client_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#;
+        let parsed: protocol::Handshake = serde_json::from_str(json).unwrap();
+        assert!(parsed.routing_token.is_none());
+        assert!(!parsed.suppress_presence);
+        assert!(parsed.device_id.is_none());
+    }
+
+    #[test]
+    fn test_validate_routing_token_format() {
+        // routing_token uses same validation as client_id (64 hex chars)
+        let valid = "b".repeat(64);
+        assert!(validate_client_id(&valid));
+
+        let too_short = "b".repeat(32);
+        assert!(!validate_client_id(&too_short));
+    }
 }
