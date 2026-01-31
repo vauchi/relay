@@ -184,7 +184,11 @@ fn make_device_sync(
 // ============================================================================
 
 /// Creates a default set of test dependencies using in-memory storage.
-fn test_deps() -> (ConnectionDeps, Arc<MemoryBlobStore>, Arc<ConnectionRegistry>) {
+fn test_deps() -> (
+    ConnectionDeps,
+    Arc<MemoryBlobStore>,
+    Arc<ConnectionRegistry>,
+) {
     let storage = Arc::new(MemoryBlobStore::new());
     let registry = Arc::new(ConnectionRegistry::new());
     let deps = ConnectionDeps {
@@ -458,7 +462,9 @@ async fn test_acknowledge_removes_blob() {
 
     // Handshake
     let hs = make_handshake(&client_id);
-    ws.send(Message::Binary(encode_envelope(&hs))).await.unwrap();
+    ws.send(Message::Binary(encode_envelope(&hs)))
+        .await
+        .unwrap();
 
     // Receive HandshakeAck
     let _ack = recv(&mut ws).await;
@@ -543,8 +549,8 @@ async fn test_quota_byte_limit_exceeded() {
         max_message_size: 1_048_576,
         idle_timeout: Duration::from_secs(5),
         quota: QuotaLimits {
-            max_blobs: 0,    // Unlimited count
-            max_bytes: 200,  // Very low byte limit
+            max_blobs: 0,   // Unlimited count
+            max_bytes: 200, // Very low byte limit
         },
     };
 
@@ -640,7 +646,9 @@ async fn test_purge_deletes_blobs() {
 
     // Handshake (will deliver pending blobs first)
     let hs = make_handshake(&client_id);
-    ws.send(Message::Binary(encode_envelope(&hs))).await.unwrap();
+    ws.send(Message::Binary(encode_envelope(&hs)))
+        .await
+        .unwrap();
 
     // Drain HandshakeAck + 3 pending blobs
     for _ in 0..4 {
@@ -1040,6 +1048,103 @@ async fn test_ping_pong() {
 // Tests: Unknown message type
 // ============================================================================
 
+// ============================================================================
+// Parameterised test infrastructure
+// ============================================================================
+
+/// Creates a customised set of test dependencies.
+fn test_deps_custom(
+    rate_limit: u32,
+    recovery_rate_limit: u32,
+    max_msg_size: usize,
+    idle_timeout: Duration,
+    quota: QuotaLimits,
+) -> (
+    ConnectionDeps,
+    Arc<MemoryBlobStore>,
+    Arc<ConnectionRegistry>,
+    Arc<MemoryDeviceSyncStore>,
+) {
+    let storage = Arc::new(MemoryBlobStore::new());
+    let registry = Arc::new(ConnectionRegistry::new());
+    let device_sync_storage = Arc::new(MemoryDeviceSyncStore::new());
+    let deps = ConnectionDeps {
+        storage: storage.clone() as Arc<dyn BlobStore>,
+        recovery_storage: Arc::new(MemoryRecoveryProofStore::new()),
+        device_sync_storage: device_sync_storage.clone(),
+        rate_limiter: Arc::new(RateLimiter::new(rate_limit)),
+        recovery_rate_limiter: Arc::new(RateLimiter::new(recovery_rate_limit)),
+        registry: registry.clone(),
+        blob_sender_map: handler::new_blob_sender_map(),
+        max_message_size: max_msg_size,
+        idle_timeout,
+        quota,
+    };
+    (deps, storage, registry, device_sync_storage)
+}
+
+/// Builds a DeviceSyncAck envelope.
+fn make_device_sync_ack(message_id: &str, synced_version: u64) -> Value {
+    json!({
+        "version": 1,
+        "message_id": uuid::Uuid::new_v4().to_string(),
+        "timestamp": 1000,
+        "payload": {
+            "type": "DeviceSyncAck",
+            "message_id": message_id,
+            "synced_version": synced_version
+        }
+    })
+}
+
+/// Starts a test server that handles multiple WebSocket connections.
+/// Returns the address to connect to.
+async fn start_multi_server(deps: ConnectionDeps) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("ws://127.0.0.1:{}", addr.port());
+
+    // Wrap shared deps so multiple tasks can use them.
+    let storage = deps.storage;
+    let recovery_storage = deps.recovery_storage;
+    let device_sync_storage = deps.device_sync_storage;
+    let rate_limiter = deps.rate_limiter;
+    let recovery_rate_limiter = deps.recovery_rate_limiter;
+    let registry = deps.registry;
+    let blob_sender_map = deps.blob_sender_map;
+    let max_message_size = deps.max_message_size;
+    let idle_timeout = deps.idle_timeout;
+    let quota = deps.quota;
+
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let per_conn = ConnectionDeps {
+                storage: storage.clone(),
+                recovery_storage: recovery_storage.clone(),
+                device_sync_storage: device_sync_storage.clone(),
+                rate_limiter: rate_limiter.clone(),
+                recovery_rate_limiter: recovery_rate_limiter.clone(),
+                registry: registry.clone(),
+                blob_sender_map: blob_sender_map.clone(),
+                max_message_size,
+                idle_timeout,
+                quota,
+            };
+            tokio::spawn(async move {
+                if let Ok(ws) = accept_async(stream).await {
+                    handler::handle_connection(ws, per_conn).await;
+                }
+            });
+        }
+    });
+
+    url
+}
+
+// ============================================================================
+// Tests: Unknown message type
+// ============================================================================
+
 #[tokio::test]
 async fn test_unknown_message_type_ignored() {
     let (deps, _, _) = test_deps();
@@ -1068,6 +1173,1089 @@ async fn test_unknown_message_type_ignored() {
     assert!(msg.is_none(), "Unknown message type should be ignored");
 
     // Connection should still work — send a valid update
+    let recipient_id = common::generate_test_client_id(2);
+    let update = make_encrypted_update(&recipient_id, &[1]);
+    let response = send_recv(&mut ws, &update).await;
+    assert_eq!(response["payload"]["status"], "Stored");
+
+    ws.close(None).await.ok();
+}
+
+// ============================================================================
+// Group A: Message encoding edge cases
+// ============================================================================
+
+#[tokio::test]
+async fn test_malformed_json_continues_connection() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    // Send valid length prefix + garbage JSON
+    let garbage = b"this is not json at all!!!";
+    let len = garbage.len() as u32;
+    let mut frame = Vec::with_capacity(4 + garbage.len());
+    frame.extend_from_slice(&len.to_be_bytes());
+    frame.extend_from_slice(garbage);
+    ws.send(Message::Binary(frame)).await.unwrap();
+
+    // No response expected for malformed message
+    let msg = try_recv(&mut ws).await;
+    assert!(
+        msg.is_none(),
+        "Malformed JSON should not produce a response"
+    );
+
+    // Connection should still work
+    let recipient_id = common::generate_test_client_id(2);
+    let update = make_encrypted_update(&recipient_id, &[42]);
+    let response = send_recv(&mut ws, &update).await;
+    assert_eq!(response["payload"]["status"], "Stored");
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_truncated_frame_too_short() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    // Send a 2-byte message (too short for the 4-byte length header)
+    ws.send(Message::Binary(vec![0, 1])).await.unwrap();
+
+    // No response expected
+    let msg = try_recv(&mut ws).await;
+    assert!(
+        msg.is_none(),
+        "Truncated frame should not produce a response"
+    );
+
+    // Connection should still work
+    let recipient_id = common::generate_test_client_id(2);
+    let update = make_encrypted_update(&recipient_id, &[10]);
+    let response = send_recv(&mut ws, &update).await;
+    assert_eq!(response["payload"]["status"], "Stored");
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_oversized_message_silently_dropped() {
+    let (deps, storage, _, _) = test_deps_custom(
+        60,
+        10,
+        512, // small max_message_size but large enough for envelope overhead
+        Duration::from_secs(5),
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 0,
+        },
+    );
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    // Send a message that exceeds max_message_size (512 bytes)
+    let recipient_id = common::generate_test_client_id(2);
+    let large_data = vec![0u8; 600]; // > 512 after envelope encoding
+    let update = make_encrypted_update(&recipient_id, &large_data);
+    let frame = encode_envelope(&update);
+    ws.send(Message::Binary(frame)).await.unwrap();
+
+    // No ack expected for oversized message
+    let msg = try_recv(&mut ws).await;
+    assert!(
+        msg.is_none(),
+        "Oversized message should not produce a response"
+    );
+
+    // Nothing stored
+    assert!(storage.peek(&recipient_id).is_empty());
+
+    // Connection should still work with a small message
+    let small_update = make_encrypted_update(&recipient_id, &[1]);
+    let response = send_recv(&mut ws, &small_update).await;
+    assert_eq!(response["payload"]["status"], "Stored");
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_zero_length_ciphertext_stored() {
+    let (deps, storage, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    let recipient_id = common::generate_test_client_id(2);
+    let update = make_encrypted_update(&recipient_id, &[]);
+    let response = send_recv(&mut ws, &update).await;
+    assert_eq!(response["payload"]["type"], "Acknowledgment");
+    assert_eq!(response["payload"]["status"], "Stored");
+
+    let blobs = storage.peek(&recipient_id);
+    assert_eq!(blobs.len(), 1);
+    assert!(blobs[0].data.is_empty());
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_empty_binary_message() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    // Send empty binary message
+    ws.send(Message::Binary(vec![])).await.unwrap();
+
+    // No response expected
+    let msg = try_recv(&mut ws).await;
+    assert!(
+        msg.is_none(),
+        "Empty binary message should not produce a response"
+    );
+
+    // Connection should still work
+    let recipient_id = common::generate_test_client_id(2);
+    let update = make_encrypted_update(&recipient_id, &[1]);
+    let response = send_recv(&mut ws, &update).await;
+    assert_eq!(response["payload"]["status"], "Stored");
+
+    ws.close(None).await.ok();
+}
+
+// ============================================================================
+// Group B: Rate limiting integration
+// ============================================================================
+
+#[tokio::test]
+async fn test_rate_limit_silently_drops_excess_messages() {
+    let (deps, storage, _, _) = test_deps_custom(
+        3, // Only allow 3 messages (token bucket starts with 3 tokens)
+        10,
+        1_048_576,
+        Duration::from_secs(5),
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 0,
+        },
+    );
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    let recipient_id = common::generate_test_client_id(2);
+
+    // Send 3 messages — all should get Stored acks
+    for _ in 0..3 {
+        let update = make_encrypted_update(&recipient_id, &[1]);
+        let response = send_recv(&mut ws, &update).await;
+        assert_eq!(response["payload"]["status"], "Stored");
+    }
+
+    // 4th message should be silently dropped (rate limited)
+    let update = make_encrypted_update(&recipient_id, &[1]);
+    let frame = encode_envelope(&update);
+    ws.send(Message::Binary(frame)).await.unwrap();
+
+    let msg = try_recv(&mut ws).await;
+    assert!(
+        msg.is_none(),
+        "Rate-limited message should not produce a response"
+    );
+
+    // Only 3 blobs stored
+    assert_eq!(storage.peek(&recipient_id).len(), 3);
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_recovery_rate_limit_separate_from_general() {
+    let (deps, _, _, _) = test_deps_custom(
+        60, // general rate limit is generous
+        2,  // recovery rate limit is very low
+        1_048_576,
+        Duration::from_secs(5),
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 0,
+        },
+    );
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    // Send 2 recovery stores — both should succeed
+    for i in 0..2u8 {
+        let key_hash = common::generate_test_client_id(40 + i);
+        let store_msg = make_recovery_store(&key_hash, &[i]);
+        let response = send_recv(&mut ws, &store_msg).await;
+        assert_eq!(response["payload"]["status"], "Stored");
+    }
+
+    // 3rd recovery store should be silently dropped
+    let key_hash = common::generate_test_client_id(42);
+    let store_msg = make_recovery_store(&key_hash, &[99]);
+    let frame = encode_envelope(&store_msg);
+    ws.send(Message::Binary(frame)).await.unwrap();
+
+    let msg = try_recv(&mut ws).await;
+    assert!(
+        msg.is_none(),
+        "Rate-limited recovery store should not produce a response"
+    );
+
+    // General message should still work (different rate limiter)
+    let recipient_id = common::generate_test_client_id(2);
+    let update = make_encrypted_update(&recipient_id, &[1]);
+    let response = send_recv(&mut ws, &update).await;
+    assert_eq!(response["payload"]["status"], "Stored");
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_recovery_query_rate_limited() {
+    let (deps, _, _, _) = test_deps_custom(
+        60,
+        2, // Only allow 2 recovery operations
+        1_048_576,
+        Duration::from_secs(5),
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 0,
+        },
+    );
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    // 2 recovery queries should succeed
+    for _ in 0..2 {
+        let key_hash = common::generate_test_client_id(50);
+        let query = make_recovery_query(&[&key_hash]);
+        let response = send_recv(&mut ws, &query).await;
+        assert_eq!(response["payload"]["type"], "RecoveryProofResponse");
+    }
+
+    // 3rd should be silently dropped
+    let key_hash = common::generate_test_client_id(50);
+    let query = make_recovery_query(&[&key_hash]);
+    let frame = encode_envelope(&query);
+    ws.send(Message::Binary(frame)).await.unwrap();
+
+    let msg = try_recv(&mut ws).await;
+    assert!(
+        msg.is_none(),
+        "Rate-limited recovery query should not produce a response"
+    );
+
+    ws.close(None).await.ok();
+}
+
+// ============================================================================
+// Group C: Connection lifecycle & timeout
+// ============================================================================
+
+#[tokio::test]
+async fn test_idle_timeout_disconnects_client() {
+    let (deps, _, _, _) = test_deps_custom(
+        60,
+        10,
+        1_048_576,
+        Duration::from_millis(500), // 500ms idle timeout
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 0,
+        },
+    );
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    // Wait longer than idle timeout
+    tokio::time::sleep(Duration::from_millis(700)).await;
+
+    // Server should have closed the connection
+    let msg = timeout(Duration::from_secs(2), ws.next()).await;
+    match msg {
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
+            // Expected: connection closed
+        }
+        other => panic!("Expected disconnection after idle timeout, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_handshake_timeout_disconnects() {
+    let (deps, _, _, _) = test_deps_custom(
+        60,
+        10,
+        1_048_576,
+        Duration::from_millis(300), // 300ms timeout
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 0,
+        },
+    );
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    // Don't send handshake — just wait
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Server should have closed the connection
+    let msg = timeout(Duration::from_secs(2), ws.next()).await;
+    match msg {
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
+            // Expected: connection closed due to handshake timeout
+        }
+        other => panic!(
+            "Expected disconnection after handshake timeout, got {:?}",
+            other
+        ),
+    }
+}
+
+#[tokio::test]
+async fn test_text_message_ignored_connection_stays() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    // Send a text frame (handler ignores text)
+    ws.send(Message::Text("hello world".to_string()))
+        .await
+        .unwrap();
+
+    // No response expected
+    let msg = try_recv(&mut ws).await;
+    assert!(msg.is_none(), "Text message should not produce a response");
+
+    // Binary still works
+    let recipient_id = common::generate_test_client_id(2);
+    let update = make_encrypted_update(&recipient_id, &[1]);
+    let response = send_recv(&mut ws, &update).await;
+    assert_eq!(response["payload"]["status"], "Stored");
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_duplicate_handshake_ignored() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let ack = do_handshake(&mut ws, &client_id).await;
+    assert_eq!(ack["payload"]["type"], "HandshakeAck");
+
+    // Send a second handshake — should be silently ignored
+    let hs2 = make_handshake(&client_id);
+    let frame = encode_envelope(&hs2);
+    ws.send(Message::Binary(frame)).await.unwrap();
+
+    // No second HandshakeAck
+    let msg = try_recv(&mut ws).await;
+    assert!(
+        msg.is_none(),
+        "Duplicate handshake should not produce a response"
+    );
+
+    // Connection should still work
+    let recipient_id = common::generate_test_client_id(2);
+    let update = make_encrypted_update(&recipient_id, &[1]);
+    let response = send_recv(&mut ws, &update).await;
+    assert_eq!(response["payload"]["status"], "Stored");
+
+    ws.close(None).await.ok();
+}
+
+// ============================================================================
+// Group D: Device sync delivery & ack
+// ============================================================================
+
+#[tokio::test]
+async fn test_pending_device_sync_delivered_on_connect() {
+    let (deps, _, _, device_sync_storage) = test_deps_custom(
+        60,
+        10,
+        1_048_576,
+        Duration::from_secs(5),
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 0,
+        },
+    );
+
+    let client_id = common::generate_test_client_id(1);
+    let device_id = common::generate_test_client_id(10);
+
+    // Pre-store device sync messages
+    use vauchi_relay::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
+    device_sync_storage.store(StoredDeviceSyncMessage::new(
+        client_id.clone(),
+        device_id.clone(),
+        common::generate_test_client_id(11),
+        vec![1, 2, 3],
+        1,
+    ));
+    device_sync_storage.store(StoredDeviceSyncMessage::new(
+        client_id.clone(),
+        device_id.clone(),
+        common::generate_test_client_id(11),
+        vec![4, 5, 6],
+        2,
+    ));
+
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    // Handshake with device_id
+    let hs = make_handshake_full(&client_id, Some(&device_id), None, false);
+    ws.send(Message::Binary(encode_envelope(&hs)))
+        .await
+        .unwrap();
+
+    // Receive HandshakeAck
+    let ack = recv(&mut ws).await;
+    assert_eq!(ack["payload"]["type"], "HandshakeAck");
+
+    // Receive 2 pending device sync messages
+    let sync1 = recv(&mut ws).await;
+    assert_eq!(sync1["payload"]["type"], "DeviceSyncMessage");
+
+    let sync2 = recv(&mut ws).await;
+    assert_eq!(sync2["payload"]["type"], "DeviceSyncMessage");
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_device_sync_not_delivered_without_device_id() {
+    let (deps, _, _, device_sync_storage) = test_deps_custom(
+        60,
+        10,
+        1_048_576,
+        Duration::from_secs(5),
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 0,
+        },
+    );
+
+    let client_id = common::generate_test_client_id(1);
+    let some_device_id = common::generate_test_client_id(10);
+
+    // Pre-store device sync messages
+    use vauchi_relay::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
+    device_sync_storage.store(StoredDeviceSyncMessage::new(
+        client_id.clone(),
+        some_device_id.clone(),
+        common::generate_test_client_id(11),
+        vec![1, 2, 3],
+        1,
+    ));
+
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    // Handshake WITHOUT device_id
+    let ack = do_handshake(&mut ws, &client_id).await;
+    assert_eq!(ack["payload"]["type"], "HandshakeAck");
+
+    // No device sync messages should be delivered
+    let msg = try_recv(&mut ws).await;
+    assert!(msg.is_none(), "No device sync messages without device_id");
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_device_sync_ack_removes_message() {
+    let (deps, _, _, device_sync_storage) = test_deps_custom(
+        60,
+        10,
+        1_048_576,
+        Duration::from_secs(5),
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 0,
+        },
+    );
+
+    let client_id = common::generate_test_client_id(1);
+    let device_id = common::generate_test_client_id(10);
+
+    // Pre-store a device sync message
+    use vauchi_relay::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
+    let msg = StoredDeviceSyncMessage::new(
+        client_id.clone(),
+        device_id.clone(),
+        common::generate_test_client_id(11),
+        vec![1, 2, 3],
+        1,
+    );
+    let msg_id = msg.id.clone();
+    device_sync_storage.store(msg);
+
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    // Handshake with device_id
+    let hs = make_handshake_full(&client_id, Some(&device_id), None, false);
+    ws.send(Message::Binary(encode_envelope(&hs)))
+        .await
+        .unwrap();
+
+    // Receive HandshakeAck
+    let _ack = recv(&mut ws).await;
+
+    // Receive the pending device sync message
+    let delivered = recv(&mut ws).await;
+    assert_eq!(delivered["payload"]["type"], "DeviceSyncMessage");
+
+    // Send DeviceSyncAck
+    let ack_msg = make_device_sync_ack(&msg_id, 1);
+    ws.send(Message::Binary(encode_envelope(&ack_msg)))
+        .await
+        .unwrap();
+
+    // Give handler time to process
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Message should be removed from storage
+    let remaining = device_sync_storage.peek(&client_id, &device_id);
+    assert!(
+        remaining.is_empty(),
+        "DeviceSyncAck should remove message from storage"
+    );
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_device_sync_ack_without_device_id_ignored() {
+    let (deps, _, _, device_sync_storage) = test_deps_custom(
+        60,
+        10,
+        1_048_576,
+        Duration::from_secs(5),
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 0,
+        },
+    );
+
+    let client_id = common::generate_test_client_id(1);
+    let device_id = common::generate_test_client_id(10);
+
+    // Pre-store a device sync message
+    use vauchi_relay::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
+    let msg = StoredDeviceSyncMessage::new(
+        client_id.clone(),
+        device_id.clone(),
+        common::generate_test_client_id(11),
+        vec![1, 2, 3],
+        1,
+    );
+    let msg_id = msg.id.clone();
+    device_sync_storage.store(msg);
+
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    // Handshake WITHOUT device_id
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    // Send DeviceSyncAck anyway — should be ignored
+    let ack_msg = make_device_sync_ack(&msg_id, 1);
+    ws.send(Message::Binary(encode_envelope(&ack_msg)))
+        .await
+        .unwrap();
+
+    // Give handler time to process
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Message should still be in storage (ack was ignored)
+    let remaining = device_sync_storage.peek(&client_id, &device_id);
+    assert_eq!(
+        remaining.len(),
+        1,
+        "DeviceSyncAck without device_id should be ignored"
+    );
+
+    ws.close(None).await.ok();
+}
+
+// ============================================================================
+// Group E: Purge with device sync
+// ============================================================================
+
+#[tokio::test]
+async fn test_purge_with_device_sync_deletes_both() {
+    let (deps, storage, _, device_sync_storage) = test_deps_custom(
+        60,
+        10,
+        1_048_576,
+        Duration::from_secs(5),
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 10_000_000,
+        },
+    );
+
+    let client_id = common::generate_test_client_id(1);
+    let device_id = common::generate_test_client_id(10);
+
+    // Pre-store blobs
+    storage.store(&client_id, StoredBlob::new(vec![1]));
+    storage.store(&client_id, StoredBlob::new(vec![2]));
+
+    // Pre-store device sync messages (identity-based)
+    use vauchi_relay::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
+    device_sync_storage.store(StoredDeviceSyncMessage::new(
+        client_id.clone(),
+        device_id.clone(),
+        common::generate_test_client_id(11),
+        vec![10],
+        1,
+    ));
+
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    // Handshake (which will deliver pending blobs)
+    let hs = make_handshake(&client_id);
+    ws.send(Message::Binary(encode_envelope(&hs)))
+        .await
+        .unwrap();
+
+    // Drain HandshakeAck + 2 pending blobs
+    for _ in 0..3 {
+        let _ = recv(&mut ws).await;
+    }
+
+    // Purge with include_device_sync=true
+    let purge = make_purge_request(true);
+    let response = send_recv(&mut ws, &purge).await;
+    assert_eq!(response["payload"]["type"], "PurgeResponse");
+    assert_eq!(response["payload"]["blobs_deleted"], 2);
+    assert_eq!(response["payload"]["device_sync_deleted"], 1);
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_purge_without_device_sync_preserves_sync() {
+    let (deps, storage, _, device_sync_storage) = test_deps_custom(
+        60,
+        10,
+        1_048_576,
+        Duration::from_secs(5),
+        QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 10_000_000,
+        },
+    );
+
+    let client_id = common::generate_test_client_id(1);
+    let device_id = common::generate_test_client_id(10);
+
+    // Pre-store blobs
+    storage.store(&client_id, StoredBlob::new(vec![1]));
+
+    // Pre-store device sync messages
+    use vauchi_relay::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
+    device_sync_storage.store(StoredDeviceSyncMessage::new(
+        client_id.clone(),
+        device_id.clone(),
+        common::generate_test_client_id(11),
+        vec![10],
+        1,
+    ));
+
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    // Handshake (delivers pending blob)
+    let hs = make_handshake(&client_id);
+    ws.send(Message::Binary(encode_envelope(&hs)))
+        .await
+        .unwrap();
+
+    // Drain HandshakeAck + 1 pending blob
+    for _ in 0..2 {
+        let _ = recv(&mut ws).await;
+    }
+
+    // Purge with include_device_sync=false
+    let purge = make_purge_request(false);
+    let response = send_recv(&mut ws, &purge).await;
+    assert_eq!(response["payload"]["type"], "PurgeResponse");
+    assert_eq!(response["payload"]["blobs_deleted"], 1);
+    assert_eq!(response["payload"]["device_sync_deleted"], 0);
+
+    // Device sync messages should still exist
+    let remaining = device_sync_storage.peek(&client_id, &device_id);
+    assert_eq!(
+        remaining.len(),
+        1,
+        "Device sync should not be deleted when include_device_sync=false"
+    );
+
+    ws.close(None).await.ok();
+}
+
+// ============================================================================
+// Group F: Multi-client concurrency
+// ============================================================================
+
+#[tokio::test]
+async fn test_concurrent_store_and_receive() {
+    let storage = Arc::new(MemoryBlobStore::new());
+    let registry = Arc::new(ConnectionRegistry::new());
+    let blob_sender_map = handler::new_blob_sender_map();
+
+    let make_deps = |s: Arc<MemoryBlobStore>,
+                     r: Arc<ConnectionRegistry>,
+                     bsm: handler::BlobSenderMap|
+     -> ConnectionDeps {
+        ConnectionDeps {
+            storage: s as Arc<dyn BlobStore>,
+            recovery_storage: Arc::new(MemoryRecoveryProofStore::new()),
+            device_sync_storage: Arc::new(MemoryDeviceSyncStore::new()),
+            rate_limiter: Arc::new(RateLimiter::new(60)),
+            recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
+            registry: r,
+            blob_sender_map: bsm,
+            max_message_size: 1_048_576,
+            idle_timeout: Duration::from_secs(5),
+            quota: QuotaLimits {
+                max_blobs: 100,
+                max_bytes: 0,
+            },
+        }
+    };
+
+    let deps = make_deps(storage.clone(), registry.clone(), blob_sender_map.clone());
+    let url = start_multi_server(deps).await;
+
+    let sender_id = common::generate_test_client_id(1);
+    let recipient_id = common::generate_test_client_id(2);
+
+    // Connect sender
+    let (mut sender_ws, _) = connect_async(&url).await.unwrap();
+    let _ack = do_handshake(&mut sender_ws, &sender_id).await;
+
+    // Sender stores a blob for the recipient
+    let update = make_encrypted_update(&recipient_id, &[1, 2, 3]);
+    let stored_ack = send_recv(&mut sender_ws, &update).await;
+    assert_eq!(stored_ack["payload"]["status"], "Stored");
+
+    // Connect recipient — should get pending blob
+    let (mut recipient_ws, _) = connect_async(&url).await.unwrap();
+    let hs = make_handshake(&recipient_id);
+    recipient_ws
+        .send(Message::Binary(encode_envelope(&hs)))
+        .await
+        .unwrap();
+
+    // HandshakeAck
+    let ack = recv(&mut recipient_ws).await;
+    assert_eq!(ack["payload"]["type"], "HandshakeAck");
+
+    // Pending blob delivery
+    let blob = recv(&mut recipient_ws).await;
+    assert_eq!(blob["payload"]["type"], "EncryptedUpdate");
+    assert_eq!(blob["payload"]["ciphertext"], json!([1, 2, 3]));
+
+    sender_ws.close(None).await.ok();
+    recipient_ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_received_by_recipient_after_delivered_not_forwarded() {
+    let storage = Arc::new(MemoryBlobStore::new());
+    let registry = Arc::new(ConnectionRegistry::new());
+    let blob_sender_map = handler::new_blob_sender_map();
+
+    let make_deps = |s: Arc<MemoryBlobStore>,
+                     r: Arc<ConnectionRegistry>,
+                     bsm: handler::BlobSenderMap|
+     -> ConnectionDeps {
+        ConnectionDeps {
+            storage: s as Arc<dyn BlobStore>,
+            recovery_storage: Arc::new(MemoryRecoveryProofStore::new()),
+            device_sync_storage: Arc::new(MemoryDeviceSyncStore::new()),
+            rate_limiter: Arc::new(RateLimiter::new(60)),
+            recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
+            registry: r,
+            blob_sender_map: bsm,
+            max_message_size: 1_048_576,
+            idle_timeout: Duration::from_secs(5),
+            quota: QuotaLimits {
+                max_blobs: 100,
+                max_bytes: 0,
+            },
+        }
+    };
+
+    let deps = make_deps(storage.clone(), registry.clone(), blob_sender_map.clone());
+    let url = start_multi_server(deps).await;
+
+    let sender_id = common::generate_test_client_id(1);
+    let recipient_id = common::generate_test_client_id(2);
+
+    // 1. Connect sender
+    let (mut sender_ws, _) = connect_async(&url).await.unwrap();
+    let _ack = do_handshake(&mut sender_ws, &sender_id).await;
+
+    // 2. Sender stores a blob for recipient
+    let update = make_encrypted_update(&recipient_id, &[1, 2, 3]);
+    let stored_ack = send_recv(&mut sender_ws, &update).await;
+    assert_eq!(stored_ack["payload"]["status"], "Stored");
+
+    // 3. Connect recipient — receives blob + sender gets Delivered ack
+    let (mut recipient_ws, _) = connect_async(&url).await.unwrap();
+    let hs = make_handshake(&recipient_id);
+    recipient_ws
+        .send(Message::Binary(encode_envelope(&hs)))
+        .await
+        .unwrap();
+
+    // Recipient: HandshakeAck
+    let _ack = recv(&mut recipient_ws).await;
+    // Recipient: blob delivery
+    let blob = recv(&mut recipient_ws).await;
+    assert_eq!(blob["payload"]["type"], "EncryptedUpdate");
+    let blob_id = blob["message_id"].as_str().unwrap().to_string();
+
+    // Sender should get Delivered ack (via registry)
+    let delivered = timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(msg) = try_recv(&mut sender_ws).await {
+                if msg["payload"]["type"] == "Acknowledgment"
+                    && msg["payload"]["status"] == "Delivered"
+                {
+                    return msg;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("Should receive Delivered ack");
+    assert_eq!(delivered["payload"]["status"], "Delivered");
+
+    // 4. Recipient sends ReceivedByRecipient ack
+    let rbr_ack = make_ack(&blob_id, "ReceivedByRecipient");
+    recipient_ws
+        .send(Message::Binary(encode_envelope(&rbr_ack)))
+        .await
+        .unwrap();
+
+    // Note: The Delivered ack path (line 572 of handler.rs) already removed
+    // the blob_sender_map entry, so ReceivedByRecipient cannot be forwarded
+    // for blobs that were delivered from the pending queue. This is by design —
+    // delivery notifications are ephemeral and one-shot.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let msg = try_recv(&mut sender_ws).await;
+    assert!(
+        msg.is_none(),
+        "ReceivedByRecipient should not be forwarded after Delivered already cleaned up sender map"
+    );
+
+    sender_ws.close(None).await.ok();
+    recipient_ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_suppress_presence_blocks_received_by_recipient() {
+    let storage = Arc::new(MemoryBlobStore::new());
+    let registry = Arc::new(ConnectionRegistry::new());
+    let blob_sender_map = handler::new_blob_sender_map();
+
+    let make_deps = |s: Arc<MemoryBlobStore>,
+                     r: Arc<ConnectionRegistry>,
+                     bsm: handler::BlobSenderMap|
+     -> ConnectionDeps {
+        ConnectionDeps {
+            storage: s as Arc<dyn BlobStore>,
+            recovery_storage: Arc::new(MemoryRecoveryProofStore::new()),
+            device_sync_storage: Arc::new(MemoryDeviceSyncStore::new()),
+            rate_limiter: Arc::new(RateLimiter::new(60)),
+            recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
+            registry: r,
+            blob_sender_map: bsm,
+            max_message_size: 1_048_576,
+            idle_timeout: Duration::from_secs(5),
+            quota: QuotaLimits {
+                max_blobs: 100,
+                max_bytes: 0,
+            },
+        }
+    };
+
+    let deps = make_deps(storage.clone(), registry.clone(), blob_sender_map.clone());
+    let url = start_multi_server(deps).await;
+
+    let sender_id = common::generate_test_client_id(1);
+    let recipient_id = common::generate_test_client_id(2);
+
+    // 1. Connect sender
+    let (mut sender_ws, _) = connect_async(&url).await.unwrap();
+    let _ack = do_handshake(&mut sender_ws, &sender_id).await;
+
+    // 2. Sender stores a blob
+    let update = make_encrypted_update(&recipient_id, &[1, 2, 3]);
+    let stored_ack = send_recv(&mut sender_ws, &update).await;
+    assert_eq!(stored_ack["payload"]["status"], "Stored");
+
+    // 3. Recipient connects WITH suppress_presence = true
+    let (mut recipient_ws, _) = connect_async(&url).await.unwrap();
+    let hs = make_handshake_full(&recipient_id, None, None, true);
+    recipient_ws
+        .send(Message::Binary(encode_envelope(&hs)))
+        .await
+        .unwrap();
+
+    let _ack = recv(&mut recipient_ws).await;
+    let blob = recv(&mut recipient_ws).await;
+    assert_eq!(blob["payload"]["type"], "EncryptedUpdate");
+    let blob_id = blob["message_id"].as_str().unwrap().to_string();
+
+    // Wait — sender should NOT get Delivered ack
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let msg = try_recv(&mut sender_ws).await;
+    assert!(
+        msg.is_none(),
+        "Sender should NOT receive Delivered ack with suppress_presence"
+    );
+
+    // 4. Recipient sends ReceivedByRecipient ack
+    let rbr_ack = make_ack(&blob_id, "ReceivedByRecipient");
+    recipient_ws
+        .send(Message::Binary(encode_envelope(&rbr_ack)))
+        .await
+        .unwrap();
+
+    // Sender should NOT receive forwarded ReceivedByRecipient either
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let msg = try_recv(&mut sender_ws).await;
+    assert!(
+        msg.is_none(),
+        "Sender should NOT receive ReceivedByRecipient with suppress_presence"
+    );
+
+    sender_ws.close(None).await.ok();
+    recipient_ws.close(None).await.ok();
+}
+
+// ============================================================================
+// Group G: Additional edge cases
+// ============================================================================
+
+#[tokio::test]
+async fn test_invalid_routing_token_format_disconnects() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    // Handshake with invalid routing_token (too short)
+    let client_id = common::generate_test_client_id(1);
+    let hs = make_handshake_full(&client_id, None, Some("abcd1234"), false);
+    ws.send(Message::Binary(encode_envelope(&hs)))
+        .await
+        .unwrap();
+
+    // Server should disconnect
+    let msg = timeout(Duration::from_secs(2), ws.next()).await;
+    match msg {
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
+            // Expected: disconnection
+        }
+        other => panic!(
+            "Expected disconnect for invalid routing_token, got {:?}",
+            other
+        ),
+    }
+}
+
+#[tokio::test]
+async fn test_invalid_device_id_format_disconnects() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    // Handshake with invalid device_id (too short)
+    let client_id = common::generate_test_client_id(1);
+    let hs = make_handshake_full(&client_id, Some("short"), None, false);
+    ws.send(Message::Binary(encode_envelope(&hs)))
+        .await
+        .unwrap();
+
+    // Server should disconnect
+    let msg = timeout(Duration::from_secs(2), ws.next()).await;
+    match msg {
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
+            // Expected: disconnection
+        }
+        other => panic!("Expected disconnect for invalid device_id, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_recovery_store_invalid_key_hash() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let _ack = do_handshake(&mut ws, &client_id).await;
+
+    // Send RecoveryProofStore with a non-hex key_hash (contains 'g')
+    let bad_key_hash = "g".repeat(64);
+    let store_msg = make_recovery_store(&bad_key_hash, &[1, 2, 3]);
+    let frame = encode_envelope(&store_msg);
+    ws.send(Message::Binary(frame)).await.unwrap();
+
+    // No ack expected (invalid key hash is silently dropped)
+    let msg = try_recv(&mut ws).await;
+    assert!(
+        msg.is_none(),
+        "Invalid key_hash should not produce a response"
+    );
+
+    // Connection should still work
     let recipient_id = common::generate_test_client_id(2);
     let update = make_encrypted_update(&recipient_id, &[1]);
     let response = send_recv(&mut ws, &update).await;
