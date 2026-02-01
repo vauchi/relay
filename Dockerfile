@@ -19,6 +19,7 @@ FROM debian:bookworm-slim
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
   ca-certificates \
+  curl \
   libssl3 \
   && rm -rf /var/lib/apt/lists/*
 
@@ -53,7 +54,7 @@ ENV RELAY_DATA_DIR=/data
 ENV RUST_LOG=vauchi_relay=info
 
 # Healthcheck - verify the health endpoint returns 200 OK
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD bash -c 'printf "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" > /dev/tcp/localhost/8080 && head -n 1 < /dev/tcp/localhost/8080 | grep -q "200 OK"' || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -sf http://localhost:8080/health || exit 1
 
 CMD ["vauchi-relay"]
