@@ -195,6 +195,14 @@ The default 90-day TTL enables users who rarely open the app to still receive co
 
 See [CLAUDE.md](../../CLAUDE.md) for additional mandatory rules.
 
+## Support the Project
+
+Vauchi is open source and community-funded — no VC money, no data harvesting.
+
+- [GitHub Sponsors](https://github.com/sponsors/vauchi)
+- [Liberapay](https://liberapay.com/Vauchi/donate)
+- [SUPPORTERS.md](https://gitlab.com/vauchi/vauchi/-/blob/main/SUPPORTERS.md) for sponsorship tiers
+
 ## License
 
 MIT
