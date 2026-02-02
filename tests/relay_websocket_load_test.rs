@@ -207,7 +207,9 @@ async fn send_recv(
     >,
     msg: &Value,
 ) -> Value {
-    ws.send(Message::Binary(encode_envelope(msg))).await.unwrap();
+    ws.send(Message::Binary(encode_envelope(msg)))
+        .await
+        .unwrap();
     recv(ws).await
 }
 
