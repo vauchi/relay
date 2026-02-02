@@ -227,27 +227,31 @@ async fn try_recv(
 // Test 1: Concurrent connections
 // ============================================================================
 
-/// 100 concurrent WebSocket clients all do handshake + hold + close.
-/// Assert >= 90 succeed (some may fail under CI resource pressure).
+/// 1000 concurrent WebSocket clients all do handshake + hold + close.
+/// Assert >= 900 succeed (some may fail under OS resource pressure).
+///
+/// NOTE: Requires sufficient file descriptor limits (ulimit -n >= 4096).
+/// Each connection uses ~2 fds (client + server side).
 #[tokio::test]
-async fn test_100_concurrent_websocket_connections() {
+async fn test_1000_concurrent_websocket_connections() {
     let (deps, _, registry) = test_deps();
     let url = start_multi_server(deps).await;
 
+    let num_clients = 1000u16;
     let mut handles = vec![];
 
-    for i in 0..100u8 {
+    for i in 0..num_clients {
         let url = url.clone();
         handles.push(tokio::spawn(async move {
-            let client_id = common::generate_test_client_id(i);
-            match timeout(Duration::from_secs(10), connect_async(&url)).await {
+            let client_id = common::generate_test_client_id_wide(i);
+            match timeout(Duration::from_secs(15), connect_async(&url)).await {
                 Ok(Ok((mut ws, _))) => {
                     let frame = encode_envelope(&make_handshake(&client_id));
                     if ws.send(Message::Binary(frame)).await.is_err() {
                         return false;
                     }
                     // Wait for HandshakeAck
-                    match timeout(Duration::from_secs(5), ws.next()).await {
+                    match timeout(Duration::from_secs(10), ws.next()).await {
                         Ok(Some(Ok(Message::Binary(data)))) => {
                             let resp = decode_envelope(&data);
                             let ok = resp["payload"]["type"] == "HandshakeAck";
@@ -272,13 +276,13 @@ async fn test_100_concurrent_websocket_connections() {
     }
 
     assert!(
-        successes >= 90,
-        "Expected >= 90 successful connections, got {}",
+        successes >= 900,
+        "Expected >= 900 successful connections, got {}",
         successes
     );
 
     // After all close, registry should be empty
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(
         registry.connected_count(),
         0,

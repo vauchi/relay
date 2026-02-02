@@ -41,6 +41,17 @@ pub fn generate_test_client_id(seed: u8) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// Generates a valid 64-character hex client ID from a u16 seed.
+///
+/// Supports up to 65536 unique IDs (vs 256 for the u8 variant).
+#[allow(dead_code)]
+pub fn generate_test_client_id_wide(seed: u16) -> String {
+    let hi = (seed >> 8) as u8;
+    let lo = (seed & 0xFF) as u8;
+    let bytes: Vec<u8> = (0..32).map(|i: u8| hi.wrapping_add(i) ^ lo).collect();
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 /// Generates test ciphertext data of specified size.
 #[allow(dead_code)]
 pub fn generate_test_ciphertext(size: usize, seed: u8) -> Vec<u8> {
