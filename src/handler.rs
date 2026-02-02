@@ -96,8 +96,26 @@ mod protocol {
         // Data purge (GDPR-friendly: allows clients to delete all their stored data)
         PurgeRequest(PurgeRequest),
         PurgeResponse(PurgeResponse),
+        // Account revocation signal (GDPR: card owner deletes account)
+        AccountRevoked(AccountRevoked),
         #[serde(other)]
         Unknown,
+    }
+
+    /// Account revocation signal sent to contacts when the card owner deletes their account.
+    ///
+    /// The relay routes this like an EncryptedUpdate: store as blob for recipient_id.
+    /// The relay does NOT verify the signature — that is the recipient's job.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct AccountRevoked {
+        /// Owner's public key fingerprint (hex-encoded).
+        pub sender_id: String,
+        /// Contact's public key fingerprint (hex-encoded).
+        pub recipient_id: String,
+        /// Unix timestamp of revocation.
+        pub timestamp: u64,
+        /// Ed25519 signature (base64 or hex-encoded, opaque to relay).
+        pub signature: Vec<u8>,
     }
 
     /// Inter-device sync message for syncing changes between devices of the same identity.
@@ -202,6 +220,7 @@ mod protocol {
                     "purge".to_string(),
                     "device_sync".to_string(),
                     "recovery_proof".to_string(),
+                    "account_revoked".to_string(),
                 ],
             }),
         }
@@ -253,6 +272,14 @@ mod protocol {
         /// If true, also purge device sync messages (requires client_id-based identity).
         #[serde(default)]
         pub include_device_sync: bool,
+        /// If true, also purge recovery proofs for this client.
+        /// Requires `recovery_key_hash` to identify which proof to delete.
+        #[serde(default)]
+        pub include_recovery_proofs: bool,
+        /// Hash of the old public key (hex-encoded, 64 chars = 32 bytes).
+        /// Required when `include_recovery_proofs` is true.
+        #[serde(default)]
+        pub recovery_key_hash: Option<String>,
     }
 
     /// Response to a purge request with counts of deleted items.
@@ -262,6 +289,9 @@ mod protocol {
         pub blobs_deleted: usize,
         /// Number of device sync messages deleted.
         pub device_sync_deleted: usize,
+        /// Number of recovery proofs deleted.
+        #[serde(default)]
+        pub recovery_proofs_deleted: usize,
     }
 
     /// Creates a purge response envelope.
@@ -269,6 +299,7 @@ mod protocol {
         message_id: &str,
         blobs_deleted: usize,
         device_sync_deleted: usize,
+        recovery_proofs_deleted: usize,
     ) -> MessageEnvelope {
         MessageEnvelope {
             version: PROTOCOL_VERSION,
@@ -280,6 +311,7 @@ mod protocol {
             payload: MessagePayload::PurgeResponse(PurgeResponse {
                 blobs_deleted,
                 device_sync_deleted,
+                recovery_proofs_deleted,
             }),
         }
     }
@@ -857,20 +889,94 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                             0
                         };
 
+                        // Optionally delete recovery proofs
+                        let recovery_proofs_deleted = if purge.include_recovery_proofs {
+                            if let Some(ref key_hash_hex) = purge.recovery_key_hash {
+                                if let Ok(decoded) = hex::decode(key_hash_hex) {
+                                    if decoded.len() == 32 {
+                                        let mut hash = [0u8; 32];
+                                        hash.copy_from_slice(&decoded);
+                                        if recovery_storage.remove(&hash) { 1 } else { 0 }
+                                    } else {
+                                        0
+                                    }
+                                } else {
+                                    0
+                                }
+                            } else {
+                                0
+                            }
+                        } else {
+                            0
+                        };
+
                         // Send purge response
                         let response = protocol::create_purge_response(
                             &envelope.message_id,
                             blobs_deleted,
                             device_sync_deleted,
+                            recovery_proofs_deleted,
                         );
                         if let Ok(data) = protocol::encode_message(&response) {
                             let _ = write.send(Message::Binary(data)).await;
                         }
 
                         debug!(
-                            "[{}] Purged {} blobs, {} device sync messages",
-                            session, blobs_deleted, device_sync_deleted
+                            "[{}] Purged {} blobs, {} device sync, {} recovery proofs",
+                            session, blobs_deleted, device_sync_deleted, recovery_proofs_deleted
                         );
+                    }
+                    protocol::MessagePayload::AccountRevoked(ref revoked) => {
+                        // Route like EncryptedUpdate: store as blob for recipient
+
+                        // Validate recipient_id format (hex-encoded, 64 chars)
+                        if revoked.recipient_id.len() != 64
+                            || !revoked
+                                .recipient_id
+                                .chars()
+                                .all(|c| c.is_ascii_hexdigit())
+                        {
+                            let ack = protocol::create_ack(
+                                &envelope.message_id,
+                                protocol::AckStatus::Failed,
+                            );
+                            if let Ok(ack_data) = protocol::encode_message(&ack) {
+                                let _ = write.send(Message::Binary(ack_data)).await;
+                            }
+                            debug!("[{}] AccountRevoked: invalid recipient_id", session);
+                            continue;
+                        }
+
+                        // Check per-recipient quota
+                        if quota.max_blobs > 0
+                            && storage.blob_count_for(&revoked.recipient_id) >= quota.max_blobs
+                        {
+                            let ack = protocol::create_ack(
+                                &envelope.message_id,
+                                protocol::AckStatus::Failed,
+                            );
+                            if let Ok(ack_data) = protocol::encode_message(&ack) {
+                                let _ = write.send(Message::Binary(ack_data)).await;
+                            }
+                            debug!("[{}] AccountRevoked: quota exceeded for recipient", session);
+                            continue;
+                        }
+
+                        // Re-encode the entire envelope as a blob for the recipient
+                        if let Ok(blob_data) = protocol::encode_message(&envelope) {
+                            let blob = StoredBlob::new(blob_data);
+                            storage.store(&revoked.recipient_id, blob);
+
+                            let ack = protocol::create_ack(
+                                &envelope.message_id,
+                                protocol::AckStatus::Stored,
+                            );
+                            if let Ok(ack_data) = protocol::encode_message(&ack) {
+                                let _ = write.send(Message::Binary(ack_data)).await;
+                            }
+
+                            debug!("[{}] Stored AccountRevoked for recipient", session);
+                        }
                     }
                     protocol::MessagePayload::PurgeResponse(_) => {
                         // Clients shouldn't send responses, ignore
@@ -992,6 +1098,8 @@ mod tests {
     fn test_purge_request_serialization() {
         let purge = protocol::PurgeRequest {
             include_device_sync: true,
+            include_recovery_proofs: false,
+            recovery_key_hash: None,
         };
         let json = serde_json::to_string(&purge).unwrap();
         let parsed: protocol::PurgeRequest = serde_json::from_str(&json).unwrap();
@@ -1008,10 +1116,11 @@ mod tests {
 
     #[test]
     fn test_purge_response_creation() {
-        let response = protocol::create_purge_response("msg-123", 5, 2);
+        let response = protocol::create_purge_response("msg-123", 5, 2, 1);
         if let protocol::MessagePayload::PurgeResponse(pr) = response.payload {
             assert_eq!(pr.blobs_deleted, 5);
             assert_eq!(pr.device_sync_deleted, 2);
+            assert_eq!(pr.recovery_proofs_deleted, 1);
         } else {
             panic!("Expected PurgeResponse payload");
         }
@@ -1053,6 +1162,8 @@ mod tests {
             timestamp: 1234567890,
             payload: protocol::MessagePayload::PurgeRequest(protocol::PurgeRequest {
                 include_device_sync: false,
+                include_recovery_proofs: false,
+                recovery_key_hash: None,
             }),
         };
         let encoded = protocol::encode_message(&envelope).unwrap();
