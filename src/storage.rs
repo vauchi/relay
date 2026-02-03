@@ -23,10 +23,13 @@ pub struct StoredBlob {
     pub data: Vec<u8>,
     /// When the blob was stored (Unix timestamp in seconds).
     pub created_at_secs: u64,
+    /// Number of federation hops. 0 = stored locally (original), ≥1 = offloaded from peer.
+    /// Internal field — never exposed in client protocol messages.
+    pub hop_count: u8,
 }
 
 impl StoredBlob {
-    /// Creates a new stored blob.
+    /// Creates a new stored blob with hop_count 0 (locally stored).
     pub fn new(data: Vec<u8>) -> Self {
         let created_at_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -37,6 +40,18 @@ impl StoredBlob {
             id: uuid::Uuid::new_v4().to_string(),
             data,
             created_at_secs,
+            hop_count: 0,
+        }
+    }
+
+    /// Creates a blob with specific metadata (for received offloaded blobs).
+    /// Generates a new UUID but preserves the original created_at and hop_count.
+    pub fn with_metadata(data: Vec<u8>, created_at_secs: u64, hop_count: u8) -> Self {
+        StoredBlob {
+            id: uuid::Uuid::new_v4().to_string(),
+            data,
+            created_at_secs,
+            hop_count,
         }
     }
 
@@ -88,6 +103,13 @@ pub trait BlobStore: Send + Sync {
 
     /// Deletes all blobs for a recipient. Returns the number removed.
     fn delete_all_for(&self, recipient_id: &str) -> usize;
+
+    /// Returns the oldest blobs with hop_count=0 (candidates for federation offload).
+    /// Returns (routing_id, blob) pairs, ordered by created_at_secs ASC.
+    fn get_oldest_blobs(&self, limit: usize) -> Vec<(String, StoredBlob)>;
+
+    /// Removes a specific blob by its primary key. Returns true if found and removed.
+    fn remove_blob(&self, blob_id: &str) -> bool;
 }
 
 // ============================================================================
@@ -213,6 +235,36 @@ impl BlobStore for MemoryBlobStore {
         let mut blobs = self.blobs.write().unwrap();
         blobs.remove(recipient_id).map(|q| q.len()).unwrap_or(0)
     }
+
+    fn get_oldest_blobs(&self, limit: usize) -> Vec<(String, StoredBlob)> {
+        let blobs = self.blobs.read().unwrap();
+        let mut all: Vec<(String, StoredBlob)> = blobs
+            .iter()
+            .flat_map(|(rid, queue)| {
+                queue
+                    .iter()
+                    .filter(|b| b.hop_count == 0)
+                    .map(move |b| (rid.clone(), b.clone()))
+            })
+            .collect();
+        all.sort_by_key(|(_, b)| b.created_at_secs);
+        all.truncate(limit);
+        all
+    }
+
+    fn remove_blob(&self, blob_id: &str) -> bool {
+        let mut blobs = self.blobs.write().unwrap();
+        let mut found = false;
+        for queue in blobs.values_mut() {
+            let before = queue.len();
+            queue.retain(|b| b.id != blob_id);
+            if queue.len() < before {
+                found = true;
+            }
+        }
+        blobs.retain(|_, q| !q.is_empty());
+        found
+    }
 }
 
 // ============================================================================
@@ -250,6 +302,9 @@ impl SqliteBlobStore {
 
         // Migrate from v1 schema (with sender_id) to v2 (without)
         Self::migrate_drop_sender_id(&conn)?;
+
+        // Migrate: add hop_count column if missing
+        Self::migrate_add_hop_count(&conn)?;
 
         // Create index for recipient lookups
         conn.execute(
@@ -296,6 +351,20 @@ impl SqliteBlobStore {
         Ok(())
     }
 
+    /// Adds the hop_count column if it doesn't exist.
+    fn migrate_add_hop_count(conn: &Connection) -> Result<(), rusqlite::Error> {
+        let has_hop_count = conn
+            .prepare("SELECT hop_count FROM blobs LIMIT 0")
+            .is_ok();
+        if !has_hop_count {
+            conn.execute(
+                "ALTER TABLE blobs ADD COLUMN hop_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        Ok(())
+    }
+
     /// Creates an in-memory SQLite database (for testing).
     #[cfg(test)]
     pub fn in_memory() -> Result<Self, rusqlite::Error> {
@@ -307,13 +376,14 @@ impl BlobStore for SqliteBlobStore {
     fn store(&self, recipient_id: &str, blob: StoredBlob) {
         let conn = self.conn.lock().unwrap();
         let _ = conn.execute(
-            "INSERT INTO blobs (id, recipient_id, data, created_at_secs)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO blobs (id, recipient_id, data, created_at_secs, hop_count)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 blob.id,
                 recipient_id,
                 blob.data,
-                blob.created_at_secs as i64
+                blob.created_at_secs as i64,
+                blob.hop_count as i64,
             ],
         );
     }
@@ -322,7 +392,7 @@ impl BlobStore for SqliteBlobStore {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, data, created_at_secs
+                "SELECT id, data, created_at_secs, hop_count
                  FROM blobs WHERE recipient_id = ?1
                  ORDER BY created_at_secs ASC",
             )
@@ -333,6 +403,7 @@ impl BlobStore for SqliteBlobStore {
                 id: row.get(0)?,
                 data: row.get(1)?,
                 created_at_secs: row.get::<_, i64>(2)? as u64,
+                hop_count: row.get::<_, i64>(3)? as u8,
             })
         })
         .unwrap()
@@ -431,6 +502,40 @@ impl BlobStore for SqliteBlobStore {
             params![recipient_id],
         )
         .unwrap_or(0)
+    }
+
+    fn get_oldest_blobs(&self, limit: usize) -> Vec<(String, StoredBlob)> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, recipient_id, data, created_at_secs, hop_count
+                 FROM blobs WHERE hop_count = 0
+                 ORDER BY created_at_secs ASC
+                 LIMIT ?1",
+            )
+            .unwrap();
+
+        stmt.query_map(params![limit as i64], |row| {
+            let blob = StoredBlob {
+                id: row.get(0)?,
+                data: row.get(2)?,
+                created_at_secs: row.get::<_, i64>(3)? as u64,
+                hop_count: row.get::<_, i64>(4)? as u8,
+            };
+            let recipient_id: String = row.get(1)?;
+            Ok((recipient_id, blob))
+        })
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
+    }
+
+    fn remove_blob(&self, blob_id: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        let changes = conn
+            .execute("DELETE FROM blobs WHERE id = ?1", params![blob_id])
+            .unwrap_or(0);
+        changes > 0
     }
 }
 
@@ -819,5 +924,172 @@ mod tests {
         assert_eq!(store.blob_count(), 1);
         assert!(store.peek("r1").is_empty());
         assert_eq!(store.peek("r2").len(), 1);
+    }
+
+    // ============================================================================
+    // Tests: hop_count, get_oldest_blobs, remove_blob
+    // ============================================================================
+
+    #[test]
+    fn test_new_blob_has_hop_count_zero() {
+        let blob = StoredBlob::new(vec![1, 2, 3]);
+        assert_eq!(blob.hop_count, 0);
+    }
+
+    #[test]
+    fn test_with_metadata_preserves_fields() {
+        let blob = StoredBlob::with_metadata(vec![1, 2, 3], 42, 2);
+        assert_eq!(blob.created_at_secs, 42);
+        assert_eq!(blob.hop_count, 2);
+        assert_eq!(blob.data, vec![1, 2, 3]);
+        assert!(!blob.id.is_empty());
+    }
+
+    #[test]
+    fn test_memory_get_oldest_blobs_respects_limit() {
+        let store = MemoryBlobStore::new();
+        for i in 0..5u8 {
+            let mut blob = StoredBlob::new(vec![i]);
+            blob.created_at_secs = 1000 + i as u64;
+            store.store("r1", blob);
+        }
+        let oldest = store.get_oldest_blobs(3);
+        assert_eq!(oldest.len(), 3);
+        assert_eq!(oldest[0].1.created_at_secs, 1000);
+        assert_eq!(oldest[2].1.created_at_secs, 1002);
+    }
+
+    #[test]
+    fn test_memory_get_oldest_blobs_skips_hop_count() {
+        let store = MemoryBlobStore::new();
+        // hop_count=0 (should be included)
+        let mut b1 = StoredBlob::new(vec![1]);
+        b1.created_at_secs = 100;
+        store.store("r1", b1);
+        // hop_count=1 (should be skipped)
+        let b2 = StoredBlob::with_metadata(vec![2], 50, 1);
+        store.store("r1", b2);
+
+        let oldest = store.get_oldest_blobs(10);
+        assert_eq!(oldest.len(), 1);
+        assert_eq!(oldest[0].1.data, vec![1]);
+    }
+
+    #[test]
+    fn test_memory_get_oldest_blobs_order() {
+        let store = MemoryBlobStore::new();
+        let mut b1 = StoredBlob::new(vec![1]);
+        b1.created_at_secs = 300;
+        store.store("r1", b1);
+        let mut b2 = StoredBlob::new(vec![2]);
+        b2.created_at_secs = 100;
+        store.store("r2", b2);
+        let mut b3 = StoredBlob::new(vec![3]);
+        b3.created_at_secs = 200;
+        store.store("r1", b3);
+
+        let oldest = store.get_oldest_blobs(10);
+        assert_eq!(oldest.len(), 3);
+        assert_eq!(oldest[0].1.created_at_secs, 100);
+        assert_eq!(oldest[1].1.created_at_secs, 200);
+        assert_eq!(oldest[2].1.created_at_secs, 300);
+    }
+
+    #[test]
+    fn test_memory_remove_blob() {
+        let store = MemoryBlobStore::new();
+        let blob = StoredBlob::new(vec![1]);
+        let id = blob.id.clone();
+        store.store("r1", blob);
+        store.store("r1", StoredBlob::new(vec![2]));
+
+        assert!(store.remove_blob(&id));
+        assert_eq!(store.blob_count(), 1);
+        assert!(!store.remove_blob("nonexistent"));
+    }
+
+    #[test]
+    fn test_sqlite_get_oldest_blobs_respects_limit() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        for i in 0..5u8 {
+            let mut blob = StoredBlob::new(vec![i]);
+            blob.created_at_secs = 1000 + i as u64;
+            store.store("r1", blob);
+        }
+        let oldest = store.get_oldest_blobs(3);
+        assert_eq!(oldest.len(), 3);
+    }
+
+    #[test]
+    fn test_sqlite_get_oldest_blobs_skips_hop_count() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        let mut b1 = StoredBlob::new(vec![1]);
+        b1.created_at_secs = 100;
+        store.store("r1", b1);
+        let b2 = StoredBlob::with_metadata(vec![2], 50, 1);
+        store.store("r1", b2);
+
+        let oldest = store.get_oldest_blobs(10);
+        assert_eq!(oldest.len(), 1);
+        assert_eq!(oldest[0].1.data, vec![1]);
+    }
+
+    #[test]
+    fn test_sqlite_remove_blob() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        let blob = StoredBlob::new(vec![1]);
+        let id = blob.id.clone();
+        store.store("r1", blob);
+
+        assert!(store.remove_blob(&id));
+        assert_eq!(store.blob_count(), 0);
+        assert!(!store.remove_blob("nonexistent"));
+    }
+
+    #[test]
+    fn test_sqlite_hop_count_persisted() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("hop_test.db");
+
+        {
+            let store = SqliteBlobStore::open(&db_path).unwrap();
+            let blob = StoredBlob::with_metadata(vec![1, 2, 3], 999, 2);
+            store.store("r1", blob);
+        }
+
+        {
+            let store = SqliteBlobStore::open(&db_path).unwrap();
+            let blobs = store.peek("r1");
+            assert_eq!(blobs.len(), 1);
+            assert_eq!(blobs[0].hop_count, 2);
+            assert_eq!(blobs[0].created_at_secs, 999);
+        }
+    }
+
+    #[test]
+    fn test_sqlite_migration_adds_hop_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("migrate_hop.db");
+
+        // Create a database without hop_count column
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE blobs (
+                    id TEXT PRIMARY KEY,
+                    recipient_id TEXT NOT NULL,
+                    data BLOB NOT NULL,
+                    created_at_secs INTEGER NOT NULL
+                );
+                INSERT INTO blobs VALUES ('b1', 'r1', X'010203', 1000);",
+            )
+            .unwrap();
+        }
+
+        // Open with new code — migration should add hop_count
+        let store = SqliteBlobStore::open(&db_path).unwrap();
+        let blobs = store.peek("r1");
+        assert_eq!(blobs.len(), 1);
+        assert_eq!(blobs[0].hop_count, 0); // Default value from migration
     }
 }
