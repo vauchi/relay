@@ -205,6 +205,7 @@ fn test_deps() -> (
             max_blobs: 100,
             max_bytes: 10_000_000,
         },
+        hint_store: None,
     };
     (deps, storage, registry)
 }
@@ -509,6 +510,7 @@ async fn test_quota_blob_count_exceeded() {
             max_blobs: 3, // Very low quota
             max_bytes: 0, // Unlimited bytes
         },
+        hint_store: None,
     };
 
     let url = start_test_server(deps).await;
@@ -552,6 +554,7 @@ async fn test_quota_byte_limit_exceeded() {
             max_blobs: 0,   // Unlimited count
             max_bytes: 200, // Very low byte limit
         },
+        hint_store: None,
     };
 
     let url = start_test_server(deps).await;
@@ -752,6 +755,7 @@ async fn test_delivered_ack_to_sender() {
             max_blobs: 100,
             max_bytes: 0,
         },
+        hint_store: None,
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -767,6 +771,7 @@ async fn test_delivered_ack_to_sender() {
             max_blobs: 100,
             max_bytes: 0,
         },
+        hint_store: None,
     };
 
     // Spawn both servers
@@ -869,6 +874,7 @@ async fn test_suppress_presence_no_delivered_ack() {
             max_blobs: 100,
             max_bytes: 0,
         },
+        hint_store: None,
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -884,6 +890,7 @@ async fn test_suppress_presence_no_delivered_ack() {
             max_blobs: 100,
             max_bytes: 0,
         },
+        hint_store: None,
     };
 
     tokio::spawn(async move {
@@ -1079,6 +1086,7 @@ fn test_deps_custom(
         max_message_size: max_msg_size,
         idle_timeout,
         quota,
+        hint_store: None,
     };
     (deps, storage, registry, device_sync_storage)
 }
@@ -1129,6 +1137,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 max_message_size,
                 idle_timeout,
                 quota,
+                hint_store: None,
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -1963,6 +1972,7 @@ async fn test_concurrent_store_and_receive() {
                 max_blobs: 100,
                 max_bytes: 0,
             },
+            hint_store: None,
         }
     };
 
@@ -2026,6 +2036,7 @@ async fn test_received_by_recipient_after_delivered_not_forwarded() {
                 max_blobs: 100,
                 max_bytes: 0,
             },
+            hint_store: None,
         }
     };
 
@@ -2122,6 +2133,7 @@ async fn test_suppress_presence_blocks_received_by_recipient() {
                 max_blobs: 100,
                 max_bytes: 0,
             },
+            hint_store: None,
         }
     };
 

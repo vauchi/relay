@@ -18,6 +18,7 @@ use tracing::{debug, error, warn};
 
 use crate::connection_registry::{ConnectionRegistry, RegistryMessage};
 use crate::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
+use crate::forwarding_hints::ForwardingHintStore;
 use crate::rate_limit::RateLimiter;
 use crate::recovery_storage::{RecoveryProofStore, StoredRecoveryProof};
 use crate::storage::{BlobStore, StoredBlob};
@@ -98,8 +99,26 @@ mod protocol {
         PurgeResponse(PurgeResponse),
         // Account revocation signal (GDPR: card owner deletes account)
         AccountRevoked(AccountRevoked),
+        // Forwarding hints for offloaded blobs (federation)
+        ForwardingHints(ForwardingHints),
         #[serde(other)]
         Unknown,
+    }
+
+    /// Forwarding hints sent to clients when their blobs have been offloaded
+    /// to peer relays. The client can connect to those relays to retrieve them.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ForwardingHints {
+        pub hints: Vec<ForwardingHintInfo>,
+    }
+
+    /// A single forwarding hint pointing to a peer relay.
+    /// Note: routing_id is NOT included — the client knows their own routing_id.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ForwardingHintInfo {
+        pub blob_id: String,
+        pub relay_url: String,
+        pub expires_at_secs: u64,
     }
 
     /// Account revocation signal sent to contacts when the card owner deletes their account.
@@ -221,6 +240,7 @@ mod protocol {
                     "device_sync".to_string(),
                     "recovery_proof".to_string(),
                     "account_revoked".to_string(),
+                    "forwarding_hints".to_string(),
                 ],
             }),
         }
@@ -462,6 +482,8 @@ pub struct ConnectionDeps {
     pub max_message_size: usize,
     pub idle_timeout: Duration,
     pub quota: QuotaLimits,
+    /// Forwarding hint store for federation. None if federation is disabled.
+    pub hint_store: Option<Arc<dyn ForwardingHintStore>>,
 }
 
 /// Handles a WebSocket connection.
@@ -478,6 +500,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
         max_message_size,
         idle_timeout,
         quota,
+        hint_store,
     } = deps;
     // Generate a random session label for logging.
     // The relay must never log client_id (identity fingerprint) to prevent
@@ -603,6 +626,42 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                 // Remove from sender map after delivery notification
                 blob_sender_map.write().unwrap().remove(blob_id);
             }
+        }
+    }
+
+    // Send forwarding hints if federation is enabled and hints exist
+    if let Some(ref hint_store) = hint_store {
+        let hints = hint_store.get_hints(&routing_id);
+        if !hints.is_empty() {
+            let hint_infos: Vec<protocol::ForwardingHintInfo> = hints
+                .iter()
+                .map(|h| protocol::ForwardingHintInfo {
+                    blob_id: h.blob_id.clone(),
+                    relay_url: h.target_relay.clone(),
+                    expires_at_secs: h.expires_at_secs,
+                })
+                .collect();
+            let hint_envelope = protocol::MessageEnvelope {
+                version: protocol::PROTOCOL_VERSION,
+                message_id: uuid::Uuid::new_v4().to_string(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                payload: protocol::MessagePayload::ForwardingHints(
+                    protocol::ForwardingHints {
+                        hints: hint_infos,
+                    },
+                ),
+            };
+            if let Ok(data) = protocol::encode_message(&hint_envelope) {
+                if write.send(Message::Binary(data)).await.is_err() {
+                    warn!("[{}] Failed to send forwarding hints", session);
+                    registry.unregister(&routing_id);
+                    return;
+                }
+            }
+            debug!("[{}] Sent {} forwarding hints", session, hints.len());
         }
     }
 
@@ -914,6 +973,17 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                             0
                         };
 
+                        // Delete forwarding hints for this routing_id (federation cleanup)
+                        if let Some(ref hint_store) = hint_store {
+                            let hints_deleted = hint_store.delete_all_for(&routing_id);
+                            if hints_deleted > 0 {
+                                debug!(
+                                    "[{}] Purged {} forwarding hints",
+                                    session, hints_deleted
+                                );
+                            }
+                        }
+
                         // Send purge response
                         let response = protocol::create_purge_response(
                             &envelope.message_id,
@@ -982,6 +1052,10 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     protocol::MessagePayload::PurgeResponse(_) => {
                         // Clients shouldn't send responses, ignore
                         debug!("[{}] Unexpected PurgeResponse", session);
+                    }
+                    protocol::MessagePayload::ForwardingHints(_) => {
+                        // Server-only message, clients shouldn't send this
+                        debug!("[{}] Unexpected ForwardingHints", session);
                     }
                     protocol::MessagePayload::Unknown => {
                         debug!("[{}] Unknown message type", session);

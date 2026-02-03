@@ -99,6 +99,7 @@ fn test_deps() -> (
             max_blobs: 10_000,
             max_bytes: 100_000_000,
         },
+        hint_store: None,
     };
     (deps, storage, registry)
 }
@@ -125,6 +126,7 @@ fn test_deps_custom(
         max_message_size: 1_048_576,
         idle_timeout,
         quota,
+        hint_store: None,
     };
     (deps, storage, registry)
 }
@@ -159,6 +161,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 max_message_size,
                 idle_timeout,
                 quota,
+                hint_store: None,
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -495,6 +498,7 @@ async fn test_delivery_notification_latency() {
                 max_blobs: 1000,
                 max_bytes: 0,
             },
+            hint_store: None,
         }
     };
 

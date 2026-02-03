@@ -150,6 +150,7 @@ async fn start_full_server(
                                 max_blobs: 100,
                                 max_bytes: 0,
                             },
+                            hint_store: None,
                         };
                         handler::handle_connection(ws_stream, deps).await;
                     }
