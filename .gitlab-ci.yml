@@ -31,6 +31,7 @@ include:
   - template: Security/Container-Scanning.gitlab-ci.yml
 
 stages:
+  - auto-tag
   - lint
   - test
   - security
@@ -45,6 +46,50 @@ variables:
 
   # Container scanning for relay image
   CS_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+
+# ============================================================
+# Auto-Tag Stage
+# ============================================================
+
+# When Cargo.toml version is bumped and merged to main,
+# automatically create a v{version} tag to trigger the release pipeline.
+auto-tag:version:
+  stage: auto-tag
+  image: alpine:latest
+  needs: []
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: "1"
+  script:
+    - apk add --no-cache git
+    - |
+      VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+      TAG="v${VERSION}"
+      echo "Cargo.toml version: ${VERSION}"
+      echo "Expected tag: ${TAG}"
+
+      # Check if tag already exists
+      if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}"; then
+        echo "✓ Tag ${TAG} already exists — nothing to do"
+        exit 0
+      fi
+
+      echo "Tag ${TAG} does not exist — creating it..."
+
+      git config user.name "vauchi-gitlab-runner"
+      git config user.email "noreply@vauchi.app"
+
+      # Use project access token for push — CI_JOB_TOKEN cannot be used here
+      # because pushes via CI_JOB_TOKEN do not trigger new pipelines, and the
+      # tag push must trigger the release pipeline (build/docker stages).
+      # PROJECT_ACCESS_TOKEN is set at group level in Settings > CI/CD > Variables.
+      git remote set-url origin "https://vauchi-gitlab-runner:${PROJECT_ACCESS_TOKEN}@gitlab.com/${CI_PROJECT_PATH}.git"
+
+      git tag -a "${TAG}" -m "Release ${TAG}"
+      git push origin "${TAG}"
+      echo "✓ Created and pushed tag ${TAG}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
 
 # ============================================================
 # Lint Stage (change-based)
