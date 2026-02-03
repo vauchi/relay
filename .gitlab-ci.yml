@@ -152,6 +152,20 @@ security:audit:
     - cargo audit
   allow_failure: true
 
+# Full cargo-deny check: advisories, licenses, bans, sources
+security:deny:
+  extends: [.rust-job, .timeout-quick]
+  stage: security
+  needs: []
+  cache:
+    policy: pull
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  script:
+    - cargo binstall cargo-deny --no-confirm 2>/dev/null || cargo install cargo-deny || true
+    - cargo deny check
+
 # ============================================================
 # Build Stage
 # ============================================================
