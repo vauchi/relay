@@ -8,12 +8,18 @@
 ```
 vauchi-relay/
 ├── src/
-│   ├── main.rs         # Server entry point
-│   ├── config.rs       # Configuration management
-│   ├── handler.rs      # WebSocket connection handler
-│   ├── storage.rs      # In-memory blob storage
-│   └── rate_limit.rs   # Per-client rate limiting
-└── Cargo.toml          # Crate configuration
+│   ├── main.rs                  # Server entry point, path-based WS routing
+│   ├── config.rs                # Configuration management (incl. federation)
+│   ├── handler.rs               # Client WebSocket connection handler
+│   ├── storage.rs               # Blob storage (Memory + SQLite)
+│   ├── rate_limit.rs            # Per-client rate limiting
+│   ├── federation_protocol.rs   # Relay-to-relay wire protocol types
+│   ├── federation_handler.rs    # Incoming federation connection handler
+│   ├── federation_connector.rs  # Outgoing federation + OffloadManager
+│   ├── forwarding_hints.rs      # Forwarding hint storage (Memory + SQLite)
+│   ├── integrity.rs             # SHA-256 blob integrity hashing
+│   └── peer_registry.rs         # Federation peer tracking
+└── Cargo.toml                   # Crate configuration
 ```
 
 ## Components
@@ -69,6 +75,64 @@ Token bucket algorithm per client.
 | `check` | Verify client hasn't exceeded limit |
 | `record` | Track client message |
 
+### `federation_protocol.rs` - Wire Protocol
+
+Relay-to-relay message types (same 4-byte BE length prefix + JSON framing as client protocol).
+
+| Item | Purpose |
+|------|---------|
+| `FederationEnvelope` | Top-level message wrapper (version, message_id, timestamp, payload) |
+| `FederationPayload` | Enum: PeerHandshake, PeerHandshakeAck, OffloadBlob, OffloadAck, CapacityReport, DrainNotice, DrainAck |
+| `encode_federation_message` | Serialize envelope to wire format |
+| `decode_federation_message` | Deserialize wire bytes to envelope |
+
+### `federation_handler.rs` - Incoming Federation
+
+Handles WebSocket connections from peer relays on the `/federation` endpoint.
+
+| Item | Purpose |
+|------|---------|
+| `FederationDeps` | Shared dependencies (storage, hints, registry, config) |
+| `handle_federation_connection` | Process peer handshake, receive offloaded blobs, handle drain |
+
+### `federation_connector.rs` - Outgoing Federation
+
+Maintains persistent connections to configured peer relays.
+
+| Item | Purpose |
+|------|---------|
+| `maintain_peer_connection` | Connect to peer, reconnect with exponential backoff |
+| `OffloadManager` | Check storage usage, offload oldest blobs to peers |
+
+### `forwarding_hints.rs` - Offload Tracking
+
+Stores routing_id to peer relay mappings so clients can find offloaded blobs.
+
+| Item | Purpose |
+|------|---------|
+| `ForwardingHintStore` | Trait: store, get, remove, cleanup hints |
+| `MemoryForwardingHintStore` | In-memory implementation (tests) |
+| `SqliteForwardingHintStore` | SQLite implementation (separate `federation.db`) |
+
+### `integrity.rs` - Blob Verification
+
+SHA-256 hashing for blob integrity during federation transfer.
+
+| Item | Purpose |
+|------|---------|
+| `compute_integrity_hash` | SHA-256 hash of blob data (ciphertext) |
+| `verify_integrity_hash` | Compare computed hash against expected |
+
+### `peer_registry.rs` - Peer Tracking
+
+Tracks connected federation peers and their capacity.
+
+| Item | Purpose |
+|------|---------|
+| `PeerRegistry` | Thread-safe peer state (capacity, status, sender channels) |
+| `PeerInfo` | Per-peer metadata |
+| `PeerStatus` | Connected, Draining, or Disconnected |
+
 ## Message Flow
 
 ```
@@ -93,5 +157,6 @@ Client A                    Relay                     Client B
 | `tokio` | Async runtime |
 | `tokio-tungstenite` | WebSocket support |
 | `serde` | JSON serialization |
-| `dashmap` | Concurrent hashmap |
+| `rusqlite` | SQLite storage backend |
+| `ring` | SHA-256 integrity hashing (federation) |
 | `tracing` | Logging |

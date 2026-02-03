@@ -56,6 +56,20 @@ Environment variables:
 | `RELAY_DATA_DIR` | `./data` | Directory for SQLite database file |
 | `RUST_LOG` | `info` | Log level (trace, debug, info, warn, error) |
 
+### Federation Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RELAY_FEDERATION_ENABLED` | `false` | Enable federation with peer relays |
+| `RELAY_FEDERATION_PEERS` | _(empty)_ | Comma-separated peer relay URLs (e.g. `ws://relay-b:8080,ws://relay-c:8080`) |
+| `RELAY_FEDERATION_RELAY_ID` | _(auto)_ | Stable relay identifier (auto-generated and persisted to `{data_dir}/relay_id`) |
+| `RELAY_MAX_STORAGE_BYTES` | `1073741824` | Maximum storage capacity in bytes (1 GB) |
+| `RELAY_FEDERATION_OFFLOAD_THRESHOLD` | `0.80` | Start offloading when storage exceeds this ratio |
+| `RELAY_FEDERATION_OFFLOAD_REFUSE` | `0.95` | Refuse incoming offloads above this ratio |
+| `RELAY_FEDERATION_DRAIN_TIMEOUT` | `300` | Drain timeout in seconds for graceful shutdown |
+| `RELAY_FEDERATION_PEER_TIMEOUT` | `30` | Peer handshake timeout in seconds |
+| `RELAY_FEDERATION_CAPACITY_INTERVAL` | `60` | Capacity check interval in seconds |
+
 **Note:** The 90-day TTL allows users who sync infrequently to still receive updates.
 SQLite storage (default) persists messages across server restarts.
 
@@ -120,18 +134,29 @@ Messages are length-prefixed JSON:
 ```
 vauchi-relay/
 ├── src/
-│   ├── main.rs       # Server entry point
-│   ├── config.rs     # Configuration management
-│   ├── handler.rs    # WebSocket connection handler
-│   ├── storage.rs    # In-memory blob storage
-│   └── rate_limit.rs # Per-client rate limiting
+│   ├── main.rs                  # Server entry point, WS routing
+│   ├── config.rs                # Configuration management
+│   ├── handler.rs               # Client WebSocket handler
+│   ├── storage.rs               # Blob storage (Memory + SQLite)
+│   ├── rate_limit.rs            # Per-client rate limiting
+│   ├── federation_protocol.rs   # Relay-to-relay wire protocol
+│   ├── federation_handler.rs    # Incoming federation connections
+│   ├── federation_connector.rs  # Outgoing federation connections
+│   ├── forwarding_hints.rs      # Offload tracking for clients
+│   ├── integrity.rs             # SHA-256 blob verification
+│   └── peer_registry.rs         # Federation peer tracking
 ```
 
 ### Components
 
-- **Handler**: Manages WebSocket connections, parses messages, routes to storage
-- **Storage**: Thread-safe in-memory store with automatic TTL expiration
+- **Handler**: Manages client WebSocket connections, parses messages, routes to storage
+- **Storage**: Thread-safe blob store with automatic TTL expiration (Memory or SQLite)
 - **Rate Limiter**: Token bucket algorithm per client ID
+- **Federation Handler**: Accepts incoming peer relay connections, validates and stores offloaded blobs
+- **Federation Connector**: Maintains persistent connections to peer relays with exponential backoff
+- **OffloadManager**: Monitors storage usage and offloads blobs when above threshold
+- **Peer Registry**: Tracks connected peers, capacity, and communication channels
+- **Forwarding Hints**: Stores routing_id to peer relay mappings for client retrieval
 
 ## Deployment
 
@@ -172,6 +197,44 @@ WantedBy=multi-user.target
 - **Rate Limiting**: Prevents abuse and DoS
 - **SQLite Storage**: Messages persist across restarts (use `memory` backend for volatile storage)
 - **TLS**: Deploy behind a reverse proxy (nginx, caddy) for TLS termination
+
+## Federation
+
+The relay supports static federation with peer relays for redundancy and scalability. When storage exceeds a configurable threshold (default 80%), the relay offloads its oldest blobs to peer relays and stores forwarding hints so clients can find their data.
+
+### How It Works
+
+1. Configure peer relay URLs via `RELAY_FEDERATION_PEERS`
+2. The relay maintains persistent WebSocket connections to peers (`/federation` endpoint)
+3. When storage exceeds the offload threshold, the `OffloadManager` sends blobs to peers with available capacity
+4. Source relay stores forwarding hints (routing_id to peer relay mapping)
+5. When clients connect, they receive forwarding hints alongside any pending blobs
+6. Clients follow hints to retrieve offloaded blobs from peer relays
+
+### Example: Two-Relay Setup
+
+```bash
+# Relay A
+RELAY_FEDERATION_ENABLED=true \
+RELAY_FEDERATION_PEERS=ws://relay-b:8080 \
+RELAY_LISTEN_ADDR=0.0.0.0:8080 \
+vauchi-relay
+
+# Relay B
+RELAY_FEDERATION_ENABLED=true \
+RELAY_FEDERATION_PEERS=ws://relay-a:8080 \
+RELAY_LISTEN_ADDR=0.0.0.0:8080 \
+vauchi-relay
+```
+
+### Privacy Guarantees
+
+Federation preserves zero-knowledge:
+- Blobs are transferred as opaque ciphertext — peer relays cannot decrypt
+- `hop_count` prevents re-offloading loops (max 1 hop)
+- SHA-256 integrity hashing verifies blob data during transfer
+- Forwarding hints are TTL-based and cleaned on purge
+- Federation handlers never log routing IDs
 
 ## Storage Considerations
 
