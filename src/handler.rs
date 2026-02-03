@@ -896,7 +896,11 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                                     if decoded.len() == 32 {
                                         let mut hash = [0u8; 32];
                                         hash.copy_from_slice(&decoded);
-                                        if recovery_storage.remove(&hash) { 1 } else { 0 }
+                                        if recovery_storage.remove(&hash) {
+                                            1
+                                        } else {
+                                            0
+                                        }
                                     } else {
                                         0
                                     }
@@ -931,10 +935,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
 
                         // Validate recipient_id format (hex-encoded, 64 chars)
                         if revoked.recipient_id.len() != 64
-                            || !revoked
-                                .recipient_id
-                                .chars()
-                                .all(|c| c.is_ascii_hexdigit())
+                            || !revoked.recipient_id.chars().all(|c| c.is_ascii_hexdigit())
                         {
                             let ack = protocol::create_ack(
                                 &envelope.message_id,
