@@ -7,7 +7,7 @@
 //! Configuration loaded from environment variables.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::storage::StorageBackend;
@@ -40,6 +40,24 @@ pub struct RelayConfig {
     /// Recovery proof rate limit (queries per minute per client).
     /// Stricter than general rate limit to prevent key hash enumeration.
     pub recovery_rate_limit_per_min: u32,
+    /// Whether federation is enabled.
+    pub federation_enabled: bool,
+    /// List of peer relay WebSocket URLs for federation.
+    pub federation_peers: Vec<String>,
+    /// Unique relay ID (persisted to data_dir/relay_id).
+    pub federation_relay_id: String,
+    /// Storage usage ratio at which offloading begins (0.0–1.0).
+    pub federation_offload_threshold: f64,
+    /// Storage usage ratio at which incoming offloads are refused (0.0–1.0).
+    pub federation_offload_refuse: f64,
+    /// Seconds before a draining relay shuts down.
+    pub federation_drain_timeout_secs: u64,
+    /// Timeout in seconds for peer connection operations.
+    pub federation_peer_timeout_secs: u64,
+    /// Interval in seconds for sending capacity reports to peers.
+    pub federation_capacity_interval_secs: u64,
+    /// Maximum total storage in bytes for the relay (for federation offload decisions).
+    pub max_storage_bytes: usize,
 }
 
 impl Default for RelayConfig {
@@ -57,6 +75,15 @@ impl Default for RelayConfig {
             max_blobs_per_user: 1000, // 1000 blobs per recipient
             max_storage_per_user: 50_000_000, // 50 MB per recipient
             recovery_rate_limit_per_min: 10, // 10 recovery queries per minute (anti-enumeration)
+            federation_enabled: false,
+            federation_peers: Vec::new(),
+            federation_relay_id: String::new(), // Populated in from_env() or load_relay_id()
+            federation_offload_threshold: 0.80,
+            federation_offload_refuse: 0.95,
+            federation_drain_timeout_secs: 300,
+            federation_peer_timeout_secs: 30,
+            federation_capacity_interval_secs: 60,
+            max_storage_bytes: 1_073_741_824, // 1 GB
         }
     }
 }
@@ -137,6 +164,58 @@ impl RelayConfig {
             }
         }
 
+        // Federation configuration
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_ENABLED") {
+            config.federation_enabled = val == "true" || val == "1";
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_PEERS") {
+            config.federation_peers = val
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_OFFLOAD_THRESHOLD") {
+            if let Ok(parsed) = val.parse() {
+                config.federation_offload_threshold = parsed;
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_OFFLOAD_REFUSE") {
+            if let Ok(parsed) = val.parse() {
+                config.federation_offload_refuse = parsed;
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_DRAIN_TIMEOUT") {
+            if let Ok(parsed) = val.parse() {
+                config.federation_drain_timeout_secs = parsed;
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_PEER_TIMEOUT") {
+            if let Ok(parsed) = val.parse() {
+                config.federation_peer_timeout_secs = parsed;
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_CAPACITY_INTERVAL") {
+            if let Ok(parsed) = val.parse() {
+                config.federation_capacity_interval_secs = parsed;
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_MAX_STORAGE_BYTES") {
+            if let Ok(parsed) = val.parse() {
+                config.max_storage_bytes = parsed;
+            }
+        }
+
+        // Load or generate relay_id
+        config.federation_relay_id = load_relay_id(&config.data_dir);
+
         config
     }
 
@@ -154,6 +233,36 @@ impl RelayConfig {
     pub fn cleanup_interval(&self) -> Duration {
         Duration::from_secs(self.cleanup_interval_secs)
     }
+}
+
+/// Loads or generates a stable relay ID.
+///
+/// Priority:
+/// 1. `RELAY_FEDERATION_RELAY_ID` environment variable
+/// 2. `{data_dir}/relay_id` file (read existing)
+/// 3. Generate new UUID and write to file
+pub fn load_relay_id(data_dir: &Path) -> String {
+    // 1. Check env var first
+    if let Ok(val) = std::env::var("RELAY_FEDERATION_RELAY_ID") {
+        if !val.is_empty() {
+            return val;
+        }
+    }
+
+    // 2. Try reading from file
+    let relay_id_path = data_dir.join("relay_id");
+    if let Ok(id) = std::fs::read_to_string(&relay_id_path) {
+        let id = id.trim().to_string();
+        if !id.is_empty() {
+            return id;
+        }
+    }
+
+    // 3. Generate new UUID and persist
+    let id = uuid::Uuid::new_v4().to_string();
+    let _ = std::fs::create_dir_all(data_dir);
+    let _ = std::fs::write(&relay_id_path, &id);
+    id
 }
 
 // INLINE_TEST_REQUIRED: Binary crate without lib.rs - tests cannot be external
@@ -188,5 +297,90 @@ mod tests {
     fn test_cleanup_interval_duration() {
         let config = RelayConfig::default();
         assert_eq!(config.cleanup_interval(), Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn test_federation_defaults() {
+        let config = RelayConfig::default();
+        assert!(!config.federation_enabled);
+        assert!(config.federation_peers.is_empty());
+        assert!((config.federation_offload_threshold - 0.80).abs() < f64::EPSILON);
+        assert!((config.federation_offload_refuse - 0.95).abs() < f64::EPSILON);
+        assert_eq!(config.federation_drain_timeout_secs, 300);
+        assert_eq!(config.federation_peer_timeout_secs, 30);
+        assert_eq!(config.federation_capacity_interval_secs, 60);
+        assert_eq!(config.max_storage_bytes, 1_073_741_824);
+    }
+
+    #[test]
+    fn test_federation_peer_list_parsing() {
+        // Simulate comma-separated peer parsing
+        let peer_str = "ws://relay-a:8080, ws://relay-b:8080 , ws://relay-c:8080";
+        let peers: Vec<String> = peer_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(peers.len(), 3);
+        assert_eq!(peers[0], "ws://relay-a:8080");
+        assert_eq!(peers[1], "ws://relay-b:8080");
+        assert_eq!(peers[2], "ws://relay-c:8080");
+    }
+
+    #[test]
+    fn test_federation_peer_list_empty() {
+        let peer_str = "";
+        let peers: Vec<String> = peer_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert!(peers.is_empty());
+    }
+
+    #[test]
+    fn test_federation_peer_whitespace_trimming() {
+        let peer_str = "  ws://relay-a:8080  ,  ws://relay-b:8080  ";
+        let peers: Vec<String> = peer_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(peers[0], "ws://relay-a:8080");
+        assert_eq!(peers[1], "ws://relay-b:8080");
+    }
+
+    #[test]
+    fn test_relay_id_file_persistence() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path();
+
+        // First call: generates and writes
+        let id1 = load_relay_id(data_dir);
+        assert!(!id1.is_empty());
+
+        // Second call: reads from file
+        let id2 = load_relay_id(data_dir);
+        assert_eq!(id1, id2, "relay_id should be stable across calls");
+
+        // Verify file exists
+        let file_content = std::fs::read_to_string(data_dir.join("relay_id")).unwrap();
+        assert_eq!(file_content.trim(), id1);
+    }
+
+    #[test]
+    fn test_relay_id_env_var_overrides_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path();
+
+        // Write a file first
+        std::fs::write(data_dir.join("relay_id"), "file-relay-id").unwrap();
+
+        // Set env var
+        std::env::set_var("RELAY_FEDERATION_RELAY_ID", "env-relay-id");
+        let id = load_relay_id(data_dir);
+        std::env::remove_var("RELAY_FEDERATION_RELAY_ID");
+
+        assert_eq!(id, "env-relay-id");
     }
 }
