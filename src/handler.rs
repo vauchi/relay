@@ -648,11 +648,9 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
-                payload: protocol::MessagePayload::ForwardingHints(
-                    protocol::ForwardingHints {
-                        hints: hint_infos,
-                    },
-                ),
+                payload: protocol::MessagePayload::ForwardingHints(protocol::ForwardingHints {
+                    hints: hint_infos,
+                }),
             };
             if let Ok(data) = protocol::encode_message(&hint_envelope) {
                 if write.send(Message::Binary(data)).await.is_err() {
@@ -977,10 +975,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         if let Some(ref hint_store) = hint_store {
                             let hints_deleted = hint_store.delete_all_for(&routing_id);
                             if hints_deleted > 0 {
-                                debug!(
-                                    "[{}] Purged {} forwarding hints",
-                                    session, hints_deleted
-                                );
+                                debug!("[{}] Purged {} forwarding hints", session, hints_deleted);
                             }
                         }
 

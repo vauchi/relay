@@ -353,9 +353,7 @@ impl SqliteBlobStore {
 
     /// Adds the hop_count column if it doesn't exist.
     fn migrate_add_hop_count(conn: &Connection) -> Result<(), rusqlite::Error> {
-        let has_hop_count = conn
-            .prepare("SELECT hop_count FROM blobs LIMIT 0")
-            .is_ok();
+        let has_hop_count = conn.prepare("SELECT hop_count FROM blobs LIMIT 0").is_ok();
         if !has_hop_count {
             conn.execute(
                 "ALTER TABLE blobs ADD COLUMN hop_count INTEGER NOT NULL DEFAULT 0",

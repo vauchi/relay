@@ -78,7 +78,12 @@ fn make_peer_handshake(relay_id: &str) -> FederationEnvelope {
 }
 
 /// Creates an OffloadBlob message with correct integrity hash.
-fn make_offload_blob(blob_id: &str, routing_id: &str, data: &[u8], hop_count: u8) -> FederationEnvelope {
+fn make_offload_blob(
+    blob_id: &str,
+    routing_id: &str,
+    data: &[u8],
+    hop_count: u8,
+) -> FederationEnvelope {
     let hash = integrity::compute_integrity_hash(data);
     federation_protocol::create_federation_envelope(FederationPayload::OffloadBlob {
         blob_id: blob_id.to_string(),
@@ -169,15 +174,16 @@ fn make_client_purge() -> serde_json::Value {
 
 /// Creates a test RelayConfig for federation.
 fn make_fed_config(max_storage: usize, offload_threshold: f64) -> Arc<RelayConfig> {
-    let mut config = RelayConfig::default();
-    config.max_storage_bytes = max_storage;
-    config.federation_enabled = true;
-    config.federation_relay_id = "test-relay".to_string();
-    config.federation_offload_threshold = offload_threshold;
-    config.federation_offload_refuse = 0.95;
-    config.federation_peer_timeout_secs = 5;
-    config.federation_capacity_interval_secs = 1;
-    Arc::new(config)
+    Arc::new(RelayConfig {
+        max_storage_bytes: max_storage,
+        federation_enabled: true,
+        federation_relay_id: "test-relay".to_string(),
+        federation_offload_threshold: offload_threshold,
+        federation_offload_refuse: 0.95,
+        federation_peer_timeout_secs: 5,
+        federation_capacity_interval_secs: 1,
+        ..Default::default()
+    })
 }
 
 /// Starts a federation acceptor server that handles one connection.
@@ -533,10 +539,7 @@ async fn test_offload_blob_rejected_at_capacity() {
     // Fill storage near capacity (>= 95% of 1000 bytes)
     // Each StoredBlob has overhead, so store enough data
     for i in 0..100 {
-        storage.store(
-            &format!("fill-{}", i),
-            StoredBlob::new(vec![0u8; 50]),
-        );
+        storage.store(&format!("fill-{}", i), StoredBlob::new(vec![0u8; 50]));
     }
 
     let hint_store = Arc::new(MemoryForwardingHintStore::new());
@@ -600,7 +603,8 @@ async fn test_offload_preserves_created_at_secs() {
 
     // Send blob with specific created_at_secs (old timestamp)
     let original_created_at = 1700000000u64;
-    let offload = make_offload_blob_with_ts("blob-ttl", "route-ttl", &[5, 6, 7], original_created_at, 0);
+    let offload =
+        make_offload_blob_with_ts("blob-ttl", "route-ttl", &[5, 6, 7], original_created_at, 0);
     let ack = fed_send_recv(&mut ws, &offload).await;
 
     match ack {
@@ -653,7 +657,10 @@ async fn test_offload_increments_hop_count() {
 
     // hop_count=1 blobs should NOT be offloaded again (get_oldest_blobs filters them)
     let oldest = storage.get_oldest_blobs(10);
-    assert!(oldest.is_empty(), "hop_count=1 blobs should not be offload candidates");
+    assert!(
+        oldest.is_empty(),
+        "hop_count=1 blobs should not be offload candidates"
+    );
 
     ws.close(None).await.ok();
 }
@@ -921,15 +928,12 @@ async fn test_client_no_hints_no_forwarding_message() {
 
     // Should NOT receive a ForwardingHints message
     let next = try_recv_client(&mut ws).await;
-    match next {
-        Some(msg) => {
-            // If we do receive a message, it shouldn't be ForwardingHints
-            assert_ne!(
-                msg["payload"]["type"], "ForwardingHints",
-                "Should not receive ForwardingHints when no hints exist"
-            );
-        }
-        None => {} // Expected: no message
+    if let Some(msg) = next {
+        // If we do receive a message, it shouldn't be ForwardingHints
+        assert_ne!(
+            msg["payload"]["type"], "ForwardingHints",
+            "Should not receive ForwardingHints when no hints exist"
+        );
     }
 
     ws.close(None).await.ok();
@@ -953,11 +957,8 @@ async fn test_hint_store_none_no_hints_sent() {
 
     // No ForwardingHints message expected
     let next = try_recv_client(&mut ws).await;
-    match next {
-        Some(msg) => {
-            assert_ne!(msg["payload"]["type"], "ForwardingHints");
-        }
-        None => {}
+    if let Some(msg) = next {
+        assert_ne!(msg["payload"]["type"], "ForwardingHints");
     }
 
     ws.close(None).await.ok();
@@ -1014,7 +1015,9 @@ async fn test_purge_request_deletes_forwarding_hints() {
 
     // Send PurgeRequest
     let purge = make_client_purge();
-    ws.send(Message::Binary(encode_client(&purge))).await.unwrap();
+    ws.send(Message::Binary(encode_client(&purge)))
+        .await
+        .unwrap();
 
     // Receive PurgeResponse
     let purge_resp = recv_client(&mut ws).await;
@@ -1069,7 +1072,8 @@ async fn test_end_to_end_offload_and_retrieval() {
     let client_id = common::generate_test_client_id(10);
     // Without routing_token in handshake, routing_id == client_id
     let routing_id = &client_id;
-    let offload = make_offload_blob_with_ts("offloaded-blob-42", routing_id, &blob_data, 1700000000, 0);
+    let offload =
+        make_offload_blob_with_ts("offloaded-blob-42", routing_id, &blob_data, 1700000000, 0);
     let offload_ack = fed_send_recv(&mut fed_ws, &offload).await;
 
     match offload_ack {

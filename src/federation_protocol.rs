@@ -41,10 +41,7 @@ pub enum FederationPayload {
         capacity_max_bytes: usize,
     },
     /// Request to offload blobs (pre-flight check).
-    OffloadRequest {
-        count: usize,
-        total_bytes: usize,
-    },
+    OffloadRequest { count: usize, total_bytes: usize },
     /// A single blob being offloaded to a peer relay.
     OffloadBlob {
         blob_id: String,
@@ -67,9 +64,7 @@ pub enum FederationPayload {
         blob_count: usize,
     },
     /// Notification that a relay is draining (shutting down).
-    DrainNotice {
-        drain_timeout_secs: u64,
-    },
+    DrainNotice { drain_timeout_secs: u64 },
     /// Acknowledgment of drain notice.
     DrainAck,
     /// Unknown/future message types (forward compatibility).
@@ -276,10 +271,7 @@ mod tests {
         };
         let encoded = encode_federation_message(&envelope).unwrap();
         let decoded = decode_federation_message(&encoded).unwrap();
-        if let FederationPayload::DrainNotice {
-            drain_timeout_secs,
-        } = decoded.payload
-        {
+        if let FederationPayload::DrainNotice { drain_timeout_secs } = decoded.payload {
             assert_eq!(drain_timeout_secs, 300);
         } else {
             panic!("Expected DrainNotice");
@@ -338,8 +330,7 @@ mod tests {
         let encoded = encode_federation_message(&envelope).unwrap();
 
         // Verify length prefix
-        let len =
-            u32::from_be_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]) as usize;
+        let len = u32::from_be_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]) as usize;
         assert_eq!(len, encoded.len() - 4);
 
         let decoded = decode_federation_message(&encoded).unwrap();
@@ -364,7 +355,8 @@ mod tests {
                 routing_id: "route-1".to_string(),
                 data: vec![],
                 created_at_secs: 50,
-                integrity_hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
+                integrity_hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    .to_string(),
                 hop_count: 0,
             },
         };
@@ -405,12 +397,11 @@ mod tests {
 
     #[test]
     fn test_create_federation_envelope_auto_fields() {
-        let envelope =
-            create_federation_envelope(FederationPayload::CapacityReport {
-                used_bytes: 0,
-                max_bytes: 1000,
-                blob_count: 0,
-            });
+        let envelope = create_federation_envelope(FederationPayload::CapacityReport {
+            used_bytes: 0,
+            max_bytes: 1000,
+            blob_count: 0,
+        });
         assert_eq!(envelope.version, FEDERATION_PROTOCOL_VERSION);
         assert!(!envelope.message_id.is_empty());
         assert!(envelope.timestamp > 0);

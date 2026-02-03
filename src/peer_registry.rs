@@ -101,13 +101,16 @@ impl PeerRegistry {
     /// Finds a connected peer with available capacity (below refuse threshold).
     pub fn get_peer_with_capacity(&self) -> Option<PeerInfo> {
         let peers = self.peers.read().unwrap();
-        peers.values().find(|p| {
-            p.status == PeerStatus::Connected
-                && p.sender.is_some()
-                && p.capacity_max_bytes > 0
-                && (p.capacity_used_bytes as f64 / p.capacity_max_bytes as f64)
-                    < self.refuse_threshold
-        }).cloned()
+        peers
+            .values()
+            .find(|p| {
+                p.status == PeerStatus::Connected
+                    && p.sender.is_some()
+                    && p.capacity_max_bytes > 0
+                    && (p.capacity_used_bytes as f64 / p.capacity_max_bytes as f64)
+                        < self.refuse_threshold
+            })
+            .cloned()
     }
 
     /// Returns the number of registered peers.

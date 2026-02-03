@@ -17,9 +17,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
 use crate::config::RelayConfig;
-use crate::federation_protocol::{
-    self, FederationPayload, FEDERATION_PROTOCOL_VERSION,
-};
+use crate::federation_protocol::{self, FederationPayload, FEDERATION_PROTOCOL_VERSION};
 use crate::forwarding_hints::{ForwardingHint, ForwardingHintStore};
 use crate::integrity;
 use crate::peer_registry::{PeerInfo, PeerRegistry, PeerStatus};
@@ -40,10 +38,7 @@ pub async fn maintain_peer_connection(
     let session = &uuid::Uuid::new_v4().to_string()[..8];
 
     loop {
-        info!(
-            "[fed-conn-{}] Connecting to peer {}",
-            session, peer_url
-        );
+        info!("[fed-conn-{}] Connecting to peer {}", session, peer_url);
 
         match try_connect_to_peer(
             &peer_url,
@@ -60,20 +55,14 @@ pub async fn maintain_peer_connection(
                 backoff_secs = 1;
             }
             Err(e) => {
-                warn!(
-                    "[fed-conn-{}] Connection to peer failed: {}",
-                    session, e
-                );
+                warn!("[fed-conn-{}] Connection to peer failed: {}", session, e);
             }
         }
 
         // Mark peer as disconnected
         // (The peer_relay_id might not be known yet if we never got a handshake ack)
 
-        info!(
-            "[fed-conn-{}] Reconnecting in {}s",
-            session, backoff_secs
-        );
+        info!("[fed-conn-{}] Reconnecting in {}s", session, backoff_secs);
         tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
         backoff_secs = (backoff_secs * 2).min(max_backoff_secs);
     }
@@ -96,13 +85,12 @@ async fn try_connect_to_peer(
     let (mut write, mut read) = ws_stream.split();
 
     // Send PeerHandshake
-    let handshake = federation_protocol::create_federation_envelope(
-        FederationPayload::PeerHandshake {
+    let handshake =
+        federation_protocol::create_federation_envelope(FederationPayload::PeerHandshake {
             relay_id: own_relay_id.to_string(),
             version: FEDERATION_PROTOCOL_VERSION,
             listen_addr: config.listen_addr.to_string(),
-        },
-    );
+        });
     let hs_data = federation_protocol::encode_federation_message(&handshake)
         .map_err(|e| format!("Failed to encode handshake: {}", e))?;
     write
@@ -198,7 +186,11 @@ async fn try_connect_to_peer(
                 };
 
                 match envelope.payload {
-                    FederationPayload::OffloadAck { blob_id: _, accepted, reason } => {
+                    FederationPayload::OffloadAck {
+                        blob_id: _,
+                        accepted,
+                        reason,
+                    } => {
                         if accepted {
                             debug!("[fed-conn-{}] Offload ack: blob accepted", session);
                         } else {
@@ -296,16 +288,15 @@ impl OffloadManager {
         for (routing_id, blob) in candidates {
             let hash = integrity::compute_integrity_hash(&blob.data);
 
-            let offload_msg = federation_protocol::create_federation_envelope(
-                FederationPayload::OffloadBlob {
+            let offload_msg =
+                federation_protocol::create_federation_envelope(FederationPayload::OffloadBlob {
                     blob_id: blob.id.clone(),
                     routing_id: routing_id.clone(),
                     data: blob.data.clone(),
                     created_at_secs: blob.created_at_secs,
                     integrity_hash: hash,
                     hop_count: blob.hop_count,
-                },
-            );
+                });
 
             let encoded = match federation_protocol::encode_federation_message(&offload_msg) {
                 Ok(data) => data,
@@ -347,12 +338,13 @@ mod tests {
     use crate::storage::StoredBlob;
 
     fn make_test_config(max_storage: usize, threshold: f64) -> Arc<RelayConfig> {
-        let mut config = RelayConfig::default();
-        config.max_storage_bytes = max_storage;
-        config.federation_offload_threshold = threshold;
-        config.federation_offload_refuse = 0.95;
-        config.federation_peer_timeout_secs = 5;
-        Arc::new(config)
+        Arc::new(RelayConfig {
+            max_storage_bytes: max_storage,
+            federation_offload_threshold: threshold,
+            federation_offload_refuse: 0.95,
+            federation_peer_timeout_secs: 5,
+            ..Default::default()
+        })
     }
 
     #[tokio::test]

@@ -19,9 +19,7 @@ use tokio_tungstenite::WebSocketStream;
 use tracing::{debug, info, warn};
 
 use crate::config::RelayConfig;
-use crate::federation_protocol::{
-    self, FederationPayload, FEDERATION_PROTOCOL_VERSION,
-};
+use crate::federation_protocol::{self, FederationPayload, FEDERATION_PROTOCOL_VERSION};
 use crate::forwarding_hints::ForwardingHintStore;
 use crate::integrity;
 use crate::peer_registry::{PeerInfo, PeerRegistry, PeerStatus};
@@ -79,9 +77,7 @@ pub async fn handle_federation_connection(
                                     capacity_max_bytes: 0,
                                 },
                             );
-                            if let Ok(data) =
-                                federation_protocol::encode_federation_message(&ack)
-                            {
+                            if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
                                 let _ = write.send(Message::Binary(data)).await;
                             }
                             return;
@@ -133,15 +129,14 @@ pub async fn handle_federation_connection(
     });
 
     // Send PeerHandshakeAck
-    let ack = federation_protocol::create_federation_envelope(
-        FederationPayload::PeerHandshakeAck {
+    let ack =
+        federation_protocol::create_federation_envelope(FederationPayload::PeerHandshakeAck {
             relay_id: config.federation_relay_id.clone(),
             version: FEDERATION_PROTOCOL_VERSION,
             accepted: true,
             capacity_used_bytes: used_bytes,
             capacity_max_bytes: config.max_storage_bytes,
-        },
-    );
+        });
     if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
         if write.send(Message::Binary(data)).await.is_err() {
             warn!("[fed-{}] Failed to send PeerHandshakeAck", session);
@@ -199,9 +194,7 @@ pub async fn handle_federation_connection(
                                     reason: Some("hop_count too high".to_string()),
                                 },
                             );
-                            if let Ok(data) =
-                                federation_protocol::encode_federation_message(&ack)
-                            {
+                            if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
                                 let _ = write.send(Message::Binary(data)).await;
                             }
                             continue;
@@ -216,9 +209,7 @@ pub async fn handle_federation_connection(
                                     reason: Some("integrity check failed".to_string()),
                                 },
                             );
-                            if let Ok(data) =
-                                federation_protocol::encode_federation_message(&ack)
-                            {
+                            if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
                                 let _ = write.send(Message::Binary(data)).await;
                             }
                             continue;
@@ -226,8 +217,7 @@ pub async fn handle_federation_connection(
 
                         // Check capacity
                         let current_usage = storage.storage_size_bytes();
-                        let usage_ratio =
-                            current_usage as f64 / config.max_storage_bytes as f64;
+                        let usage_ratio = current_usage as f64 / config.max_storage_bytes as f64;
                         if usage_ratio >= config.federation_offload_refuse {
                             let ack = federation_protocol::create_federation_envelope(
                                 FederationPayload::OffloadAck {
@@ -236,9 +226,7 @@ pub async fn handle_federation_connection(
                                     reason: Some("at capacity".to_string()),
                                 },
                             );
-                            if let Ok(data) =
-                                federation_protocol::encode_federation_message(&ack)
-                            {
+                            if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
                                 let _ = write.send(Message::Binary(data)).await;
                             }
                             continue;
@@ -258,9 +246,7 @@ pub async fn handle_federation_connection(
                                 reason: None,
                             },
                         );
-                        if let Ok(data) =
-                            federation_protocol::encode_federation_message(&ack)
-                        {
+                        if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
                             let _ = write.send(Message::Binary(data)).await;
                         }
                     }
@@ -269,11 +255,7 @@ pub async fn handle_federation_connection(
                         max_bytes,
                         blob_count: _,
                     } => {
-                        peer_registry.update_capacity(
-                            &peer_relay_id,
-                            used_bytes,
-                            max_bytes,
-                        );
+                        peer_registry.update_capacity(&peer_relay_id, used_bytes, max_bytes);
                         debug!("[fed-{}] Updated peer capacity", session);
                     }
                     FederationPayload::DrainNotice {
@@ -285,9 +267,7 @@ pub async fn handle_federation_connection(
                         let ack = federation_protocol::create_federation_envelope(
                             FederationPayload::DrainAck,
                         );
-                        if let Ok(data) =
-                            federation_protocol::encode_federation_message(&ack)
-                        {
+                        if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
                             let _ = write.send(Message::Binary(data)).await;
                         }
                     }

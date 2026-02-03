@@ -66,18 +66,12 @@ impl Default for MemoryForwardingHintStore {
 impl ForwardingHintStore for MemoryForwardingHintStore {
     fn store_hint(&self, hint: ForwardingHint) {
         let mut hints = self.hints.write().unwrap();
-        hints
-            .entry(hint.routing_id.clone())
-            .or_default()
-            .push(hint);
+        hints.entry(hint.routing_id.clone()).or_default().push(hint);
     }
 
     fn get_hints(&self, routing_id: &str) -> Vec<ForwardingHint> {
         let hints = self.hints.read().unwrap();
-        hints
-            .get(routing_id)
-            .cloned()
-            .unwrap_or_default()
+        hints.get(routing_id).cloned().unwrap_or_default()
     }
 
     fn remove_hint(&self, blob_id: &str) -> bool {
