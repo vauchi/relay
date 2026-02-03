@@ -25,9 +25,15 @@ use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::{
     DeviceSyncStore, MemoryDeviceSyncStore, SqliteDeviceSyncStore,
 };
+use vauchi_relay::federation_connector::{self, OffloadManager};
+use vauchi_relay::federation_handler::{self, FederationDeps};
+use vauchi_relay::forwarding_hints::{
+    ForwardingHintStore, MemoryForwardingHintStore, SqliteForwardingHintStore,
+};
 use vauchi_relay::handler;
 use vauchi_relay::http::{create_router, HttpState};
 use vauchi_relay::metrics::RelayMetrics;
+use vauchi_relay::peer_registry::PeerRegistry;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::{
     MemoryRecoveryProofStore, RecoveryProofStore, SqliteRecoveryProofStore,
@@ -137,6 +143,78 @@ async fn main() {
     // Initialize connection registry for delivery notifications
     let registry = Arc::new(ConnectionRegistry::new());
     let blob_sender_map = handler::new_blob_sender_map();
+
+    // Initialize federation state
+    let config = Arc::new(config);
+    let peer_registry = Arc::new(PeerRegistry::new(config.federation_offload_refuse));
+
+    let hint_store: Arc<dyn ForwardingHintStore> = match config.storage_backend {
+        StorageBackend::Memory => Arc::new(MemoryForwardingHintStore::new()),
+        StorageBackend::Sqlite => {
+            let path = config.data_dir.join("federation.db");
+            Arc::new(
+                SqliteForwardingHintStore::open(&path)
+                    .expect("Failed to open federation hint database"),
+            )
+        }
+    };
+
+    if config.federation_enabled {
+        info!(
+            "Federation enabled: relay_id={}, peers={}",
+            config.federation_relay_id,
+            config.federation_peers.len()
+        );
+
+        // Spawn per-peer connector tasks
+        for peer_url in &config.federation_peers {
+            let peer_url = peer_url.clone();
+            let own_relay_id = config.federation_relay_id.clone();
+            let storage = storage.clone();
+            let hint_store = hint_store.clone();
+            let peer_registry = peer_registry.clone();
+            let config = config.clone();
+            tokio::spawn(async move {
+                federation_connector::maintain_peer_connection(
+                    peer_url,
+                    own_relay_id,
+                    storage,
+                    hint_store,
+                    peer_registry,
+                    config,
+                )
+                .await;
+            });
+        }
+
+        // Spawn capacity monitor / offload task
+        let offload_manager = OffloadManager {
+            storage: storage.clone(),
+            hint_store: hint_store.clone(),
+            peer_registry: peer_registry.clone(),
+            config: config.clone(),
+        };
+        let capacity_interval = config.federation_capacity_interval_secs;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(capacity_interval)).await;
+                offload_manager.check_and_offload().await;
+            }
+        });
+
+        // Spawn forwarding hints cleanup task (reuse cleanup_interval timing)
+        let cleanup_hints = hint_store.clone();
+        let hints_cleanup_interval = config.cleanup_interval();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(hints_cleanup_interval).await;
+                let removed = cleanup_hints.cleanup_expired();
+                if removed > 0 {
+                    info!("Cleaned up {} expired forwarding hints", removed);
+                }
+            }
+        });
+    }
 
     // Check for metrics auth token (optional additional protection)
     let metrics_token = std::env::var("RELAY_METRICS_TOKEN").ok();
@@ -259,6 +337,9 @@ async fn main() {
         let registry = registry.clone();
         let blob_sender_map = blob_sender_map.clone();
         let metrics = metrics.clone();
+        let hint_store = hint_store.clone();
+        let peer_registry = peer_registry.clone();
+        let config = config.clone();
         let max_message_size = config.max_message_size;
         let idle_timeout = config.idle_timeout();
         let quota = handler::QuotaLimits {
@@ -273,6 +354,7 @@ async fn main() {
             // Peek at the first bytes to detect HTTP request vs WebSocket upgrade
             // Buffer needs to be large enough to capture Upgrade header (typically ~200 bytes)
             let mut peek_buf = [0u8; 512];
+            let mut ws_path = "/".to_string();
             match stream.peek(&mut peek_buf).await {
                 Ok(n) if n > 0 => {
                     let peek_str = String::from_utf8_lossy(&peek_buf[..n]);
@@ -284,6 +366,14 @@ async fn main() {
                     let is_websocket_upgrade = peek_lower.contains("upgrade: websocket")
                         && peek_lower.contains("connection:")
                         && peek_lower.contains("upgrade");
+
+                    // Parse HTTP request path from first line (e.g., "GET /federation HTTP/1.1")
+                    ws_path = peek_str
+                        .lines()
+                        .next()
+                        .and_then(|line| line.split_whitespace().nth(1))
+                        .unwrap_or("/")
+                        .to_string();
 
                     // 1. WebSocket upgrade MUST be handled first
                     if is_websocket_upgrade {
@@ -351,26 +441,51 @@ async fn main() {
             // This prevents slowloris attacks where clients connect but never complete handshake
             match tokio::time::timeout(idle_timeout, accept_async(stream)).await {
                 Ok(Ok(ws_stream)) => {
-                    info!("New WebSocket connection");
                     metrics.connections_total.inc();
                     metrics.connections_active.inc();
 
-                    handler::handle_connection(
-                        ws_stream,
-                        handler::ConnectionDeps {
-                            storage,
-                            recovery_storage,
-                            device_sync_storage,
-                            rate_limiter,
-                            recovery_rate_limiter,
-                            registry,
-                            blob_sender_map,
-                            max_message_size,
-                            idle_timeout,
-                            quota,
-                        },
-                    )
-                    .await;
+                    // Path-based routing: /federation → federation handler
+                    if ws_path == "/federation" {
+                        if config.federation_enabled {
+                            info!("New federation connection");
+                            federation_handler::handle_federation_connection(
+                                ws_stream,
+                                FederationDeps {
+                                    storage,
+                                    hint_store,
+                                    peer_registry,
+                                    config,
+                                },
+                            )
+                            .await;
+                        } else {
+                            info!("Federation connection rejected (not enabled)");
+                            // Close the connection — federation not enabled
+                        }
+                    } else {
+                        info!("New WebSocket connection");
+                        handler::handle_connection(
+                            ws_stream,
+                            handler::ConnectionDeps {
+                                storage,
+                                recovery_storage,
+                                device_sync_storage,
+                                rate_limiter,
+                                recovery_rate_limiter,
+                                registry,
+                                blob_sender_map,
+                                max_message_size,
+                                idle_timeout,
+                                quota,
+                                hint_store: if config.federation_enabled {
+                                    Some(hint_store)
+                                } else {
+                                    None
+                                },
+                            },
+                        )
+                        .await;
+                    }
 
                     metrics.connections_active.dec();
                     info!("WebSocket connection closed");
