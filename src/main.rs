@@ -32,6 +32,7 @@ use vauchi_relay::forwarding_hints::{
 };
 use vauchi_relay::handler;
 use vauchi_relay::http::{create_router, HttpState};
+use vauchi_relay::noise_key;
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::peer_registry::PeerRegistry;
 use vauchi_relay::rate_limit::RateLimiter;
@@ -107,6 +108,17 @@ async fn main() {
     info!("Metrics endpoint: {}", http_addr);
     info!("Storage backend: {:?}", config.storage_backend);
     info!("Idle timeout: {}s", config.idle_timeout_secs);
+
+    // Load or generate Noise keypair for inner transport encryption
+    let noise_keypair = noise_key::load_or_generate_keypair(&config.data_dir);
+    let noise_static_key = Some(noise_keypair.private);
+    let noise_pubkey_b64 = noise_key::public_key_base64url(&noise_keypair.public);
+    info!("Noise public key: {}", noise_pubkey_b64);
+    if config.require_noise_encryption {
+        info!("Noise encryption: REQUIRED (v1 connections will be rejected)");
+    } else {
+        info!("Noise encryption: Available (v1 connections accepted)");
+    }
 
     // Initialize metrics
     let metrics = RelayMetrics::new();
@@ -229,6 +241,7 @@ async fn main() {
     let http_state = HttpState {
         metrics: metrics.clone(),
         metrics_token,
+        noise_pubkey: Some(noise_pubkey_b64),
     };
     let http_router = create_router(http_state);
 
@@ -482,6 +495,8 @@ async fn main() {
                                 } else {
                                     None
                                 },
+                                noise_static_key,
+                                require_noise_encryption: config.require_noise_encryption,
                             },
                         )
                         .await;

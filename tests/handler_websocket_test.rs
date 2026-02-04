@@ -206,6 +206,8 @@ fn test_deps() -> (
             max_bytes: 10_000_000,
         },
         hint_store: None,
+        noise_static_key: None,
+        require_noise_encryption: false,
     };
     (deps, storage, registry)
 }
@@ -511,6 +513,8 @@ async fn test_quota_blob_count_exceeded() {
             max_bytes: 0, // Unlimited bytes
         },
         hint_store: None,
+        noise_static_key: None,
+        require_noise_encryption: false,
     };
 
     let url = start_test_server(deps).await;
@@ -555,6 +559,8 @@ async fn test_quota_byte_limit_exceeded() {
             max_bytes: 200, // Very low byte limit
         },
         hint_store: None,
+        noise_static_key: None,
+        require_noise_encryption: false,
     };
 
     let url = start_test_server(deps).await;
@@ -756,6 +762,8 @@ async fn test_delivered_ack_to_sender() {
             max_bytes: 0,
         },
         hint_store: None,
+        noise_static_key: None,
+        require_noise_encryption: false,
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -772,6 +780,8 @@ async fn test_delivered_ack_to_sender() {
             max_bytes: 0,
         },
         hint_store: None,
+        noise_static_key: None,
+        require_noise_encryption: false,
     };
 
     // Spawn both servers
@@ -875,6 +885,8 @@ async fn test_suppress_presence_no_delivered_ack() {
             max_bytes: 0,
         },
         hint_store: None,
+        noise_static_key: None,
+        require_noise_encryption: false,
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -891,6 +903,8 @@ async fn test_suppress_presence_no_delivered_ack() {
             max_bytes: 0,
         },
         hint_store: None,
+        noise_static_key: None,
+        require_noise_encryption: false,
     };
 
     tokio::spawn(async move {
@@ -1087,6 +1101,8 @@ fn test_deps_custom(
         idle_timeout,
         quota,
         hint_store: None,
+        noise_static_key: None,
+        require_noise_encryption: false,
     };
     (deps, storage, registry, device_sync_storage)
 }
@@ -1138,6 +1154,8 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 idle_timeout,
                 quota,
                 hint_store: None,
+                noise_static_key: None,
+                require_noise_encryption: false,
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -1973,6 +1991,8 @@ async fn test_concurrent_store_and_receive() {
                 max_bytes: 0,
             },
             hint_store: None,
+            noise_static_key: None,
+            require_noise_encryption: false,
         }
     };
 
@@ -2037,6 +2057,8 @@ async fn test_received_by_recipient_after_delivered_not_forwarded() {
                 max_bytes: 0,
             },
             hint_store: None,
+            noise_static_key: None,
+            require_noise_encryption: false,
         }
     };
 
@@ -2134,6 +2156,8 @@ async fn test_suppress_presence_blocks_received_by_recipient() {
                 max_bytes: 0,
             },
             hint_store: None,
+            noise_static_key: None,
+            require_noise_encryption: false,
         }
     };
 

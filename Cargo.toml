@@ -43,8 +43,13 @@ prometheus = "0.14"
 # SHA-256 integrity hashing for federation blob transfer
 ring = "0.17"
 
+# Noise protocol for inner transport encryption (defense-in-depth inside TLS)
+snow = "0.9"
+
+# Base64url encoding for relay public key distribution
+base64 = "0.22"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.0"
 tower = { version = "0.5", features = ["util"] }
-base64 = "0.22"

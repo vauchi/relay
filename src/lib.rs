@@ -14,6 +14,8 @@ pub mod handler;
 pub mod http;
 pub mod integrity;
 pub mod metrics;
+pub mod noise_key;
+pub mod noise_transport;
 pub mod peer_registry;
 pub mod rate_limit;
 pub mod recovery_storage;

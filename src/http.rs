@@ -22,6 +22,8 @@ use crate::metrics::RelayMetrics;
 pub struct HttpState {
     pub metrics: RelayMetrics,
     pub metrics_token: Option<String>,
+    /// Relay's Noise NK public key (base64url-encoded).
+    pub noise_pubkey: Option<String>,
 }
 
 /// Middleware to check bearer token for metrics endpoint.
@@ -62,6 +64,7 @@ async fn metrics_auth_middleware(
 pub fn create_router(state: HttpState) -> Router {
     Router::new()
         .route("/metrics", get(metrics_handler))
+        .route("/pubkey", get(pubkey_handler))
         .route("/", get(root_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -75,8 +78,16 @@ async fn root_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "service": "vauchi-relay-metrics",
         "version": env!("CARGO_PKG_VERSION"),
-        "endpoints": ["/metrics"]
+        "endpoints": ["/metrics", "/pubkey"]
     }))
+}
+
+/// Returns the relay's Noise NK public key (base64url-encoded).
+async fn pubkey_handler(State(state): State<HttpState>) -> impl IntoResponse {
+    match state.noise_pubkey {
+        Some(ref key) => (StatusCode::OK, key.clone()).into_response(),
+        None => (StatusCode::NOT_FOUND, "Noise not configured").into_response(),
+    }
 }
 
 /// Health check endpoint - always returns 200 if server is running.
@@ -102,6 +113,7 @@ mod tests {
         HttpState {
             metrics: RelayMetrics::new(),
             metrics_token: None,
+            noise_pubkey: None,
         }
     }
 

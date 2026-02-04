@@ -316,6 +316,8 @@ fn make_client_deps(
             max_bytes: 10_000_000,
         },
         hint_store,
+        noise_static_key: None,
+        require_noise_encryption: false,
     }
 }
 

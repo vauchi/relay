@@ -58,6 +58,9 @@ pub struct RelayConfig {
     pub federation_capacity_interval_secs: u64,
     /// Maximum total storage in bytes for the relay (for federation offload decisions).
     pub max_storage_bytes: usize,
+    /// Whether to require Noise NK inner encryption for all connections.
+    /// When true, plaintext (v1) connections are rejected.
+    pub require_noise_encryption: bool,
 }
 
 impl Default for RelayConfig {
@@ -84,6 +87,7 @@ impl Default for RelayConfig {
             federation_peer_timeout_secs: 30,
             federation_capacity_interval_secs: 60,
             max_storage_bytes: 1_073_741_824, // 1 GB
+            require_noise_encryption: false,
         }
     }
 }
@@ -211,6 +215,11 @@ impl RelayConfig {
             if let Ok(parsed) = val.parse() {
                 config.max_storage_bytes = parsed;
             }
+        }
+
+        // Noise inner encryption
+        if let Ok(val) = std::env::var("RELAY_REQUIRE_NOISE_ENCRYPTION") {
+            config.require_noise_encryption = val == "true" || val == "1";
         }
 
         // Load or generate relay_id

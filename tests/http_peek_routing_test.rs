@@ -151,6 +151,8 @@ async fn start_full_server(
                                 max_bytes: 0,
                             },
                             hint_store: None,
+                            noise_static_key: None,
+                            require_noise_encryption: false,
                         };
                         handler::handle_connection(ws_stream, deps).await;
                     }

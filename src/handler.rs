@@ -19,6 +19,7 @@ use tracing::{debug, error, warn};
 use crate::connection_registry::{ConnectionRegistry, RegistryMessage};
 use crate::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
 use crate::forwarding_hints::ForwardingHintStore;
+use crate::noise_transport::{self, NoiseResponder, NoiseTransport};
 use crate::rate_limit::RateLimiter;
 use crate::recovery_storage::{RecoveryProofStore, StoredRecoveryProof};
 use crate::storage::{BlobStore, StoredBlob};
@@ -222,7 +223,19 @@ mod protocol {
     }
 
     /// Creates a handshake acknowledgment envelope.
-    pub fn create_handshake_ack() -> MessageEnvelope {
+    pub fn create_handshake_ack(is_noise_session: bool) -> MessageEnvelope {
+        let mut features = vec![
+            "routing_token".to_string(),
+            "suppress_presence".to_string(),
+            "purge".to_string(),
+            "device_sync".to_string(),
+            "recovery_proof".to_string(),
+            "account_revoked".to_string(),
+            "forwarding_hints".to_string(),
+        ];
+        if is_noise_session {
+            features.push("noise_nk".to_string());
+        }
         MessageEnvelope {
             version: PROTOCOL_VERSION,
             message_id: uuid::Uuid::new_v4().to_string(),
@@ -233,15 +246,7 @@ mod protocol {
             payload: MessagePayload::HandshakeAck(HandshakeAck {
                 protocol_version: PROTOCOL_VERSION,
                 server_version: env!("CARGO_PKG_VERSION").to_string(),
-                features: vec![
-                    "routing_token".to_string(),
-                    "suppress_presence".to_string(),
-                    "purge".to_string(),
-                    "device_sync".to_string(),
-                    "recovery_proof".to_string(),
-                    "account_revoked".to_string(),
-                    "forwarding_hints".to_string(),
-                ],
+                features,
             }),
         }
     }
@@ -484,6 +489,11 @@ pub struct ConnectionDeps {
     pub quota: QuotaLimits,
     /// Forwarding hint store for federation. None if federation is disabled.
     pub hint_store: Option<Arc<dyn ForwardingHintStore>>,
+    /// Relay's static Noise key for inner transport encryption.
+    /// None disables Noise support (v1-only mode).
+    pub noise_static_key: Option<[u8; 32]>,
+    /// When true, reject plaintext (v1) connections.
+    pub require_noise_encryption: bool,
 }
 
 /// Handles a WebSocket connection.
@@ -501,6 +511,8 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
         idle_timeout,
         quota,
         hint_store,
+        noise_static_key,
+        require_noise_encryption,
     } = deps;
     // Generate a random session label for logging.
     // The relay must never log client_id (identity fingerprint) to prevent
@@ -509,64 +521,138 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
 
     let (mut write, mut read) = ws_stream.split();
 
-    // Wait for handshake to get client ID and optional device ID (with timeout)
-    let (client_id, device_id, routing_token, suppress_presence) =
+    // Read the first WebSocket message — could be v1 Handshake or v2 Noise handshake
+    let first_msg = match timeout(idle_timeout, read.next()).await {
+        Ok(Some(Ok(Message::Binary(data)))) => data,
+        Ok(Some(Ok(_))) => {
+            warn!("[{}] Expected binary message for handshake", session);
+            return;
+        }
+        Ok(Some(Err(e))) => {
+            warn!("[{}] Error reading handshake: {}", session, e);
+            return;
+        }
+        Ok(None) => {
+            debug!("[{}] Connection closed before handshake", session);
+            return;
+        }
+        Err(_) => {
+            warn!("[{}] Handshake timeout (slowloris protection)", session);
+            return;
+        }
+    };
+
+    // Detect v2 (Noise) or v1 (plaintext) connection
+    let mut noise_session: Option<NoiseTransport> = None;
+
+    let handshake_data = if noise_transport::is_noise_v2_handshake(&first_msg) {
+        // --- v2 Noise NK handshake ---
+        let noise_key = match noise_static_key {
+            Some(key) => key,
+            None => {
+                warn!("[{}] v2 handshake received but Noise is not configured", session);
+                return;
+            }
+        };
+
+        // Extract handshake bytes (skip 3-byte magic)
+        let handshake_bytes = &first_msg[noise_transport::V2_MAGIC.len()..];
+
+        // Process NK handshake (-> e, es)
+        let responder = match NoiseResponder::new(&noise_key) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("[{}] Failed to create Noise responder: {}", session, e);
+                return;
+            }
+        };
+
+        let (transport, response) = match responder.process_handshake(handshake_bytes) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("[{}] Noise handshake failed: {}", session, e);
+                return;
+            }
+        };
+
+        // Send NK response (<- e, ee) with V2 magic prefix
+        let mut response_msg = Vec::with_capacity(noise_transport::V2_MAGIC.len() + response.len());
+        response_msg.extend_from_slice(&noise_transport::V2_MAGIC);
+        response_msg.extend_from_slice(&response);
+        if write.send(Message::Binary(response_msg)).await.is_err() {
+            warn!("[{}] Failed to send Noise handshake response", session);
+            return;
+        }
+
+        noise_session = Some(transport);
+
+        debug!("[{}] Noise NK handshake completed", session);
+
+        // Read the next message — the encrypted Handshake
         match timeout(idle_timeout, read.next()).await {
-            Ok(Some(Ok(Message::Binary(data)))) => match protocol::decode_message(&data) {
-                Ok(envelope) => {
-                    if let protocol::MessagePayload::Handshake(hs) = envelope.payload {
-                        // Validate client_id format
-                        if !validate_client_id(&hs.client_id) {
-                            warn!("[{}] Invalid client_id format", session);
-                            return;
-                        }
-                        // Validate device_id format if present
-                        if let Some(ref did) = hs.device_id {
-                            if !validate_client_id(did) {
-                                warn!("[{}] Invalid device_id format", session);
-                                return;
-                            }
-                        }
-                        // Validate routing_token format if present
-                        if let Some(ref rt) = hs.routing_token {
-                            if !validate_client_id(rt) {
-                                warn!("[{}] Invalid routing_token format", session);
-                                return;
-                            }
-                        }
-                        (
-                            hs.client_id,
-                            hs.device_id,
-                            hs.routing_token,
-                            hs.suppress_presence,
-                        )
-                    } else {
-                        warn!(
-                            "[{}] Expected Handshake, got {:?}",
-                            session, envelope.payload
-                        );
+            Ok(Some(Ok(Message::Binary(encrypted_data)))) => {
+                match noise_session.as_mut().unwrap().decrypt(&encrypted_data) {
+                    Ok(decrypted) => decrypted,
+                    Err(e) => {
+                        warn!("[{}] Failed to decrypt Handshake: {}", session, e);
                         return;
                     }
                 }
-                Err(e) => {
-                    warn!("[{}] Failed to decode handshake: {}", session, e);
+            }
+            _ => {
+                warn!("[{}] Expected encrypted Handshake after Noise setup", session);
+                return;
+            }
+        }
+    } else {
+        // --- v1 plaintext connection ---
+        if require_noise_encryption {
+            warn!("[{}] Plaintext connection rejected (require_noise_encryption=true)", session);
+            return;
+        }
+        first_msg
+    };
+
+    // Parse the Handshake message (same for v1 and v2)
+    let (client_id, device_id, routing_token, suppress_presence) =
+        match protocol::decode_message(&handshake_data) {
+            Ok(envelope) => {
+                if let protocol::MessagePayload::Handshake(hs) = envelope.payload {
+                    // Validate client_id format
+                    if !validate_client_id(&hs.client_id) {
+                        warn!("[{}] Invalid client_id format", session);
+                        return;
+                    }
+                    // Validate device_id format if present
+                    if let Some(ref did) = hs.device_id {
+                        if !validate_client_id(did) {
+                            warn!("[{}] Invalid device_id format", session);
+                            return;
+                        }
+                    }
+                    // Validate routing_token format if present
+                    if let Some(ref rt) = hs.routing_token {
+                        if !validate_client_id(rt) {
+                            warn!("[{}] Invalid routing_token format", session);
+                            return;
+                        }
+                    }
+                    (
+                        hs.client_id,
+                        hs.device_id,
+                        hs.routing_token,
+                        hs.suppress_presence,
+                    )
+                } else {
+                    warn!(
+                        "[{}] Expected Handshake, got {:?}",
+                        session, envelope.payload
+                    );
                     return;
                 }
-            },
-            Ok(Some(Ok(_))) => {
-                warn!("[{}] Expected binary message for handshake", session);
-                return;
             }
-            Ok(Some(Err(e))) => {
-                warn!("[{}] Error reading handshake: {}", session, e);
-                return;
-            }
-            Ok(None) => {
-                debug!("[{}] Connection closed before handshake", session);
-                return;
-            }
-            Err(_) => {
-                warn!("[{}] Handshake timeout (slowloris protection)", session);
+            Err(e) => {
+                warn!("[{}] Failed to decode handshake: {}", session, e);
                 return;
             }
         };
@@ -576,16 +662,28 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
     let routing_id = routing_token.unwrap_or_else(|| client_id.clone());
 
     debug!(
-        "[{}] Client connected (has_device_id: {}, suppress_presence: {})",
+        "[{}] Client connected (has_device_id: {}, suppress_presence: {}, noise: {})",
         session,
         device_id.is_some(),
-        suppress_presence
+        suppress_presence,
+        noise_session.is_some()
     );
 
     // Send HandshakeAck with server version and supported features
-    let hs_ack = protocol::create_handshake_ack();
+    let hs_ack = protocol::create_handshake_ack(noise_session.is_some());
     if let Ok(ack_data) = protocol::encode_message(&hs_ack) {
-        if write.send(Message::Binary(ack_data)).await.is_err() {
+        let send_data = if let Some(ref mut ns) = noise_session {
+            match ns.encrypt(&ack_data) {
+                Ok(encrypted) => encrypted,
+                Err(e) => {
+                    warn!("[{}] Failed to encrypt HandshakeAck: {}", session, e);
+                    return;
+                }
+            }
+        } else {
+            ack_data
+        };
+        if write.send(Message::Binary(send_data)).await.is_err() {
             warn!("[{}] Failed to send HandshakeAck", session);
             return;
         }
@@ -594,6 +692,25 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
     // Register in connection registry for delivery notifications
     let mut registry_rx = registry.register(&routing_id);
 
+    // Helper: optionally encrypt data before sending over WebSocket.
+    // If Noise is active, encrypts the frame; otherwise passes through.
+    macro_rules! noise_send {
+        ($write:expr, $data:expr, $noise:expr, $session:expr) => {{
+            let send_data = if let Some(ref mut ns) = $noise {
+                match ns.encrypt(&$data) {
+                    Ok(encrypted) => encrypted,
+                    Err(e) => {
+                        warn!("[{}] Failed to encrypt outgoing message: {}", $session, e);
+                        continue;
+                    }
+                }
+            } else {
+                $data
+            };
+            $write.send(Message::Binary(send_data)).await
+        }};
+    }
+
     // Send any pending blobs for this client and notify senders
     let pending = storage.peek(&routing_id);
     let pending_blob_ids: Vec<String> = pending.iter().map(|b| b.id.clone()).collect();
@@ -601,7 +718,18 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
         let envelope = protocol::create_update_delivery(&blob.id, &routing_id, &blob.data);
         match protocol::encode_message(&envelope) {
             Ok(data) => {
-                if write.send(Message::Binary(data)).await.is_err() {
+                let send_data = if let Some(ref mut ns) = noise_session {
+                    match ns.encrypt(&data) {
+                        Ok(encrypted) => encrypted,
+                        Err(e) => {
+                            error!("[{}] Failed to encrypt pending blob: {}", session, e);
+                            continue;
+                        }
+                    }
+                } else {
+                    data
+                };
+                if write.send(Message::Binary(send_data)).await.is_err() {
                     warn!("[{}] Failed to send pending blob", session);
                     registry.unregister(&routing_id);
                     return;
@@ -653,7 +781,19 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                 }),
             };
             if let Ok(data) = protocol::encode_message(&hint_envelope) {
-                if write.send(Message::Binary(data)).await.is_err() {
+                let send_data = if let Some(ref mut ns) = noise_session {
+                    match ns.encrypt(&data) {
+                        Ok(encrypted) => encrypted,
+                        Err(e) => {
+                            error!("[{}] Failed to encrypt forwarding hints: {}", session, e);
+                            registry.unregister(&routing_id);
+                            return;
+                        }
+                    }
+                } else {
+                    data
+                };
+                if write.send(Message::Binary(send_data)).await.is_err() {
                     warn!("[{}] Failed to send forwarding hints", session);
                     registry.unregister(&routing_id);
                     return;
@@ -678,7 +818,18 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
             );
             match protocol::encode_message(&envelope) {
                 Ok(data) => {
-                    if write.send(Message::Binary(data)).await.is_err() {
+                    let send_data = if let Some(ref mut ns) = noise_session {
+                        match ns.encrypt(&data) {
+                            Ok(encrypted) => encrypted,
+                            Err(e) => {
+                                error!("[{}] Failed to encrypt device sync: {}", session, e);
+                                continue;
+                            }
+                        }
+                    } else {
+                        data
+                    };
+                    if write.send(Message::Binary(send_data)).await.is_err() {
                         warn!("[{}] Failed to send pending device sync", session);
                         return;
                     }
@@ -717,17 +868,39 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
             }
             // Registry message (delivery notification from another handler)
             Some(registry_msg) = registry_rx.recv() => {
-                // Forward the pre-encoded message to this client's WebSocket
-                let _ = write.send(Message::Binary(registry_msg.data)).await;
+                // Forward the pre-encoded message to this client's WebSocket,
+                // encrypting if Noise session is active
+                let send_data = if let Some(ref mut ns) = noise_session {
+                    match ns.encrypt(&registry_msg.data) {
+                        Ok(encrypted) => encrypted,
+                        Err(_) => continue,
+                    }
+                } else {
+                    registry_msg.data
+                };
+                let _ = write.send(Message::Binary(send_data)).await;
                 continue;
             }
         };
 
         match msg {
             Ok(Message::Binary(data)) => {
-                // Check message size
-                if data.len() > max_message_size {
-                    warn!("[{}] Message too large: {} bytes", session, data.len());
+                // If Noise is active, decrypt the incoming message first
+                let plaintext_data = if let Some(ref mut ns) = noise_session {
+                    match ns.decrypt(&data) {
+                        Ok(decrypted) => decrypted,
+                        Err(e) => {
+                            warn!("[{}] Failed to decrypt incoming message: {}", session, e);
+                            continue;
+                        }
+                    }
+                } else {
+                    data
+                };
+
+                // Check message size (after decryption)
+                if plaintext_data.len() > max_message_size {
+                    warn!("[{}] Message too large: {} bytes", session, plaintext_data.len());
                     continue;
                 }
 
@@ -738,7 +911,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                 }
 
                 // Decode message
-                let envelope = match protocol::decode_message(&data) {
+                let envelope = match protocol::decode_message(&plaintext_data) {
                     Ok(e) => e,
                     Err(e) => {
                         warn!("[{}] Failed to decode message: {}", session, e);
@@ -761,7 +934,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                                 protocol::AckStatus::Failed,
                             );
                             if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                let _ = write.send(Message::Binary(ack_data)).await;
+                                let _ = noise_send!(write, ack_data, noise_session, session);
                             }
                             debug!("[{}] Quota exceeded for recipient", session);
                             continue;
@@ -782,7 +955,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         let ack =
                             protocol::create_ack(&envelope.message_id, protocol::AckStatus::Stored);
                         if let Ok(ack_data) = protocol::encode_message(&ack) {
-                            let _ = write.send(Message::Binary(ack_data)).await;
+                            let _ = noise_send!(write, ack_data, noise_session, session);
                         }
 
                         debug!("[{}] Stored blob", session);
@@ -840,7 +1013,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                                 protocol::AckStatus::Stored,
                             );
                             if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                let _ = write.send(Message::Binary(ack_data)).await;
+                                let _ = noise_send!(write, ack_data, noise_session, session);
                             }
 
                             debug!("[{}] Stored recovery proof", session);
@@ -873,7 +1046,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
 
                         let response = protocol::create_recovery_response(entries);
                         if let Ok(data) = protocol::encode_message(&response) {
-                            let _ = write.send(Message::Binary(data)).await;
+                            let _ = noise_send!(write, data, noise_session, session);
                         }
 
                         debug!(
@@ -911,7 +1084,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         let ack =
                             protocol::create_ack(&envelope.message_id, protocol::AckStatus::Stored);
                         if let Ok(ack_data) = protocol::encode_message(&ack) {
-                            let _ = write.send(Message::Binary(ack_data)).await;
+                            let _ = noise_send!(write, ack_data, noise_session, session);
                         }
 
                         debug!(
@@ -987,7 +1160,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                             recovery_proofs_deleted,
                         );
                         if let Ok(data) = protocol::encode_message(&response) {
-                            let _ = write.send(Message::Binary(data)).await;
+                            let _ = noise_send!(write, data, noise_session, session);
                         }
 
                         debug!(
@@ -1007,7 +1180,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                                 protocol::AckStatus::Failed,
                             );
                             if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                let _ = write.send(Message::Binary(ack_data)).await;
+                                let _ = noise_send!(write, ack_data, noise_session, session);
                             }
                             debug!("[{}] AccountRevoked: invalid recipient_id", session);
                             continue;
@@ -1022,7 +1195,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                                 protocol::AckStatus::Failed,
                             );
                             if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                let _ = write.send(Message::Binary(ack_data)).await;
+                                let _ = noise_send!(write, ack_data, noise_session, session);
                             }
                             debug!("[{}] AccountRevoked: quota exceeded for recipient", session);
                             continue;
@@ -1038,7 +1211,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                                 protocol::AckStatus::Stored,
                             );
                             if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                let _ = write.send(Message::Binary(ack_data)).await;
+                                let _ = noise_send!(write, ack_data, noise_session, session);
                             }
 
                             debug!("[{}] Stored AccountRevoked for recipient", session);
@@ -1198,7 +1371,7 @@ mod tests {
 
     #[test]
     fn test_handshake_ack_creation() {
-        let ack = protocol::create_handshake_ack();
+        let ack = protocol::create_handshake_ack(false);
         if let protocol::MessagePayload::HandshakeAck(hs_ack) = ack.payload {
             assert_eq!(hs_ack.protocol_version, protocol::PROTOCOL_VERSION);
             assert!(!hs_ack.server_version.is_empty());
@@ -1214,7 +1387,7 @@ mod tests {
 
     #[test]
     fn test_handshake_ack_roundtrip() {
-        let ack = protocol::create_handshake_ack();
+        let ack = protocol::create_handshake_ack(false);
         let encoded = protocol::encode_message(&ack).unwrap();
         let decoded = protocol::decode_message(&encoded).unwrap();
         if let protocol::MessagePayload::HandshakeAck(hs_ack) = decoded.payload {
