@@ -31,7 +31,7 @@ use vauchi_relay::federation_protocol::{
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, MemoryForwardingHintStore};
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::integrity;
-use vauchi_relay::peer_registry::{PeerInfo, PeerRegistry, PeerStatus};
+use vauchi_relay::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::MemoryRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, MemoryBlobStore, StoredBlob};
@@ -810,6 +810,8 @@ async fn test_offload_manager_successful_offload_with_hints() {
         capacity_max_bytes: 1000,
         status: PeerStatus::Connected,
         sender: Some(tx),
+        origin: PeerOrigin::Configured,
+        last_seen_secs: 1000,
     });
 
     let manager = OffloadManager {
@@ -1153,6 +1155,8 @@ async fn test_end_to_end_offload_with_forwarding_hints() {
         capacity_max_bytes: 10_000,
         status: PeerStatus::Connected,
         sender: Some(tx),
+        origin: PeerOrigin::Configured,
+        last_seen_secs: 1000,
     });
 
     // Run OffloadManager

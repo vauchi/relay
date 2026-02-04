@@ -67,9 +67,32 @@ pub enum FederationPayload {
     DrainNotice { drain_timeout_secs: u64 },
     /// Acknowledgment of drain notice.
     DrainAck,
+    /// Peer advertisement for gossip-based peer discovery.
+    PeerAdvertisement {
+        /// List of known peers being advertised.
+        peers: Vec<AdvertisedPeer>,
+    },
+    /// Acknowledgment of a peer advertisement.
+    PeerAdvertisementAck {
+        /// Number of new peers discovered from the advertisement.
+        new_peers_count: usize,
+    },
     /// Unknown/future message types (forward compatibility).
     #[serde(other)]
     Unknown,
+}
+
+/// Information about a peer being advertised via gossip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdvertisedPeer {
+    /// The peer's relay ID.
+    pub relay_id: String,
+    /// The peer's WebSocket URL.
+    pub url: String,
+    /// Current capacity usage as a percentage (0-100).
+    pub capacity_pct: u8,
+    /// Unix timestamp when this peer was last seen alive.
+    pub last_seen_secs: u64,
 }
 
 /// Encodes a federation envelope to binary with 4-byte BE length prefix.
@@ -309,6 +332,76 @@ mod tests {
             assert_eq!(total_bytes, 50_000);
         } else {
             panic!("Expected OffloadRequest");
+        }
+    }
+
+    #[test]
+    fn test_peer_advertisement_roundtrip() {
+        let envelope = FederationEnvelope {
+            version: 1,
+            message_id: "test-adv-1".to_string(),
+            timestamp: 10000,
+            payload: FederationPayload::PeerAdvertisement {
+                peers: vec![
+                    AdvertisedPeer {
+                        relay_id: "peer-a".to_string(),
+                        url: "ws://peer-a:8080".to_string(),
+                        capacity_pct: 42,
+                        last_seen_secs: 9000,
+                    },
+                    AdvertisedPeer {
+                        relay_id: "peer-b".to_string(),
+                        url: "ws://peer-b:8080".to_string(),
+                        capacity_pct: 75,
+                        last_seen_secs: 9500,
+                    },
+                ],
+            },
+        };
+        let encoded = encode_federation_message(&envelope).unwrap();
+        let decoded = decode_federation_message(&encoded).unwrap();
+        if let FederationPayload::PeerAdvertisement { peers } = decoded.payload {
+            assert_eq!(peers.len(), 2);
+            assert_eq!(peers[0].relay_id, "peer-a");
+            assert_eq!(peers[0].capacity_pct, 42);
+            assert_eq!(peers[1].relay_id, "peer-b");
+            assert_eq!(peers[1].last_seen_secs, 9500);
+        } else {
+            panic!("Expected PeerAdvertisement");
+        }
+    }
+
+    #[test]
+    fn test_peer_advertisement_ack_roundtrip() {
+        let envelope = FederationEnvelope {
+            version: 1,
+            message_id: "test-adv-ack-1".to_string(),
+            timestamp: 10001,
+            payload: FederationPayload::PeerAdvertisementAck { new_peers_count: 3 },
+        };
+        let encoded = encode_federation_message(&envelope).unwrap();
+        let decoded = decode_federation_message(&encoded).unwrap();
+        if let FederationPayload::PeerAdvertisementAck { new_peers_count } = decoded.payload {
+            assert_eq!(new_peers_count, 3);
+        } else {
+            panic!("Expected PeerAdvertisementAck");
+        }
+    }
+
+    #[test]
+    fn test_peer_advertisement_empty_peers() {
+        let envelope = FederationEnvelope {
+            version: 1,
+            message_id: "test-adv-empty".to_string(),
+            timestamp: 10002,
+            payload: FederationPayload::PeerAdvertisement { peers: vec![] },
+        };
+        let encoded = encode_federation_message(&envelope).unwrap();
+        let decoded = decode_federation_message(&encoded).unwrap();
+        if let FederationPayload::PeerAdvertisement { peers } = decoded.payload {
+            assert!(peers.is_empty());
+        } else {
+            panic!("Expected PeerAdvertisement");
         }
     }
 

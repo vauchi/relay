@@ -21,8 +21,9 @@ use tracing::{debug, info, warn};
 use crate::config::RelayConfig;
 use crate::federation_protocol::{self, FederationPayload, FEDERATION_PROTOCOL_VERSION};
 use crate::forwarding_hints::ForwardingHintStore;
+use crate::gossip;
 use crate::integrity;
-use crate::peer_registry::{PeerInfo, PeerRegistry, PeerStatus};
+use crate::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
 use crate::storage::{BlobStore, StoredBlob};
 
 /// Dependencies for handling a federation connection.
@@ -119,6 +120,10 @@ pub async fn handle_federation_connection(
 
     // Register peer in PeerRegistry
     let used_bytes = storage.storage_size_bytes();
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     peer_registry.register_peer(PeerInfo {
         relay_id: peer_relay_id.clone(),
         url: String::new(), // Acceptor doesn't know the URL
@@ -126,6 +131,8 @@ pub async fn handle_federation_connection(
         capacity_max_bytes: config.max_storage_bytes,
         status: PeerStatus::Connected,
         sender: None,
+        origin: PeerOrigin::Configured,
+        last_seen_secs: now_secs,
     });
 
     // Send PeerHandshakeAck
@@ -270,6 +277,46 @@ pub async fn handle_federation_connection(
                         if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
                             let _ = write.send(Message::Binary(data)).await;
                         }
+                    }
+                    FederationPayload::PeerAdvertisement { peers } => {
+                        if config.federation_gossip_enabled {
+                            let new_count = gossip::process_peer_advertisement(
+                                &config.federation_relay_id,
+                                &peer_registry,
+                                &peers,
+                            );
+                            debug!(
+                                "[fed-{}] Processed gossip: {} advertised, {} new",
+                                session,
+                                peers.len(),
+                                new_count
+                            );
+                            // Send acknowledgment
+                            let ack = federation_protocol::create_federation_envelope(
+                                FederationPayload::PeerAdvertisementAck {
+                                    new_peers_count: new_count,
+                                },
+                            );
+                            if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
+                                let _ = write.send(Message::Binary(data)).await;
+                            }
+                            // Touch the sender peer so it doesn't expire
+                            peer_registry.touch_peer(
+                                &peer_relay_id,
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                            );
+                        } else {
+                            debug!(
+                                "[fed-{}] Gossip disabled, ignoring PeerAdvertisement",
+                                session
+                            );
+                        }
+                    }
+                    FederationPayload::PeerAdvertisementAck { .. } => {
+                        debug!("[fed-{}] Received PeerAdvertisementAck", session);
                     }
                     FederationPayload::Unknown => {
                         debug!("[fed-{}] Unknown federation message type", session);

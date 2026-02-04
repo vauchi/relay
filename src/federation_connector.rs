@@ -20,7 +20,7 @@ use crate::config::RelayConfig;
 use crate::federation_protocol::{self, FederationPayload, FEDERATION_PROTOCOL_VERSION};
 use crate::forwarding_hints::{ForwardingHint, ForwardingHintStore};
 use crate::integrity;
-use crate::peer_registry::{PeerInfo, PeerRegistry, PeerStatus};
+use crate::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
 use crate::storage::BlobStore;
 
 /// Maintains a persistent connection to a peer relay.
@@ -120,6 +120,10 @@ async fn try_connect_to_peer(
                         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
 
                         // Register peer
+                        let now_secs = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
                         peer_registry.register_peer(PeerInfo {
                             relay_id: relay_id.clone(),
                             url: peer_url.to_string(),
@@ -127,6 +131,8 @@ async fn try_connect_to_peer(
                             capacity_max_bytes,
                             status: PeerStatus::Connected,
                             sender: Some(tx),
+                            origin: PeerOrigin::Configured,
+                            last_seen_secs: now_secs,
                         });
 
                         // Spawn a task to forward outgoing messages from the channel to the WS
@@ -412,6 +418,8 @@ mod tests {
             capacity_max_bytes: 1000,
             status: PeerStatus::Connected,
             sender: Some(tx),
+            origin: PeerOrigin::Configured,
+            last_seen_secs: 1000,
         });
 
         let manager = OffloadManager {

@@ -30,6 +30,7 @@ use vauchi_relay::federation_handler::{self, FederationDeps};
 use vauchi_relay::forwarding_hints::{
     ForwardingHintStore, MemoryForwardingHintStore, SqliteForwardingHintStore,
 };
+use vauchi_relay::gossip;
 use vauchi_relay::handler;
 use vauchi_relay::http::{create_router, HttpState};
 use vauchi_relay::metrics::RelayMetrics;
@@ -226,6 +227,20 @@ async fn main() {
                 }
             }
         });
+
+        // Spawn gossip task if enabled
+        if config.federation_gossip_enabled {
+            info!(
+                "Gossip discovery enabled: interval={}s, peer_ttl={}s",
+                config.federation_gossip_interval_secs, config.federation_peer_ttl_secs
+            );
+            let gossip_relay_id = config.federation_relay_id.clone();
+            let gossip_registry = peer_registry.clone();
+            let gossip_config = config.clone();
+            tokio::spawn(async move {
+                gossip::run_gossip_task(gossip_relay_id, gossip_registry, gossip_config).await;
+            });
+        }
     }
 
     // Check for metrics auth token (optional additional protection)

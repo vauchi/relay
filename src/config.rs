@@ -61,6 +61,18 @@ pub struct RelayConfig {
     /// Whether to require Noise NK inner encryption for all connections.
     /// When true, plaintext (v1) connections are rejected.
     pub require_noise_encryption: bool,
+    /// Whether gossip-based peer discovery is enabled.
+    pub federation_gossip_enabled: bool,
+    /// Interval in seconds for sending gossip advertisements to peers.
+    pub federation_gossip_interval_secs: u64,
+    /// TTL in seconds for dynamically discovered peers (removed if not seen within this time).
+    pub federation_peer_ttl_secs: u64,
+    /// Path to TLS client certificate for mutual TLS federation connections.
+    pub federation_tls_cert_path: Option<String>,
+    /// Path to TLS client private key for mutual TLS federation connections.
+    pub federation_tls_key_path: Option<String>,
+    /// Path to CA certificate bundle for verifying peer certificates.
+    pub federation_tls_ca_path: Option<String>,
 }
 
 impl Default for RelayConfig {
@@ -88,6 +100,12 @@ impl Default for RelayConfig {
             federation_capacity_interval_secs: 60,
             max_storage_bytes: 1_073_741_824, // 1 GB
             require_noise_encryption: false,
+            federation_gossip_enabled: false,
+            federation_gossip_interval_secs: 120,
+            federation_peer_ttl_secs: 3600,
+            federation_tls_cert_path: None,
+            federation_tls_key_path: None,
+            federation_tls_ca_path: None,
         }
     }
 }
@@ -222,6 +240,42 @@ impl RelayConfig {
             config.require_noise_encryption = val == "true" || val == "1";
         }
 
+        // Gossip discovery
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_GOSSIP_ENABLED") {
+            config.federation_gossip_enabled = val == "true" || val == "1";
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_GOSSIP_INTERVAL") {
+            if let Ok(parsed) = val.parse() {
+                config.federation_gossip_interval_secs = parsed;
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_PEER_TTL") {
+            if let Ok(parsed) = val.parse() {
+                config.federation_peer_ttl_secs = parsed;
+            }
+        }
+
+        // Federation mTLS configuration
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_CERT") {
+            if !val.is_empty() {
+                config.federation_tls_cert_path = Some(val);
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_KEY") {
+            if !val.is_empty() {
+                config.federation_tls_key_path = Some(val);
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_CA") {
+            if !val.is_empty() {
+                config.federation_tls_ca_path = Some(val);
+            }
+        }
+
         // Load or generate relay_id
         config.federation_relay_id = load_relay_id(&config.data_dir);
 
@@ -319,6 +373,22 @@ mod tests {
         assert_eq!(config.federation_peer_timeout_secs, 30);
         assert_eq!(config.federation_capacity_interval_secs, 60);
         assert_eq!(config.max_storage_bytes, 1_073_741_824);
+    }
+
+    #[test]
+    fn test_gossip_defaults() {
+        let config = RelayConfig::default();
+        assert!(!config.federation_gossip_enabled);
+        assert_eq!(config.federation_gossip_interval_secs, 120);
+        assert_eq!(config.federation_peer_ttl_secs, 3600);
+    }
+
+    #[test]
+    fn test_mtls_defaults() {
+        let config = RelayConfig::default();
+        assert!(config.federation_tls_cert_path.is_none());
+        assert!(config.federation_tls_key_path.is_none());
+        assert!(config.federation_tls_ca_path.is_none());
     }
 
     #[test]
