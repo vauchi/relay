@@ -148,10 +148,12 @@ mod tests {
 
     #[test]
     fn test_is_mtls_configured_all_set() {
-        let mut config = RelayConfig::default();
-        config.federation_tls_cert_path = Some("/path/to/cert.pem".to_string());
-        config.federation_tls_key_path = Some("/path/to/key.pem".to_string());
-        config.federation_tls_ca_path = Some("/path/to/ca.pem".to_string());
+        let config = RelayConfig {
+            federation_tls_cert_path: Some("/path/to/cert.pem".to_string()),
+            federation_tls_key_path: Some("/path/to/key.pem".to_string()),
+            federation_tls_ca_path: Some("/path/to/ca.pem".to_string()),
+            ..Default::default()
+        };
         assert!(is_mtls_configured(&config));
     }
 
@@ -163,9 +165,11 @@ mod tests {
 
     #[test]
     fn test_is_mtls_configured_partial() {
-        let mut config = RelayConfig::default();
-        config.federation_tls_cert_path = Some("/path/to/cert.pem".to_string());
-        // key and ca not set
+        let config = RelayConfig {
+            federation_tls_cert_path: Some("/path/to/cert.pem".to_string()),
+            // key and ca not set
+            ..Default::default()
+        };
         assert!(!is_mtls_configured(&config));
     }
 
@@ -179,10 +183,12 @@ mod tests {
 
     #[test]
     fn test_load_federation_tls_missing_files() {
-        let mut config = RelayConfig::default();
-        config.federation_tls_cert_path = Some("/nonexistent/cert.pem".to_string());
-        config.federation_tls_key_path = Some("/nonexistent/key.pem".to_string());
-        config.federation_tls_ca_path = Some("/nonexistent/ca.pem".to_string());
+        let config = RelayConfig {
+            federation_tls_cert_path: Some("/nonexistent/cert.pem".to_string()),
+            federation_tls_key_path: Some("/nonexistent/key.pem".to_string()),
+            federation_tls_ca_path: Some("/nonexistent/ca.pem".to_string()),
+            ..Default::default()
+        };
         let result = load_federation_tls(&config);
         assert!(result.is_err());
     }
