@@ -114,7 +114,6 @@ lint:clippy:
   script:
     - rustup component add clippy
     - cargo clippy --all-targets -- -D warnings
-  allow_failure: true  # May fail on git dependency issues
 
 # ============================================================
 # Test Stage (change-based)
@@ -126,7 +125,6 @@ test:unit:
   needs: []
   script:
     - cargo test --all-targets
-  allow_failure: true  # May fail on git dependency issues
 
 test:coverage:
   extends: [.rust-job, .validation-rust, .timeout-standard]
@@ -195,7 +193,6 @@ security:audit:
   script:
     - cargo install cargo-audit || true
     - cargo audit
-  allow_failure: true
 
 # Full cargo-deny check: advisories, licenses, bans, sources
 security:deny:
