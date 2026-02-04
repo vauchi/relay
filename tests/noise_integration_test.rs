@@ -19,9 +19,7 @@ use vauchi_relay::noise_transport::{
 
 /// Simulates a core client's NoiseInitiator: creates an NK initiator
 /// and generates the handshake message (-> e, es).
-fn simulate_client_initiator(
-    relay_pubkey: &[u8; 32],
-) -> (snow::HandshakeState, Vec<u8>) {
+fn simulate_client_initiator(relay_pubkey: &[u8; 32]) -> (snow::HandshakeState, Vec<u8>) {
     let builder = Builder::new(NOISE_PATTERN.parse().unwrap());
     let mut initiator = builder
         .remote_public_key(relay_pubkey)
@@ -70,9 +68,7 @@ fn test_client_to_relay_full_noise_handshake() {
     // Client -> Relay transport
     let plaintext = b"Hello from core client";
     let mut ct = vec![0u8; plaintext.len() + 16];
-    let ct_len = client_transport
-        .write_message(plaintext, &mut ct)
-        .unwrap();
+    let ct_len = client_transport.write_message(plaintext, &mut ct).unwrap();
     ct.truncate(ct_len);
 
     let decrypted = relay_transport.decrypt(&ct).unwrap();
@@ -111,9 +107,7 @@ fn test_v2_handshake_with_framed_protocol_messages() {
 
     // Client encrypts framed message
     let mut ct = vec![0u8; framed.len() + 16];
-    let ct_len = client_transport
-        .write_message(&framed, &mut ct)
-        .unwrap();
+    let ct_len = client_transport.write_message(&framed, &mut ct).unwrap();
     ct.truncate(ct_len);
 
     // Relay decrypts — should get exact framed message back

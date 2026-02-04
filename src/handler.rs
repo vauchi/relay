@@ -550,7 +550,10 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
         let noise_key = match noise_static_key {
             Some(key) => key,
             None => {
-                warn!("[{}] v2 handshake received but Noise is not configured", session);
+                warn!(
+                    "[{}] v2 handshake received but Noise is not configured",
+                    session
+                );
                 return;
             }
         };
@@ -600,14 +603,20 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                 }
             }
             _ => {
-                warn!("[{}] Expected encrypted Handshake after Noise setup", session);
+                warn!(
+                    "[{}] Expected encrypted Handshake after Noise setup",
+                    session
+                );
                 return;
             }
         }
     } else {
         // --- v1 plaintext connection ---
         if require_noise_encryption {
-            warn!("[{}] Plaintext connection rejected (require_noise_encryption=true)", session);
+            warn!(
+                "[{}] Plaintext connection rejected (require_noise_encryption=true)",
+                session
+            );
             return;
         }
         first_msg
@@ -900,7 +909,11 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
 
                 // Check message size (after decryption)
                 if plaintext_data.len() > max_message_size {
-                    warn!("[{}] Message too large: {} bytes", session, plaintext_data.len());
+                    warn!(
+                        "[{}] Message too large: {} bytes",
+                        session,
+                        plaintext_data.len()
+                    );
                     continue;
                 }
 
