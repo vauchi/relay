@@ -318,6 +318,7 @@ fn make_client_deps(
         hint_store,
         noise_static_key: None,
         require_noise_encryption: false,
+        nonce_tracker: Arc::new(handler::NonceTracker::new()),
     }
 }
 

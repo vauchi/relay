@@ -19,6 +19,7 @@ use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_async, connect_async};
 
+use ring::signature::{Ed25519KeyPair, KeyPair};
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::MemoryDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
@@ -208,6 +209,7 @@ fn test_deps() -> (
         hint_store: None,
         noise_static_key: None,
         require_noise_encryption: false,
+        nonce_tracker: Arc::new(handler::NonceTracker::new()),
     };
     (deps, storage, registry)
 }
@@ -515,6 +517,7 @@ async fn test_quota_blob_count_exceeded() {
         hint_store: None,
         noise_static_key: None,
         require_noise_encryption: false,
+        nonce_tracker: Arc::new(handler::NonceTracker::new()),
     };
 
     let url = start_test_server(deps).await;
@@ -561,6 +564,7 @@ async fn test_quota_byte_limit_exceeded() {
         hint_store: None,
         noise_static_key: None,
         require_noise_encryption: false,
+        nonce_tracker: Arc::new(handler::NonceTracker::new()),
     };
 
     let url = start_test_server(deps).await;
@@ -764,6 +768,7 @@ async fn test_delivered_ack_to_sender() {
         hint_store: None,
         noise_static_key: None,
         require_noise_encryption: false,
+        nonce_tracker: Arc::new(handler::NonceTracker::new()),
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -782,6 +787,7 @@ async fn test_delivered_ack_to_sender() {
         hint_store: None,
         noise_static_key: None,
         require_noise_encryption: false,
+        nonce_tracker: Arc::new(handler::NonceTracker::new()),
     };
 
     // Spawn both servers
@@ -887,6 +893,7 @@ async fn test_suppress_presence_no_delivered_ack() {
         hint_store: None,
         noise_static_key: None,
         require_noise_encryption: false,
+        nonce_tracker: Arc::new(handler::NonceTracker::new()),
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -905,6 +912,7 @@ async fn test_suppress_presence_no_delivered_ack() {
         hint_store: None,
         noise_static_key: None,
         require_noise_encryption: false,
+        nonce_tracker: Arc::new(handler::NonceTracker::new()),
     };
 
     tokio::spawn(async move {
@@ -1103,6 +1111,7 @@ fn test_deps_custom(
         hint_store: None,
         noise_static_key: None,
         require_noise_encryption: false,
+        nonce_tracker: Arc::new(handler::NonceTracker::new()),
     };
     (deps, storage, registry, device_sync_storage)
 }
@@ -1156,6 +1165,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 hint_store: None,
                 noise_static_key: None,
                 require_noise_encryption: false,
+                nonce_tracker: Arc::new(handler::NonceTracker::new()),
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -1993,6 +2003,7 @@ async fn test_concurrent_store_and_receive() {
             hint_store: None,
             noise_static_key: None,
             require_noise_encryption: false,
+            nonce_tracker: Arc::new(handler::NonceTracker::new()),
         }
     };
 
@@ -2059,6 +2070,7 @@ async fn test_received_by_recipient_after_delivered_not_forwarded() {
             hint_store: None,
             noise_static_key: None,
             require_noise_encryption: false,
+            nonce_tracker: Arc::new(handler::NonceTracker::new()),
         }
     };
 
@@ -2158,6 +2170,7 @@ async fn test_suppress_presence_blocks_received_by_recipient() {
             hint_store: None,
             noise_static_key: None,
             require_noise_encryption: false,
+            nonce_tracker: Arc::new(handler::NonceTracker::new()),
         }
     };
 
@@ -2296,6 +2309,359 @@ async fn test_recovery_store_invalid_key_hash() {
     let update = make_encrypted_update(&recipient_id, &[1]);
     let response = send_recv(&mut ws, &update).await;
     assert_eq!(response["payload"]["status"], "Stored");
+
+    ws.close(None).await.ok();
+}
+
+// ============================================================================
+// Authenticated Handshake tests
+// ============================================================================
+
+/// Generates an Ed25519 keypair and builds a signed handshake JSON envelope.
+/// Returns (handshake_value, client_id_hex).
+fn make_signed_handshake_envelope() -> (Value, String) {
+    let rng = ring::rand::SystemRandom::new();
+    let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+
+    let public_key = key_pair.public_key().as_ref();
+    let client_id: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
+    let pk_hex = client_id.clone();
+
+    let nonce = [0x42u8; 32];
+    let nonce_hex: String = nonce.iter().map(|b| format!("{:02x}", b)).collect();
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut sign_data = Vec::with_capacity(40);
+    sign_data.extend_from_slice(&nonce);
+    sign_data.extend_from_slice(&timestamp.to_be_bytes());
+
+    let signature = key_pair.sign(&sign_data);
+    let sig_hex: String = signature
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+
+    let envelope = json!({
+        "version": 1,
+        "message_id": uuid::Uuid::new_v4().to_string(),
+        "timestamp": 1000,
+        "payload": {
+            "type": "Handshake",
+            "client_id": client_id,
+            "identity_public_key": pk_hex,
+            "nonce": nonce_hex,
+            "signature": sig_hex,
+            "timestamp": timestamp,
+        }
+    });
+
+    (envelope, client_id)
+}
+
+/// Helper: generate a signed handshake with a specific nonce (for replay testing).
+fn make_signed_handshake_with_nonce(nonce_bytes: &[u8; 32]) -> (Value, String) {
+    let rng = ring::rand::SystemRandom::new();
+    let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+
+    let public_key = key_pair.public_key().as_ref();
+    let client_id: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
+    let pk_hex = client_id.clone();
+
+    let nonce_hex: String = nonce_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut sign_data = Vec::with_capacity(40);
+    sign_data.extend_from_slice(nonce_bytes);
+    sign_data.extend_from_slice(&timestamp.to_be_bytes());
+
+    let signature = key_pair.sign(&sign_data);
+    let sig_hex: String = signature
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+
+    let envelope = json!({
+        "version": 1,
+        "message_id": uuid::Uuid::new_v4().to_string(),
+        "timestamp": 1000,
+        "payload": {
+            "type": "Handshake",
+            "client_id": client_id,
+            "identity_public_key": pk_hex,
+            "nonce": nonce_hex,
+            "signature": sig_hex,
+            "timestamp": timestamp,
+        }
+    });
+
+    (envelope, client_id)
+}
+
+#[tokio::test]
+async fn test_authenticated_handshake_accepted() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let (hs, _client_id) = make_signed_handshake_envelope();
+    let ack = send_recv(&mut ws, &hs).await;
+
+    assert_eq!(ack["payload"]["type"], "HandshakeAck");
+    assert_eq!(ack["payload"]["protocol_version"], 1);
+    let features = ack["payload"]["features"].as_array().unwrap();
+    assert!(features.iter().any(|f| f == "authenticated_handshake"));
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_invalid_signature_rejected() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let (mut hs, _) = make_signed_handshake_envelope();
+    // Corrupt the signature by changing its first two hex chars
+    let bad_sig = format!(
+        "ff{}",
+        &hs["payload"]["signature"].as_str().unwrap()[2..]
+    );
+    hs["payload"]["signature"] = json!(bad_sig);
+
+    let frame = encode_envelope(&hs);
+    ws.send(Message::Binary(frame)).await.unwrap();
+
+    // Server should close the connection (auth failed)
+    let msg = timeout(Duration::from_secs(2), ws.next()).await;
+    match msg {
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
+            // Expected: disconnected
+        }
+        other => panic!("Expected close/disconnect, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_client_id_mismatch_rejected() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let (mut hs, _) = make_signed_handshake_envelope();
+    // Change client_id to a different valid hex string (not matching the public key)
+    hs["payload"]["client_id"] = json!("a".repeat(64));
+
+    let frame = encode_envelope(&hs);
+    ws.send(Message::Binary(frame)).await.unwrap();
+
+    // Server should close the connection (client_id mismatch)
+    let msg = timeout(Duration::from_secs(2), ws.next()).await;
+    match msg {
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
+            // Expected: disconnected
+        }
+        other => panic!("Expected close/disconnect, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_nonce_replay_rejected() {
+    // Two connections share the same nonce_tracker via shared deps
+    let storage = Arc::new(MemoryBlobStore::new());
+    let registry = Arc::new(ConnectionRegistry::new());
+    let nonce_tracker = Arc::new(handler::NonceTracker::new());
+
+    // First connection with a signed handshake
+    let nonce_bytes = [0xABu8; 32];
+    let (hs1, _client_id1) = make_signed_handshake_with_nonce(&nonce_bytes);
+
+    let deps1 = ConnectionDeps {
+        storage: storage.clone() as Arc<dyn BlobStore>,
+        recovery_storage: Arc::new(MemoryRecoveryProofStore::new()),
+        device_sync_storage: Arc::new(MemoryDeviceSyncStore::new()),
+        rate_limiter: Arc::new(RateLimiter::new(60)),
+        recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
+        registry: registry.clone(),
+        blob_sender_map: handler::new_blob_sender_map(),
+        max_message_size: 1_048_576,
+        idle_timeout: Duration::from_secs(5),
+        quota: QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 10_000_000,
+        },
+        hint_store: None,
+        noise_static_key: None,
+        require_noise_encryption: false,
+        nonce_tracker: nonce_tracker.clone(),
+    };
+
+    let url1 = start_test_server(deps1).await;
+    let (mut ws1, _) = connect_async(&url1).await.unwrap();
+
+    // First connection succeeds
+    let ack1 = send_recv(&mut ws1, &hs1).await;
+    assert_eq!(ack1["payload"]["type"], "HandshakeAck");
+    ws1.close(None).await.ok();
+
+    // Second connection with same nonce (different keypair but same nonce bytes)
+    // The nonce_tracker is shared, so this should be rejected
+    let (hs2, _) = make_signed_handshake_with_nonce(&nonce_bytes);
+
+    let deps2 = ConnectionDeps {
+        storage: storage.clone() as Arc<dyn BlobStore>,
+        recovery_storage: Arc::new(MemoryRecoveryProofStore::new()),
+        device_sync_storage: Arc::new(MemoryDeviceSyncStore::new()),
+        rate_limiter: Arc::new(RateLimiter::new(60)),
+        recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
+        registry: registry.clone(),
+        blob_sender_map: handler::new_blob_sender_map(),
+        max_message_size: 1_048_576,
+        idle_timeout: Duration::from_secs(5),
+        quota: QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 10_000_000,
+        },
+        hint_store: None,
+        noise_static_key: None,
+        require_noise_encryption: false,
+        nonce_tracker: nonce_tracker.clone(),
+    };
+
+    let url2 = start_test_server(deps2).await;
+    let (mut ws2, _) = connect_async(&url2).await.unwrap();
+
+    let frame = encode_envelope(&hs2);
+    ws2.send(Message::Binary(frame)).await.unwrap();
+
+    // Should be rejected (nonce replay)
+    let msg = timeout(Duration::from_secs(2), ws2.next()).await;
+    match msg {
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
+            // Expected: disconnected
+        }
+        other => panic!("Expected close/disconnect, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_expired_timestamp_rejected() {
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    // Generate keypair and sign with a timestamp that's 120s old
+    let rng = ring::rand::SystemRandom::new();
+    let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+
+    let public_key = key_pair.public_key().as_ref();
+    let client_id: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
+    let pk_hex = client_id.clone();
+
+    let nonce = [0x99u8; 32];
+    let nonce_hex: String = nonce.iter().map(|b| format!("{:02x}", b)).collect();
+
+    let old_timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        - 120; // 2 minutes ago, outside ±60s window
+
+    let mut sign_data = Vec::with_capacity(40);
+    sign_data.extend_from_slice(&nonce);
+    sign_data.extend_from_slice(&old_timestamp.to_be_bytes());
+
+    let signature = key_pair.sign(&sign_data);
+    let sig_hex: String = signature
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+
+    let hs = json!({
+        "version": 1,
+        "message_id": uuid::Uuid::new_v4().to_string(),
+        "timestamp": 1000,
+        "payload": {
+            "type": "Handshake",
+            "client_id": client_id,
+            "identity_public_key": pk_hex,
+            "nonce": nonce_hex,
+            "signature": sig_hex,
+            "timestamp": old_timestamp,
+        }
+    });
+
+    let frame = encode_envelope(&hs);
+    ws.send(Message::Binary(frame)).await.unwrap();
+
+    // Should be rejected (expired timestamp)
+    let msg = timeout(Duration::from_secs(2), ws.next()).await;
+    match msg {
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
+            // Expected: disconnected
+        }
+        other => panic!("Expected close/disconnect, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_unauthenticated_handshake_still_accepted() {
+    // Legacy clients without auth fields should still work
+    let (deps, _, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let ack = do_handshake(&mut ws, &client_id).await;
+
+    assert_eq!(ack["payload"]["type"], "HandshakeAck");
+    assert_eq!(ack["payload"]["protocol_version"], 1);
+
+    // Can still store blobs
+    let recipient_id = common::generate_test_client_id(2);
+    let update = make_encrypted_update(&recipient_id, &[10, 20]);
+    let response = send_recv(&mut ws, &update).await;
+    assert_eq!(response["payload"]["status"], "Stored");
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_routing_token_no_auth_required() {
+    // routing_token mode should work without authentication
+    let (deps, storage, _) = test_deps();
+    let url = start_test_server(deps).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+
+    let client_id = common::generate_test_client_id(1);
+    let routing_token = common::generate_test_client_id(99);
+    let hs = make_handshake_full(&client_id, None, Some(&routing_token), false);
+    let ack = send_recv(&mut ws, &hs).await;
+
+    assert_eq!(ack["payload"]["type"], "HandshakeAck");
+
+    // Store a blob for a different recipient
+    let recipient_id = common::generate_test_client_id(2);
+    let update = make_encrypted_update(&recipient_id, &[1, 2, 3]);
+    let response = send_recv(&mut ws, &update).await;
+    assert_eq!(response["payload"]["status"], "Stored");
+
+    // Verify blob was stored under recipient_id
+    let blobs = storage.peek(&recipient_id);
+    assert_eq!(blobs.len(), 1);
 
     ws.close(None).await.ok();
 }

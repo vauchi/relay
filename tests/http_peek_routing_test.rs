@@ -153,6 +153,7 @@ async fn start_full_server(
                             hint_store: None,
                             noise_static_key: None,
                             require_noise_encryption: false,
+                            nonce_tracker: Arc::new(handler::NonceTracker::new()),
                         };
                         handler::handle_connection(ws_stream, deps).await;
                     }

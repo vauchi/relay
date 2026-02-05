@@ -105,6 +105,7 @@ fn test_deps() -> (
         hint_store: None,
         noise_static_key: None,
         require_noise_encryption: false,
+        nonce_tracker: Arc::new(handler::NonceTracker::new()),
     };
     (deps, storage, registry)
 }
@@ -134,6 +135,7 @@ fn test_deps_custom(
         hint_store: None,
         noise_static_key: None,
         require_noise_encryption: false,
+        nonce_tracker: Arc::new(handler::NonceTracker::new()),
     };
     (deps, storage, registry)
 }
@@ -171,6 +173,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 hint_store: None,
                 noise_static_key: None,
                 require_noise_encryption: false,
+                nonce_tracker: Arc::new(handler::NonceTracker::new()),
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -546,6 +549,7 @@ async fn test_delivery_notification_latency() {
             hint_store: None,
             noise_static_key: None,
             require_noise_encryption: false,
+            nonce_tracker: Arc::new(handler::NonceTracker::new()),
         }
     };
 
