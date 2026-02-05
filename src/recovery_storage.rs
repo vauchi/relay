@@ -5,11 +5,11 @@
 //! Recovery Proof Storage
 //!
 //! Storage for recovery proofs, keyed by hash(old_pk).
-//! Supports both in-memory (for testing) and SQLite (for production).
+//! Uses SQLite for both production (file-based) and testing (in-memory).
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Mutex, RwLock};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection};
@@ -82,73 +82,7 @@ pub trait RecoveryProofStore: Send + Sync {
 }
 
 // ============================================================================
-// In-Memory Storage (for testing)
-// ============================================================================
-
-/// In-memory storage for recovery proofs.
-pub struct MemoryRecoveryProofStore {
-    proofs: RwLock<HashMap<[u8; 32], StoredRecoveryProof>>,
-}
-
-impl MemoryRecoveryProofStore {
-    /// Creates a new empty in-memory storage.
-    pub fn new() -> Self {
-        Self {
-            proofs: RwLock::new(HashMap::new()),
-        }
-    }
-}
-
-impl Default for MemoryRecoveryProofStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RecoveryProofStore for MemoryRecoveryProofStore {
-    fn store(&self, proof: StoredRecoveryProof) {
-        let mut proofs = self.proofs.write().unwrap();
-        proofs.insert(proof.key_hash, proof);
-    }
-
-    fn get(&self, key_hash: &[u8; 32]) -> Option<StoredRecoveryProof> {
-        let proofs = self.proofs.read().unwrap();
-        proofs.get(key_hash).filter(|p| !p.is_expired()).cloned()
-    }
-
-    fn batch_get(&self, key_hashes: &[[u8; 32]]) -> HashMap<[u8; 32], StoredRecoveryProof> {
-        let proofs = self.proofs.read().unwrap();
-        key_hashes
-            .iter()
-            .filter_map(|hash| {
-                proofs
-                    .get(hash)
-                    .filter(|p| !p.is_expired())
-                    .map(|p| (*hash, p.clone()))
-            })
-            .collect()
-    }
-
-    fn remove(&self, key_hash: &[u8; 32]) -> bool {
-        let mut proofs = self.proofs.write().unwrap();
-        proofs.remove(key_hash).is_some()
-    }
-
-    fn cleanup_expired(&self) -> usize {
-        let mut proofs = self.proofs.write().unwrap();
-        let initial_len = proofs.len();
-        proofs.retain(|_, p| !p.is_expired());
-        initial_len - proofs.len()
-    }
-
-    fn proof_count(&self) -> usize {
-        let proofs = self.proofs.read().unwrap();
-        proofs.len()
-    }
-}
-
-// ============================================================================
-// SQLite Storage (for production)
+// SQLite Storage
 // ============================================================================
 
 /// SQLite-backed persistent storage for recovery proofs.
@@ -191,7 +125,6 @@ impl SqliteRecoveryProofStore {
     }
 
     /// Creates an in-memory SQLite database (for testing).
-    #[cfg(test)]
     pub fn in_memory() -> Result<Self, rusqlite::Error> {
         Self::open(":memory:")
     }
@@ -356,32 +289,6 @@ mod tests {
         assert!(!removed_again);
     }
 
-    // Memory backend tests
-    #[test]
-    fn test_memory_store_and_get() {
-        test_store_and_get_impl(&MemoryRecoveryProofStore::new());
-    }
-
-    #[test]
-    fn test_memory_get_nonexistent() {
-        test_get_nonexistent_impl(&MemoryRecoveryProofStore::new());
-    }
-
-    #[test]
-    fn test_memory_overwrite() {
-        test_overwrite_impl(&MemoryRecoveryProofStore::new());
-    }
-
-    #[test]
-    fn test_memory_batch_get() {
-        test_batch_get_impl(&MemoryRecoveryProofStore::new());
-    }
-
-    #[test]
-    fn test_memory_remove() {
-        test_remove_impl(&MemoryRecoveryProofStore::new());
-    }
-
     // SQLite backend tests
     #[test]
     fn test_sqlite_store_and_get() {
@@ -410,7 +317,7 @@ mod tests {
 
     #[test]
     fn test_proof_count() {
-        let store = MemoryRecoveryProofStore::new();
+        let store = SqliteRecoveryProofStore::in_memory().unwrap();
 
         assert_eq!(store.proof_count(), 0);
 

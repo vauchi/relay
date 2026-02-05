@@ -26,11 +26,11 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_async, connect_async};
 
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::MemoryDeviceSyncStore;
+use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::rate_limit::RateLimiter;
-use vauchi_relay::recovery_storage::MemoryRecoveryProofStore;
-use vauchi_relay::storage::{BlobStore, MemoryBlobStore};
+use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
+use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
 
 // ============================================================================
 // Protocol helpers (duplicated from handler_websocket_test.rs for isolation)
@@ -83,15 +83,15 @@ fn make_encrypted_update(recipient_id: &str, ciphertext: &[u8]) -> Value {
 
 fn test_deps() -> (
     ConnectionDeps,
-    Arc<MemoryBlobStore>,
+    Arc<SqliteBlobStore>,
     Arc<ConnectionRegistry>,
 ) {
-    let storage = Arc::new(MemoryBlobStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let registry = Arc::new(ConnectionRegistry::new());
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
-        recovery_storage: Arc::new(MemoryRecoveryProofStore::new()),
-        device_sync_storage: Arc::new(MemoryDeviceSyncStore::new()),
+        recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
+        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(1000)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(100)),
         registry: registry.clone(),
@@ -116,15 +116,15 @@ fn test_deps_custom(
     quota: QuotaLimits,
 ) -> (
     ConnectionDeps,
-    Arc<MemoryBlobStore>,
+    Arc<SqliteBlobStore>,
     Arc<ConnectionRegistry>,
 ) {
-    let storage = Arc::new(MemoryBlobStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let registry = Arc::new(ConnectionRegistry::new());
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
-        recovery_storage: Arc::new(MemoryRecoveryProofStore::new()),
-        device_sync_storage: Arc::new(MemoryDeviceSyncStore::new()),
+        recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
+        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(rate_limit)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(100)),
         registry: registry.clone(),
@@ -524,18 +524,18 @@ async fn test_rate_limit_enforcement_concurrent() {
 /// Assert round-trip < 2s.
 #[tokio::test]
 async fn test_delivery_notification_latency() {
-    let storage = Arc::new(MemoryBlobStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let registry = Arc::new(ConnectionRegistry::new());
     let blob_sender_map = handler::new_blob_sender_map();
 
-    let make_deps = |s: Arc<MemoryBlobStore>,
+    let make_deps = |s: Arc<SqliteBlobStore>,
                      r: Arc<ConnectionRegistry>,
                      bsm: handler::BlobSenderMap|
      -> ConnectionDeps {
         ConnectionDeps {
             storage: s as Arc<dyn BlobStore>,
-            recovery_storage: Arc::new(MemoryRecoveryProofStore::new()),
-            device_sync_storage: Arc::new(MemoryDeviceSyncStore::new()),
+            recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
+            device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
             rate_limiter: Arc::new(RateLimiter::new(1000)),
             recovery_rate_limiter: Arc::new(RateLimiter::new(100)),
             registry: r,

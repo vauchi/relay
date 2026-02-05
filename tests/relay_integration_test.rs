@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use vauchi_relay::storage::{BlobStore, MemoryBlobStore, StoredBlob};
+use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
 
 mod common;
 
@@ -19,7 +19,7 @@ mod common;
 /// Based on: Scenario: Updates are delivered when recipient connects
 #[test]
 fn test_blob_store_and_retrieve() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     let blob = StoredBlob::new(vec![1, 2, 3, 4, 5]);
     let blob_id = blob.id.clone();
@@ -36,7 +36,7 @@ fn test_blob_store_and_retrieve() {
 /// Based on: Scenario: Offline recipient receives all pending updates
 #[test]
 fn test_multiple_blobs_for_recipient() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     store.store("recipient-1", StoredBlob::new(vec![1]));
     store.store("recipient-1", StoredBlob::new(vec![2]));
@@ -50,7 +50,7 @@ fn test_multiple_blobs_for_recipient() {
 /// Based on: Scenario: Updates are routed to correct recipient
 #[test]
 fn test_blobs_separate_per_recipient() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     store.store("recipient-1", StoredBlob::new(vec![1]));
     store.store("recipient-2", StoredBlob::new(vec![2]));
@@ -68,7 +68,7 @@ fn test_blobs_separate_per_recipient() {
 /// Based on: Scenario: Client acknowledges receipt
 #[test]
 fn test_acknowledge_removes_blob() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     let blob1 = StoredBlob::new(vec![1]);
     let blob2 = StoredBlob::new(vec![2]);
@@ -96,7 +96,7 @@ fn test_acknowledge_removes_blob() {
 /// Based on: Scenario: Invalid acknowledgment is ignored
 #[test]
 fn test_acknowledge_nonexistent_returns_false() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     store.store("recipient", StoredBlob::new(vec![1]));
 
@@ -112,7 +112,7 @@ fn test_acknowledge_nonexistent_returns_false() {
 /// Based on: Scenario: Recipient retrieves all pending updates
 #[test]
 fn test_take_removes_all() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     store.store("recipient", StoredBlob::new(vec![1]));
     store.store("recipient", StoredBlob::new(vec![2]));
@@ -130,7 +130,7 @@ fn test_take_removes_all() {
 /// Based on: Scenario: Stale updates are cleaned up
 #[test]
 fn test_cleanup_expired() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     store.store("recipient", StoredBlob::new(vec![1]));
 
@@ -149,7 +149,7 @@ fn test_cleanup_expired() {
 /// Based on: Scenario: Relay reports storage metrics
 #[test]
 fn test_storage_metrics() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     assert_eq!(store.blob_count(), 0);
     assert_eq!(store.recipient_count(), 0);
@@ -172,7 +172,7 @@ fn test_storage_metrics() {
 fn test_concurrent_access() {
     use std::thread;
 
-    let store = Arc::new(MemoryBlobStore::new());
+    let store = Arc::new(SqliteBlobStore::in_memory().unwrap());
 
     let mut handles = vec![];
 
@@ -205,7 +205,7 @@ fn test_concurrent_access() {
 /// Based on: Scenario: Peeking doesn't consume updates
 #[test]
 fn test_peek_idempotent() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     store.store("recipient", StoredBlob::new(vec![1, 2, 3]));
 
@@ -223,7 +223,7 @@ fn test_peek_idempotent() {
 /// Test: Empty recipient returns empty vec
 #[test]
 fn test_empty_recipient() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     let pending = store.peek("nonexistent");
     assert!(pending.is_empty());

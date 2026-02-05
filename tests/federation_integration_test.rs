@@ -22,19 +22,19 @@ use tokio_tungstenite::{accept_async, connect_async};
 
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::MemoryDeviceSyncStore;
+use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::federation_connector::OffloadManager;
 use vauchi_relay::federation_handler::{self, FederationDeps};
 use vauchi_relay::federation_protocol::{
     self, FederationEnvelope, FederationPayload, FEDERATION_PROTOCOL_VERSION,
 };
-use vauchi_relay::forwarding_hints::{ForwardingHintStore, MemoryForwardingHintStore};
+use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::integrity;
 use vauchi_relay::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
 use vauchi_relay::rate_limit::RateLimiter;
-use vauchi_relay::recovery_storage::MemoryRecoveryProofStore;
-use vauchi_relay::storage::{BlobStore, MemoryBlobStore, StoredBlob};
+use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
+use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
 
 // ============================================================================
 // Protocol helpers
@@ -303,8 +303,8 @@ fn make_client_deps(
 ) -> ConnectionDeps {
     ConnectionDeps {
         storage,
-        recovery_storage: Arc::new(MemoryRecoveryProofStore::new()),
-        device_sync_storage: Arc::new(MemoryDeviceSyncStore::new()),
+        recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
+        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(60)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
         registry: Arc::new(ConnectionRegistry::new()),
@@ -328,8 +328,8 @@ fn make_client_deps(
 
 #[tokio::test]
 async fn test_federation_handshake_accepted() {
-    let storage = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 
@@ -366,8 +366,8 @@ async fn test_federation_handshake_accepted() {
 
 #[tokio::test]
 async fn test_federation_handshake_version_mismatch_rejected() {
-    let storage = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 
@@ -417,8 +417,8 @@ async fn test_federation_handshake_version_mismatch_rejected() {
 
 #[tokio::test]
 async fn test_offload_blob_accepted_under_capacity() {
-    let storage: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 
@@ -462,8 +462,8 @@ async fn test_offload_blob_accepted_under_capacity() {
 
 #[tokio::test]
 async fn test_offload_blob_rejected_integrity_mismatch() {
-    let storage: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 
@@ -500,8 +500,8 @@ async fn test_offload_blob_rejected_integrity_mismatch() {
 
 #[tokio::test]
 async fn test_offload_blob_rejected_hop_count_too_high() {
-    let storage: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 
@@ -538,20 +538,20 @@ async fn test_offload_blob_rejected_hop_count_too_high() {
 
 #[tokio::test]
 async fn test_offload_blob_rejected_at_capacity() {
-    let storage = Arc::new(MemoryBlobStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     // Fill storage near capacity (>= 95% of 1000 bytes)
     // Each StoredBlob has overhead, so store enough data
     for i in 0..100 {
         storage.store(&format!("fill-{}", i), StoredBlob::new(vec![0u8; 50]));
     }
 
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     // Use a max_storage of 100 bytes so even a small amount triggers capacity refusal
     let config = make_fed_config(100, 0.80);
 
     // Pre-fill to exceed 95% of 100 bytes
-    let full_storage = Arc::new(MemoryBlobStore::new());
+    let full_storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     // Store enough to exceed capacity
     full_storage.store("fill", StoredBlob::new(vec![0u8; 96]));
 
@@ -588,8 +588,8 @@ async fn test_offload_blob_rejected_at_capacity() {
 
 #[tokio::test]
 async fn test_offload_preserves_created_at_secs() {
-    let storage: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 
@@ -631,8 +631,8 @@ async fn test_offload_preserves_created_at_secs() {
 
 #[tokio::test]
 async fn test_offload_increments_hop_count() {
-    let storage: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 
@@ -674,8 +674,8 @@ async fn test_offload_increments_hop_count() {
 
 #[tokio::test]
 async fn test_capacity_report_updates_peer_registry() {
-    let storage: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 
@@ -708,8 +708,8 @@ async fn test_capacity_report_updates_peer_registry() {
 
 #[tokio::test]
 async fn test_drain_notice_marks_peer_as_draining() {
-    let storage: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 
@@ -747,8 +747,8 @@ async fn test_drain_notice_marks_peer_as_draining() {
 
 #[tokio::test]
 async fn test_offload_manager_below_threshold_does_nothing() {
-    let storage = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 
@@ -769,8 +769,8 @@ async fn test_offload_manager_below_threshold_does_nothing() {
 
 #[tokio::test]
 async fn test_offload_manager_no_peers_available() {
-    let storage = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     // Tiny storage so any blob triggers offload
     let config = make_fed_config(100, 0.01);
@@ -792,8 +792,8 @@ async fn test_offload_manager_no_peers_available() {
 
 #[tokio::test]
 async fn test_offload_manager_successful_offload_with_hints() {
-    let storage = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     // Tiny storage to trigger offload
     let config = make_fed_config(100, 0.01);
@@ -859,8 +859,8 @@ async fn test_offload_manager_successful_offload_with_hints() {
 
 #[tokio::test]
 async fn test_client_receives_forwarding_hints_on_connect() {
-    let storage = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
 
     // Without routing_token, routing_id == client_id
     let client_id = common::generate_test_client_id(1);
@@ -909,8 +909,8 @@ async fn test_client_receives_forwarding_hints_on_connect() {
 
 #[tokio::test]
 async fn test_client_no_hints_no_forwarding_message() {
-    let storage = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
 
     let client_id = common::generate_test_client_id(2);
 
@@ -947,7 +947,7 @@ async fn test_client_no_hints_no_forwarding_message() {
 #[tokio::test]
 async fn test_hint_store_none_no_hints_sent() {
     // With hint_store=None (federation disabled), no hints are sent
-    let storage = Arc::new(MemoryBlobStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let deps = make_client_deps(storage as Arc<dyn BlobStore>, None);
 
     let url = start_client_server(deps).await;
@@ -975,8 +975,8 @@ async fn test_hint_store_none_no_hints_sent() {
 
 #[tokio::test]
 async fn test_purge_request_deletes_forwarding_hints() {
-    let storage = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
 
     let client_id = common::generate_test_client_id(4);
     let routing_id = &client_id;
@@ -1051,8 +1051,8 @@ async fn test_end_to_end_offload_and_retrieval() {
     // 4. Client connects to Relay B and retrieves the offloaded blob
 
     // --- Set up Relay B (acceptor) ---
-    let relay_b_storage: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
-    let relay_b_hints = Arc::new(MemoryForwardingHintStore::new());
+    let relay_b_storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let relay_b_hints = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let relay_b_registry = Arc::new(PeerRegistry::new(0.95));
     let relay_b_config = make_fed_config(1_000_000, 0.80);
 
@@ -1133,8 +1133,8 @@ async fn test_end_to_end_offload_with_forwarding_hints() {
     // 3. Forwarding hints are created on Relay A
     // 4. Client connects to Relay A and receives forwarding hints
 
-    let relay_a_storage = Arc::new(MemoryBlobStore::new());
-    let relay_a_hints = Arc::new(MemoryForwardingHintStore::new());
+    let relay_a_storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let relay_a_hints = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let relay_a_registry = Arc::new(PeerRegistry::new(0.95));
     // Tiny storage to trigger offload
     let relay_a_config = make_fed_config(100, 0.01);
@@ -1208,8 +1208,8 @@ async fn test_end_to_end_offload_with_forwarding_hints() {
 
 #[tokio::test]
 async fn test_multiple_blobs_offloaded_to_peer() {
-    let storage: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 
@@ -1250,8 +1250,8 @@ async fn test_multiple_blobs_offloaded_to_peer() {
 
 #[tokio::test]
 async fn test_peer_disconnect_marks_disconnected() {
-    let storage: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
-    let hint_store = Arc::new(MemoryForwardingHintStore::new());
+    let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     let config = make_fed_config(1_000_000, 0.80);
 

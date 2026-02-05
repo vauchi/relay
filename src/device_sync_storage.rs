@@ -10,9 +10,7 @@
 //!
 //! Based on: docs/planning/proposals/2026-01-21-inter-device-sync.md
 
-use std::collections::HashMap;
 use std::path::Path;
-use std::sync::RwLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection};
@@ -99,124 +97,7 @@ pub trait DeviceSyncStore: Send + Sync {
 }
 
 // ============================================================================
-// In-Memory Storage (for testing and development)
-// ============================================================================
-
-/// In-memory storage for device sync messages.
-/// Indexed by (identity_id, target_device_id).
-pub struct MemoryDeviceSyncStore {
-    /// Messages indexed by (identity_id, target_device_id) tuple key.
-    messages: RwLock<HashMap<(String, String), Vec<StoredDeviceSyncMessage>>>,
-}
-
-impl MemoryDeviceSyncStore {
-    /// Creates a new empty in-memory storage.
-    pub fn new() -> Self {
-        MemoryDeviceSyncStore {
-            messages: RwLock::new(HashMap::new()),
-        }
-    }
-}
-
-impl Default for MemoryDeviceSyncStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl DeviceSyncStore for MemoryDeviceSyncStore {
-    fn store(&self, msg: StoredDeviceSyncMessage) {
-        let mut messages = self.messages.write().unwrap();
-        let key = (msg.identity_id.clone(), msg.target_device_id.clone());
-        messages.entry(key).or_default().push(msg);
-    }
-
-    fn peek(&self, identity_id: &str, target_device_id: &str) -> Vec<StoredDeviceSyncMessage> {
-        let messages = self.messages.read().unwrap();
-        let key = (identity_id.to_string(), target_device_id.to_string());
-        messages.get(&key).cloned().unwrap_or_default()
-    }
-
-    fn acknowledge(&self, identity_id: &str, target_device_id: &str, message_id: &str) -> bool {
-        let mut messages = self.messages.write().unwrap();
-        let key = (identity_id.to_string(), target_device_id.to_string());
-
-        if let Some(vec) = messages.get_mut(&key) {
-            let initial_len = vec.len();
-            vec.retain(|m| m.id != message_id);
-            let removed = vec.len() < initial_len;
-
-            if vec.is_empty() {
-                messages.remove(&key);
-            }
-
-            removed
-        } else {
-            false
-        }
-    }
-
-    fn cleanup_expired(&self, ttl: Duration) -> usize {
-        let mut messages = self.messages.write().unwrap();
-        let mut removed = 0;
-
-        let keys: Vec<(String, String)> = messages.keys().cloned().collect();
-
-        for key in keys {
-            if let Some(vec) = messages.get_mut(&key) {
-                let initial_len = vec.len();
-                vec.retain(|m| !m.is_expired(ttl));
-                removed += initial_len - vec.len();
-
-                if vec.is_empty() {
-                    messages.remove(&key);
-                }
-            }
-        }
-
-        removed
-    }
-
-    fn message_count(&self) -> usize {
-        let messages = self.messages.read().unwrap();
-        messages.values().map(|v| v.len()).sum()
-    }
-
-    fn storage_size_bytes(&self) -> usize {
-        let messages = self.messages.read().unwrap();
-        messages
-            .values()
-            .flat_map(|v| v.iter())
-            .map(|m| {
-                m.encrypted_payload.len()
-                    + m.id.len()
-                    + m.identity_id.len()
-                    + m.target_device_id.len()
-                    + m.sender_device_id.len()
-                    + 16 // version + created_at_secs
-            })
-            .sum()
-    }
-
-    fn delete_all_for(&self, identity_id: &str) -> usize {
-        let mut messages = self.messages.write().unwrap();
-        let keys_to_remove: Vec<(String, String)> = messages
-            .keys()
-            .filter(|(id, _)| id == identity_id)
-            .cloned()
-            .collect();
-        let mut removed = 0;
-        for key in keys_to_remove {
-            if let Some(vec) = messages.remove(&key) {
-                removed += vec.len();
-            }
-        }
-        removed
-    }
-}
-
-// ============================================================================
-// SQLite Storage (for production)
+// SQLite Storage
 // ============================================================================
 
 /// SQLite-backed persistent storage for device sync messages.
@@ -270,7 +151,6 @@ impl SqliteDeviceSyncStore {
     }
 
     /// Creates an in-memory SQLite database (for testing).
-    #[cfg(test)]
     pub fn in_memory() -> Result<Self, rusqlite::Error> {
         Self::open(":memory:")
     }
@@ -383,17 +263,18 @@ impl DeviceSyncStore for SqliteDeviceSyncStore {
 // Storage Factory
 // ============================================================================
 
-/// Creates a device sync store based on the backend type.
-pub fn create_device_sync_store(
-    backend: crate::storage::StorageBackend,
-    data_dir: Option<&Path>,
-) -> Box<dyn DeviceSyncStore> {
-    match backend {
-        crate::storage::StorageBackend::Memory => Box::new(MemoryDeviceSyncStore::new()),
-        crate::storage::StorageBackend::Sqlite => {
-            let path = data_dir
-                .map(|d| d.join("device_sync.db"))
-                .unwrap_or_else(|| std::path::PathBuf::from("device_sync.db"));
+/// Creates a device sync store.
+///
+/// If `data_dir` is `None`, creates an in-memory SQLite database.
+/// Otherwise, creates a persistent SQLite database at `data_dir/device_sync.db`.
+pub fn create_device_sync_store(data_dir: Option<&Path>) -> Box<dyn DeviceSyncStore> {
+    match data_dir {
+        None => Box::new(
+            SqliteDeviceSyncStore::in_memory()
+                .expect("Failed to create in-memory device sync database"),
+        ),
+        Some(dir) => {
+            let path = dir.join("device_sync.db");
 
             // Ensure directory exists
             if let Some(parent) = path.parent() {
@@ -531,27 +412,6 @@ mod tests {
         assert!(empty.is_empty());
     }
 
-    // Memory backend tests
-    #[test]
-    fn test_memory_store_and_peek() {
-        test_store_and_peek_impl(&MemoryDeviceSyncStore::new());
-    }
-
-    #[test]
-    fn test_memory_acknowledge() {
-        test_acknowledge_impl(&MemoryDeviceSyncStore::new());
-    }
-
-    #[test]
-    fn test_memory_cleanup() {
-        test_cleanup_impl(&MemoryDeviceSyncStore::new());
-    }
-
-    #[test]
-    fn test_memory_routing() {
-        test_routing_impl(&MemoryDeviceSyncStore::new());
-    }
-
     // SQLite backend tests
     #[test]
     fn test_sqlite_store_and_peek() {
@@ -611,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_message_count() {
-        let store = MemoryDeviceSyncStore::new();
+        let store = SqliteDeviceSyncStore::in_memory().unwrap();
 
         assert_eq!(store.message_count(), 0);
 
@@ -642,7 +502,7 @@ mod tests {
 
     #[test]
     fn test_version_ordering() {
-        let store = MemoryDeviceSyncStore::new();
+        let store = SqliteDeviceSyncStore::in_memory().unwrap();
 
         // Store messages out of order
         store.store(StoredDeviceSyncMessage::new(
@@ -667,9 +527,11 @@ mod tests {
             2,
         ));
 
-        // For SQLite, messages are ordered by version; for memory, insertion order
-        // Both should work correctly for sync purposes
+        // Messages are ordered by version
         let msgs = store.peek("identity-1", "device-a");
         assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].version, 1);
+        assert_eq!(msgs[1].version, 2);
+        assert_eq!(msgs[2].version, 3);
     }
 }

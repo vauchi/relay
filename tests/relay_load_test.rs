@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use vauchi_relay::rate_limit::RateLimiter;
-use vauchi_relay::storage::{BlobStore, MemoryBlobStore, StoredBlob};
+use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
 
 mod common;
 
@@ -22,7 +22,7 @@ mod common;
 /// Measures storage performance under load
 #[test]
 fn test_high_throughput_storage() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
     let num_operations = 10_000;
 
     let start = Instant::now();
@@ -57,7 +57,7 @@ fn test_high_throughput_storage() {
 /// Verifies read/write concurrency
 #[test]
 fn test_concurrent_read_write() {
-    let store = Arc::new(MemoryBlobStore::new());
+    let store = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let num_writers = 5;
     let num_readers = 5;
     let ops_per_thread = 1000;
@@ -133,11 +133,11 @@ fn test_rate_limiter_performance() {
     );
 }
 
-/// Test: Memory usage stays bounded
-/// Verifies cleanup prevents unbounded growth
+/// Test: Cleanup removes all blobs
+/// Verifies cleanup prevents unbounded data growth
 #[test]
-fn test_memory_bounded_with_cleanup() {
-    let store = MemoryBlobStore::new();
+fn test_cleanup_removes_all_blobs() {
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     // Store many blobs
     for i in 0..1000 {
@@ -147,22 +147,24 @@ fn test_memory_bounded_with_cleanup() {
         );
     }
 
-    let size_before = store.storage_size_bytes();
-    assert!(size_before > 0);
+    assert_eq!(store.blob_count(), 1000);
+    assert!(store.storage_size_bytes() > 0);
 
     // Cleanup with zero TTL should remove everything
     let removed = store.cleanup_expired(Duration::ZERO);
     assert_eq!(removed, 1000);
 
-    let size_after = store.storage_size_bytes();
-    assert_eq!(size_after, 0);
+    // All blobs should be removed
+    assert_eq!(store.blob_count(), 0);
+    // Note: SQLite doesn't release pages after DELETE, it reuses them.
+    // So storage_size_bytes() won't return 0, but blob_count() == 0 is what matters.
 }
 
 /// Test: Large blob handling
 /// Verifies system handles large payloads
 #[test]
 fn test_large_blob_handling() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     // 1MB blob
     let large_data = vec![0u8; 1024 * 1024];
@@ -179,7 +181,7 @@ fn test_large_blob_handling() {
 /// Verifies performance with many distinct recipients
 #[test]
 fn test_many_recipients() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
     let num_recipients = 10_000;
 
     let start = Instant::now();
@@ -251,7 +253,7 @@ fn test_rate_limiter_cleanup() {
 /// Verifies acknowledgments work correctly under concurrency
 #[test]
 fn test_concurrent_acknowledgments() {
-    let store = Arc::new(MemoryBlobStore::new());
+    let store = Arc::new(SqliteBlobStore::in_memory().unwrap());
 
     // Store blobs with known IDs
     let mut blob_ids = vec![];
@@ -287,7 +289,7 @@ fn test_concurrent_acknowledgments() {
 /// Verifies storage remains stable with many small blobs
 #[test]
 fn test_storage_memory_pressure() {
-    let store = MemoryBlobStore::new();
+    let store = SqliteBlobStore::in_memory().unwrap();
 
     // Store many small blobs across many recipients
     for r in 0..100 {

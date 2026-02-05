@@ -22,14 +22,10 @@ use tracing::{error, info};
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_limit::ConnectionLimiter;
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::{
-    DeviceSyncStore, MemoryDeviceSyncStore, SqliteDeviceSyncStore,
-};
+use vauchi_relay::device_sync_storage::{create_device_sync_store, DeviceSyncStore};
 use vauchi_relay::federation_connector::{self, OffloadManager};
 use vauchi_relay::federation_handler::{self, FederationDeps};
-use vauchi_relay::forwarding_hints::{
-    ForwardingHintStore, MemoryForwardingHintStore, SqliteForwardingHintStore,
-};
+use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
 use vauchi_relay::gossip;
 use vauchi_relay::handler;
 use vauchi_relay::http::{create_router, HttpState};
@@ -37,9 +33,7 @@ use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key;
 use vauchi_relay::peer_registry::PeerRegistry;
 use vauchi_relay::rate_limit::RateLimiter;
-use vauchi_relay::recovery_storage::{
-    MemoryRecoveryProofStore, RecoveryProofStore, SqliteRecoveryProofStore,
-};
+use vauchi_relay::recovery_storage::{RecoveryProofStore, SqliteRecoveryProofStore};
 use vauchi_relay::storage::{create_blob_store, BlobStore, StorageBackend};
 
 #[tokio::main]
@@ -131,8 +125,11 @@ async fn main() {
     ));
 
     // Initialize recovery proof storage
+    // Always use SQLite - in-memory for Memory backend, file-based for Sqlite backend
     let recovery_storage: Arc<dyn RecoveryProofStore> = match config.storage_backend {
-        StorageBackend::Memory => Arc::new(MemoryRecoveryProofStore::new()),
+        StorageBackend::Memory => Arc::new(
+            SqliteRecoveryProofStore::in_memory().expect("Failed to create in-memory recovery db"),
+        ),
         StorageBackend::Sqlite => {
             let path = config.data_dir.join("recovery_proofs.db");
             Arc::new(
@@ -143,14 +140,10 @@ async fn main() {
     };
 
     // Initialize device sync storage
+    // Always use SQLite - in-memory for Memory backend, file-based for Sqlite backend
     let device_sync_storage: Arc<dyn DeviceSyncStore> = match config.storage_backend {
-        StorageBackend::Memory => Arc::new(MemoryDeviceSyncStore::new()),
-        StorageBackend::Sqlite => {
-            let path = config.data_dir.join("device_sync.db");
-            Arc::new(
-                SqliteDeviceSyncStore::open(&path).expect("Failed to open device sync database"),
-            )
-        }
+        StorageBackend::Memory => Arc::from(create_device_sync_store(None)),
+        StorageBackend::Sqlite => Arc::from(create_device_sync_store(Some(&config.data_dir))),
     };
 
     // Initialize connection registry for delivery notifications
@@ -162,15 +155,12 @@ async fn main() {
     let config = Arc::new(config);
     let peer_registry = Arc::new(PeerRegistry::new(config.federation_offload_refuse));
 
-    let hint_store: Arc<dyn ForwardingHintStore> = match config.storage_backend {
-        StorageBackend::Memory => Arc::new(MemoryForwardingHintStore::new()),
-        StorageBackend::Sqlite => {
-            let path = config.data_dir.join("federation.db");
-            Arc::new(
-                SqliteForwardingHintStore::open(&path)
-                    .expect("Failed to open federation hint database"),
-            )
-        }
+    let hint_store: Arc<dyn ForwardingHintStore> = {
+        let path = config.data_dir.join("federation.db");
+        Arc::new(
+            SqliteForwardingHintStore::open(&path)
+                .expect("Failed to open federation hint database"),
+        )
     };
 
     if config.federation_enabled {

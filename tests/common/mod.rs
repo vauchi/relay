@@ -6,15 +6,15 @@
 
 use std::sync::Arc;
 use vauchi_relay::rate_limit::RateLimiter;
-use vauchi_relay::storage::{BlobStore, MemoryBlobStore, StoredBlob};
+use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
 
 /// Creates a test blob store with sample data.
 #[allow(dead_code)]
 pub fn create_test_store_with_data(
     num_recipients: usize,
     blobs_per_recipient: usize,
-) -> Arc<MemoryBlobStore> {
-    let store = Arc::new(MemoryBlobStore::new());
+) -> Arc<SqliteBlobStore> {
+    let store = Arc::new(SqliteBlobStore::in_memory().unwrap());
 
     for r in 0..num_recipients {
         for b in 0..blobs_per_recipient {

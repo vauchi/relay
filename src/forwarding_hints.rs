@@ -8,9 +8,7 @@
 //! hints so clients can find their data. This is sensitive metadata (routing_id
 //! → peer relay mapping) and is cleaned up on TTL expiry and purge requests.
 
-use std::collections::HashMap;
 use std::path::Path;
-use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection};
@@ -42,83 +40,7 @@ pub trait ForwardingHintStore: Send + Sync {
 }
 
 // ============================================================================
-// In-Memory Implementation (for testing)
-// ============================================================================
-
-pub struct MemoryForwardingHintStore {
-    hints: RwLock<HashMap<String, Vec<ForwardingHint>>>,
-}
-
-impl MemoryForwardingHintStore {
-    pub fn new() -> Self {
-        MemoryForwardingHintStore {
-            hints: RwLock::new(HashMap::new()),
-        }
-    }
-}
-
-impl Default for MemoryForwardingHintStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ForwardingHintStore for MemoryForwardingHintStore {
-    fn store_hint(&self, hint: ForwardingHint) {
-        let mut hints = self.hints.write().unwrap();
-        hints.entry(hint.routing_id.clone()).or_default().push(hint);
-    }
-
-    fn get_hints(&self, routing_id: &str) -> Vec<ForwardingHint> {
-        let hints = self.hints.read().unwrap();
-        hints.get(routing_id).cloned().unwrap_or_default()
-    }
-
-    fn remove_hint(&self, blob_id: &str) -> bool {
-        let mut hints = self.hints.write().unwrap();
-        let mut found = false;
-        for v in hints.values_mut() {
-            let before = v.len();
-            v.retain(|h| h.blob_id != blob_id);
-            if v.len() < before {
-                found = true;
-            }
-        }
-        // Clean up empty entries
-        hints.retain(|_, v| !v.is_empty());
-        found
-    }
-
-    fn delete_all_for(&self, routing_id: &str) -> usize {
-        let mut hints = self.hints.write().unwrap();
-        hints.remove(routing_id).map(|v| v.len()).unwrap_or(0)
-    }
-
-    fn cleanup_expired(&self) -> usize {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let mut hints = self.hints.write().unwrap();
-        let mut removed = 0;
-        for v in hints.values_mut() {
-            let before = v.len();
-            v.retain(|h| h.expires_at_secs > now);
-            removed += before - v.len();
-        }
-        hints.retain(|_, v| !v.is_empty());
-        removed
-    }
-
-    fn hint_count(&self) -> usize {
-        let hints = self.hints.read().unwrap();
-        hints.values().map(|v| v.len()).sum()
-    }
-}
-
-// ============================================================================
-// SQLite Implementation (for production)
+// SQLite Implementation
 // ============================================================================
 
 /// SQLite-backed forwarding hint store using a separate database file
@@ -163,7 +85,7 @@ impl SqliteForwardingHintStore {
         })
     }
 
-    #[cfg(test)]
+    /// Creates an in-memory SQLite store (for tests).
     pub fn in_memory() -> Result<Self, rusqlite::Error> {
         Self::open(":memory:")
     }
@@ -371,38 +293,7 @@ mod tests {
         assert_eq!(store.hint_count(), 2);
     }
 
-    // Memory tests
-    #[test]
-    fn test_memory_store_and_retrieve() {
-        test_store_and_retrieve(&MemoryForwardingHintStore::new());
-    }
-
-    #[test]
-    fn test_memory_empty_result() {
-        test_empty_result_for_unknown(&MemoryForwardingHintStore::new());
-    }
-
-    #[test]
-    fn test_memory_cleanup_expired() {
-        test_cleanup_expired(&MemoryForwardingHintStore::new());
-    }
-
-    #[test]
-    fn test_memory_remove_by_blob_id() {
-        test_remove_by_blob_id(&MemoryForwardingHintStore::new());
-    }
-
-    #[test]
-    fn test_memory_delete_all_for() {
-        test_delete_all_for_routing_id(&MemoryForwardingHintStore::new());
-    }
-
-    #[test]
-    fn test_memory_hint_count() {
-        test_hint_count_accuracy(&MemoryForwardingHintStore::new());
-    }
-
-    // SQLite tests
+    // SQLite tests (using in-memory SQLite)
     #[test]
     fn test_sqlite_store_and_retrieve() {
         test_store_and_retrieve(&SqliteForwardingHintStore::in_memory().unwrap());

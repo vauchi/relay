@@ -21,11 +21,11 @@ use tokio_tungstenite::{accept_async, connect_async};
 
 use vauchi_relay::connection_limit::ConnectionLimiter;
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::MemoryDeviceSyncStore;
+use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::rate_limit::RateLimiter;
-use vauchi_relay::recovery_storage::MemoryRecoveryProofStore;
-use vauchi_relay::storage::{BlobStore, MemoryBlobStore};
+use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
+use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
 
 // ============================================================================
 // Test infrastructure: full server with peek routing
@@ -39,13 +39,13 @@ use vauchi_relay::storage::{BlobStore, MemoryBlobStore};
 /// Returns (url, connection_limiter) so tests can inspect limits.
 async fn start_full_server(
     max_connections: usize,
-) -> (String, ConnectionLimiter, Arc<MemoryBlobStore>) {
+) -> (String, ConnectionLimiter, Arc<SqliteBlobStore>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let url = format!("ws://127.0.0.1:{}", addr.port());
 
     let limiter = ConnectionLimiter::new(max_connections);
-    let storage = Arc::new(MemoryBlobStore::new());
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
 
     let limiter_clone = limiter.clone();
     let storage_clone = storage.clone();
@@ -138,8 +138,8 @@ async fn start_full_server(
                     Ok(Ok(ws_stream)) => {
                         let deps = ConnectionDeps {
                             storage: storage as Arc<dyn BlobStore>,
-                            recovery_storage: Arc::new(MemoryRecoveryProofStore::new()),
-                            device_sync_storage: Arc::new(MemoryDeviceSyncStore::new()),
+                            recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
+                            device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
                             rate_limiter: Arc::new(RateLimiter::new(60)),
                             recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
                             registry: Arc::new(ConnectionRegistry::new()),

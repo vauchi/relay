@@ -339,8 +339,8 @@ impl OffloadManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forwarding_hints::MemoryForwardingHintStore;
-    use crate::storage::MemoryBlobStore;
+    use crate::forwarding_hints::SqliteForwardingHintStore;
+    use crate::storage::SqliteBlobStore;
     use crate::storage::StoredBlob;
 
     fn make_test_config(max_storage: usize, threshold: f64) -> Arc<RelayConfig> {
@@ -355,8 +355,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_offload_manager_below_threshold() {
-        let storage = Arc::new(MemoryBlobStore::new());
-        let hint_store = Arc::new(MemoryForwardingHintStore::new());
+        let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+        let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
         let registry = Arc::new(PeerRegistry::new(0.95));
         let config = make_test_config(1_000_000, 0.80);
 
@@ -377,8 +377,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_offload_manager_no_peers() {
-        let storage = Arc::new(MemoryBlobStore::new());
-        let hint_store = Arc::new(MemoryForwardingHintStore::new());
+        let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+        let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
         let registry = Arc::new(PeerRegistry::new(0.95));
         // Use tiny max_storage so even a small blob triggers offload
         let config = make_test_config(100, 0.01);
@@ -398,8 +398,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_offload_manager_successful_offload() {
-        let storage = Arc::new(MemoryBlobStore::new());
-        let hint_store = Arc::new(MemoryForwardingHintStore::new());
+        let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+        let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
         let registry = Arc::new(PeerRegistry::new(0.95));
         // Very small max storage to trigger offload
         let config = make_test_config(100, 0.01);

@@ -4,12 +4,11 @@
 
 //! Blob Storage
 //!
-//! Storage backends for encrypted blobs awaiting delivery.
-//! Supports both in-memory (for testing) and SQLite (for production).
+//! SQLite-backed storage for encrypted blobs awaiting delivery.
+//! Use `SqliteBlobStore::in_memory()` for testing.
 
-use std::collections::{HashMap, VecDeque};
 use std::path::Path;
-use std::sync::{Mutex, RwLock};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection};
@@ -113,162 +112,7 @@ pub trait BlobStore: Send + Sync {
 }
 
 // ============================================================================
-// In-Memory Storage (for testing and development)
-// ============================================================================
-
-/// In-memory storage for blobs indexed by recipient ID.
-pub struct MemoryBlobStore {
-    blobs: RwLock<HashMap<String, VecDeque<StoredBlob>>>,
-}
-
-impl MemoryBlobStore {
-    /// Creates a new empty in-memory storage.
-    pub fn new() -> Self {
-        MemoryBlobStore {
-            blobs: RwLock::new(HashMap::new()),
-        }
-    }
-}
-
-impl Default for MemoryBlobStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl BlobStore for MemoryBlobStore {
-    fn store(&self, recipient_id: &str, blob: StoredBlob) {
-        let mut blobs = self.blobs.write().unwrap();
-        blobs
-            .entry(recipient_id.to_string())
-            .or_default()
-            .push_back(blob);
-    }
-
-    fn peek(&self, recipient_id: &str) -> Vec<StoredBlob> {
-        let blobs = self.blobs.read().unwrap();
-        blobs
-            .get(recipient_id)
-            .map(|q| q.iter().cloned().collect())
-            .unwrap_or_default()
-    }
-
-    fn take(&self, recipient_id: &str) -> Vec<StoredBlob> {
-        let mut blobs = self.blobs.write().unwrap();
-        blobs
-            .remove(recipient_id)
-            .map(|q| q.into_iter().collect())
-            .unwrap_or_default()
-    }
-
-    fn acknowledge(&self, recipient_id: &str, blob_id: &str) -> bool {
-        let mut blobs = self.blobs.write().unwrap();
-        if let Some(queue) = blobs.get_mut(recipient_id) {
-            let initial_len = queue.len();
-            queue.retain(|b| b.id != blob_id);
-            let removed = queue.len() < initial_len;
-
-            if queue.is_empty() {
-                blobs.remove(recipient_id);
-            }
-
-            removed
-        } else {
-            false
-        }
-    }
-
-    fn cleanup_expired(&self, ttl: Duration) -> usize {
-        let mut blobs = self.blobs.write().unwrap();
-        let mut removed = 0;
-
-        let keys: Vec<String> = blobs.keys().cloned().collect();
-
-        for key in keys {
-            if let Some(queue) = blobs.get_mut(&key) {
-                let initial_len = queue.len();
-                queue.retain(|b| !b.is_expired(ttl));
-                removed += initial_len - queue.len();
-
-                if queue.is_empty() {
-                    blobs.remove(&key);
-                }
-            }
-        }
-
-        removed
-    }
-
-    fn blob_count(&self) -> usize {
-        let blobs = self.blobs.read().unwrap();
-        blobs.values().map(|q| q.len()).sum()
-    }
-
-    fn recipient_count(&self) -> usize {
-        let blobs = self.blobs.read().unwrap();
-        blobs.len()
-    }
-
-    fn storage_size_bytes(&self) -> usize {
-        let blobs = self.blobs.read().unwrap();
-        blobs
-            .values()
-            .flat_map(|q| q.iter())
-            .map(|b| b.data.len() + b.id.len() + 8)
-            .sum()
-    }
-
-    fn blob_count_for(&self, recipient_id: &str) -> usize {
-        let blobs = self.blobs.read().unwrap();
-        blobs.get(recipient_id).map(|q| q.len()).unwrap_or(0)
-    }
-
-    fn storage_size_for(&self, recipient_id: &str) -> usize {
-        let blobs = self.blobs.read().unwrap();
-        blobs
-            .get(recipient_id)
-            .map(|q| q.iter().map(|b| b.data.len() + b.id.len() + 8).sum())
-            .unwrap_or(0)
-    }
-
-    fn delete_all_for(&self, recipient_id: &str) -> usize {
-        let mut blobs = self.blobs.write().unwrap();
-        blobs.remove(recipient_id).map(|q| q.len()).unwrap_or(0)
-    }
-
-    fn get_oldest_blobs(&self, limit: usize) -> Vec<(String, StoredBlob)> {
-        let blobs = self.blobs.read().unwrap();
-        let mut all: Vec<(String, StoredBlob)> = blobs
-            .iter()
-            .flat_map(|(rid, queue)| {
-                queue
-                    .iter()
-                    .filter(|b| b.hop_count == 0)
-                    .map(move |b| (rid.clone(), b.clone()))
-            })
-            .collect();
-        all.sort_by_key(|(_, b)| b.created_at_secs);
-        all.truncate(limit);
-        all
-    }
-
-    fn remove_blob(&self, blob_id: &str) -> bool {
-        let mut blobs = self.blobs.write().unwrap();
-        let mut found = false;
-        for queue in blobs.values_mut() {
-            let before = queue.len();
-            queue.retain(|b| b.id != blob_id);
-            if queue.len() < before {
-                found = true;
-            }
-        }
-        blobs.retain(|_, q| !q.is_empty());
-        found
-    }
-}
-
-// ============================================================================
-// SQLite Storage (for production)
+// SQLite Storage
 // ============================================================================
 
 /// SQLite-backed persistent storage for blobs.
@@ -319,7 +163,6 @@ impl SqliteBlobStore {
     }
 
     /// Creates an in-memory SQLite database (for testing).
-    #[cfg(test)]
     pub fn in_memory() -> Result<Self, rusqlite::Error> {
         Self::open(":memory:")
     }
@@ -499,7 +342,7 @@ impl BlobStore for SqliteBlobStore {
 /// Storage backend type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StorageBackend {
-    /// In-memory storage (lost on restart).
+    /// SQLite in-memory storage (lost on restart, for testing/dev).
     Memory,
     /// SQLite persistent storage.
     #[default]
@@ -509,7 +352,9 @@ pub enum StorageBackend {
 /// Creates a blob store based on the backend type.
 pub fn create_blob_store(backend: StorageBackend, data_dir: Option<&Path>) -> Box<dyn BlobStore> {
     match backend {
-        StorageBackend::Memory => Box::new(MemoryBlobStore::new()),
+        StorageBackend::Memory => {
+            Box::new(SqliteBlobStore::in_memory().expect("Failed to create in-memory SQLite database"))
+        }
         StorageBackend::Sqlite => {
             let path = data_dir
                 .map(|d| d.join("blobs.db"))
@@ -592,27 +437,6 @@ mod tests {
         assert_eq!(store.blob_count(), 0);
     }
 
-    // Memory backend tests
-    #[test]
-    fn test_memory_store_and_peek() {
-        test_store_impl(&MemoryBlobStore::new());
-    }
-
-    #[test]
-    fn test_memory_take() {
-        test_take_impl(&MemoryBlobStore::new());
-    }
-
-    #[test]
-    fn test_memory_acknowledge() {
-        test_acknowledge_impl(&MemoryBlobStore::new());
-    }
-
-    #[test]
-    fn test_memory_cleanup() {
-        test_cleanup_impl(&MemoryBlobStore::new());
-    }
-
     // SQLite backend tests
     #[test]
     fn test_sqlite_store_and_peek() {
@@ -661,7 +485,7 @@ mod tests {
 
     #[test]
     fn test_blob_count() {
-        let store = MemoryBlobStore::new();
+        let store = SqliteBlobStore::in_memory().unwrap();
 
         assert_eq!(store.blob_count(), 0);
 
@@ -675,7 +499,7 @@ mod tests {
 
     #[test]
     fn test_acknowledge_nonexistent() {
-        let store = MemoryBlobStore::new();
+        let store = SqliteBlobStore::in_memory().unwrap();
 
         store.store("recipient-1", StoredBlob::new(vec![1]));
 
@@ -688,7 +512,7 @@ mod tests {
 
     #[test]
     fn test_peek_nonexistent_recipient() {
-        let store = MemoryBlobStore::new();
+        let store = SqliteBlobStore::in_memory().unwrap();
         let peeked = store.peek("nonexistent");
         assert!(peeked.is_empty());
     }
@@ -705,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_blob_count_for_recipient() {
-        let store = MemoryBlobStore::new();
+        let store = SqliteBlobStore::in_memory().unwrap();
 
         assert_eq!(store.blob_count_for("recipient-1"), 0);
 
@@ -720,7 +544,7 @@ mod tests {
 
     #[test]
     fn test_storage_size_for_recipient() {
-        let store = MemoryBlobStore::new();
+        let store = SqliteBlobStore::in_memory().unwrap();
 
         assert_eq!(store.storage_size_for("recipient-1"), 0);
 
@@ -731,33 +555,6 @@ mod tests {
         // Each blob: data_len + id_len (UUID ~36 chars) + 8 bytes overhead
         assert!(size >= 300, "Expected at least 300 bytes, got {}", size);
 
-        assert_eq!(store.storage_size_for("nonexistent"), 0);
-    }
-
-    #[test]
-    fn test_sqlite_blob_count_for_recipient() {
-        let store = SqliteBlobStore::in_memory().unwrap();
-
-        assert_eq!(store.blob_count_for("r1"), 0);
-
-        store.store("r1", StoredBlob::new(vec![1]));
-        store.store("r1", StoredBlob::new(vec![2]));
-        store.store("r2", StoredBlob::new(vec![3]));
-
-        assert_eq!(store.blob_count_for("r1"), 2);
-        assert_eq!(store.blob_count_for("r2"), 1);
-        assert_eq!(store.blob_count_for("nonexistent"), 0);
-    }
-
-    #[test]
-    fn test_sqlite_storage_size_for_recipient() {
-        let store = SqliteBlobStore::in_memory().unwrap();
-
-        store.store("r1", StoredBlob::new(vec![0u8; 100]));
-        store.store("r1", StoredBlob::new(vec![0u8; 200]));
-
-        let size = store.storage_size_for("r1");
-        assert!(size >= 300, "Expected at least 300 bytes, got {}", size);
         assert_eq!(store.storage_size_for("nonexistent"), 0);
     }
 
@@ -798,8 +595,8 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_all_for_memory() {
-        let store = MemoryBlobStore::new();
+    fn test_delete_all_for() {
+        let store = SqliteBlobStore::in_memory().unwrap();
 
         store.store("recipient-1", StoredBlob::new(vec![1]));
         store.store("recipient-1", StoredBlob::new(vec![2]));
@@ -814,24 +611,9 @@ mod tests {
 
     #[test]
     fn test_delete_all_for_nonexistent() {
-        let store = MemoryBlobStore::new();
+        let store = SqliteBlobStore::in_memory().unwrap();
         let removed = store.delete_all_for("nonexistent");
         assert_eq!(removed, 0);
-    }
-
-    #[test]
-    fn test_sqlite_delete_all_for() {
-        let store = SqliteBlobStore::in_memory().unwrap();
-
-        store.store("r1", StoredBlob::new(vec![1]));
-        store.store("r1", StoredBlob::new(vec![2]));
-        store.store("r2", StoredBlob::new(vec![3]));
-
-        let removed = store.delete_all_for("r1");
-        assert_eq!(removed, 2);
-        assert_eq!(store.blob_count(), 1);
-        assert!(store.peek("r1").is_empty());
-        assert_eq!(store.peek("r2").len(), 1);
     }
 
     // ============================================================================
@@ -854,8 +636,8 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_get_oldest_blobs_respects_limit() {
-        let store = MemoryBlobStore::new();
+    fn test_get_oldest_blobs_respects_limit() {
+        let store = SqliteBlobStore::in_memory().unwrap();
         for i in 0..5u8 {
             let mut blob = StoredBlob::new(vec![i]);
             blob.created_at_secs = 1000 + i as u64;
@@ -868,8 +650,8 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_get_oldest_blobs_skips_hop_count() {
-        let store = MemoryBlobStore::new();
+    fn test_get_oldest_blobs_skips_hop_count() {
+        let store = SqliteBlobStore::in_memory().unwrap();
         // hop_count=0 (should be included)
         let mut b1 = StoredBlob::new(vec![1]);
         b1.created_at_secs = 100;
@@ -884,8 +666,8 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_get_oldest_blobs_order() {
-        let store = MemoryBlobStore::new();
+    fn test_get_oldest_blobs_order() {
+        let store = SqliteBlobStore::in_memory().unwrap();
         let mut b1 = StoredBlob::new(vec![1]);
         b1.created_at_secs = 300;
         store.store("r1", b1);
@@ -904,8 +686,8 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_remove_blob() {
-        let store = MemoryBlobStore::new();
+    fn test_remove_blob() {
+        let store = SqliteBlobStore::in_memory().unwrap();
         let blob = StoredBlob::new(vec![1]);
         let id = blob.id.clone();
         store.store("r1", blob);
@@ -913,44 +695,6 @@ mod tests {
 
         assert!(store.remove_blob(&id));
         assert_eq!(store.blob_count(), 1);
-        assert!(!store.remove_blob("nonexistent"));
-    }
-
-    #[test]
-    fn test_sqlite_get_oldest_blobs_respects_limit() {
-        let store = SqliteBlobStore::in_memory().unwrap();
-        for i in 0..5u8 {
-            let mut blob = StoredBlob::new(vec![i]);
-            blob.created_at_secs = 1000 + i as u64;
-            store.store("r1", blob);
-        }
-        let oldest = store.get_oldest_blobs(3);
-        assert_eq!(oldest.len(), 3);
-    }
-
-    #[test]
-    fn test_sqlite_get_oldest_blobs_skips_hop_count() {
-        let store = SqliteBlobStore::in_memory().unwrap();
-        let mut b1 = StoredBlob::new(vec![1]);
-        b1.created_at_secs = 100;
-        store.store("r1", b1);
-        let b2 = StoredBlob::with_metadata(vec![2], 50, 1);
-        store.store("r1", b2);
-
-        let oldest = store.get_oldest_blobs(10);
-        assert_eq!(oldest.len(), 1);
-        assert_eq!(oldest[0].1.data, vec![1]);
-    }
-
-    #[test]
-    fn test_sqlite_remove_blob() {
-        let store = SqliteBlobStore::in_memory().unwrap();
-        let blob = StoredBlob::new(vec![1]);
-        let id = blob.id.clone();
-        store.store("r1", blob);
-
-        assert!(store.remove_blob(&id));
-        assert_eq!(store.blob_count(), 0);
         assert!(!store.remove_blob("nonexistent"));
     }
 
