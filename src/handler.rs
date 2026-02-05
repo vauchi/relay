@@ -6,8 +6,8 @@
 //!
 //! Handles individual client connections.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
@@ -63,6 +63,130 @@ fn hash_to_hex(hash: &[u8; 32]) -> String {
         hex.push(HEX_CHARS[(byte & 0x0f) as usize] as char);
     }
     hex
+}
+
+/// Tracks recently seen nonces to prevent replay attacks.
+///
+/// Nonces older than `TTL` are evicted on each insert. Shared via `Arc`
+/// across all connections handled by a single relay instance.
+pub struct NonceTracker {
+    nonces: Mutex<Vec<(Vec<u8>, Instant)>>,
+}
+
+/// Nonces expire after 120 seconds (2× the ±60s timestamp window).
+const NONCE_TTL: Duration = Duration::from_secs(120);
+/// Maximum allowed clock skew between client and relay (±60 seconds).
+const TIMESTAMP_WINDOW: u64 = 60;
+
+impl NonceTracker {
+    /// Creates a new empty nonce tracker.
+    pub fn new() -> Self {
+        NonceTracker {
+            nonces: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Checks if a nonce has been seen before. If not, inserts it and returns `true`.
+    /// Returns `false` if the nonce is a replay.
+    pub fn check_and_insert(&self, nonce: &[u8]) -> bool {
+        let mut nonces = self.nonces.lock().unwrap();
+
+        // Evict expired nonces
+        let cutoff = Instant::now() - NONCE_TTL;
+        nonces.retain(|(_, ts)| *ts > cutoff);
+
+        // Check for replay
+        if nonces.iter().any(|(n, _)| n == nonce) {
+            return false;
+        }
+
+        // Insert new nonce
+        nonces.push((nonce.to_vec(), Instant::now()));
+        true
+    }
+}
+
+/// Decodes a hex string into bytes. Returns `Err` if the string has odd length
+/// or contains non-hex characters.
+fn decode_hex(hex: &str) -> Result<Vec<u8>, &'static str> {
+    if hex.len() % 2 != 0 {
+        return Err("odd hex length");
+    }
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for chunk in hex.as_bytes().chunks(2) {
+        let high = hex_char_to_nibble(chunk[0]).map_err(|_| "invalid hex character")?;
+        let low = hex_char_to_nibble(chunk[1]).map_err(|_| "invalid hex character")?;
+        bytes.push((high << 4) | low);
+    }
+    Ok(bytes)
+}
+
+/// Verifies an authenticated handshake using Ed25519 signature verification.
+///
+/// Checks:
+/// 1. Hex decoding and length validation of public key (32B), nonce (32B), signature (64B)
+/// 2. Timestamp within ±60s of relay clock
+/// 3. Nonce not replayed (via `NonceTracker`)
+/// 4. Ed25519 signature over `nonce || timestamp.to_be_bytes()`
+/// 5. Derived `client_id` (hex of public key) matches claimed `client_id`
+///
+/// Returns the derived client_id on success.
+fn verify_signed_handshake(
+    public_key_hex: &str,
+    nonce_hex: &str,
+    signature_hex: &str,
+    timestamp: u64,
+    nonce_tracker: &NonceTracker,
+) -> Result<String, &'static str> {
+    // Decode hex fields
+    let public_key_bytes = decode_hex(public_key_hex).map_err(|_| "invalid public key hex")?;
+    let nonce_bytes = decode_hex(nonce_hex).map_err(|_| "invalid nonce hex")?;
+    let signature_bytes = decode_hex(signature_hex).map_err(|_| "invalid signature hex")?;
+
+    // Length checks
+    if public_key_bytes.len() != 32 {
+        return Err("public key must be 32 bytes");
+    }
+    if nonce_bytes.len() != 32 {
+        return Err("nonce must be 32 bytes");
+    }
+    if signature_bytes.len() != 64 {
+        return Err("signature must be 64 bytes");
+    }
+
+    // Timestamp window check
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    if now.abs_diff(timestamp) > TIMESTAMP_WINDOW {
+        return Err("timestamp outside allowed window");
+    }
+
+    // Nonce replay check
+    if !nonce_tracker.check_and_insert(&nonce_bytes) {
+        return Err("nonce replay detected");
+    }
+
+    // Reconstruct signed data: nonce || timestamp.to_be_bytes()
+    let mut signed_data = Vec::with_capacity(40);
+    signed_data.extend_from_slice(&nonce_bytes);
+    signed_data.extend_from_slice(&timestamp.to_be_bytes());
+
+    // Verify Ed25519 signature
+    let public_key =
+        ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &public_key_bytes);
+    public_key
+        .verify(&signed_data, &signature_bytes)
+        .map_err(|_| "signature verification failed")?;
+
+    // Derive client_id from public key
+    let derived_client_id = public_key_bytes
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+
+    Ok(derived_client_id)
 }
 
 /// Wire protocol message types (subset of vauchi-core protocol).
@@ -209,6 +333,18 @@ mod protocol {
         /// for this client's blobs, preventing online status inference.
         #[serde(default)]
         pub suppress_presence: bool,
+        /// Ed25519 public key proving ownership of client_id (hex, 64 chars = 32 bytes).
+        #[serde(default)]
+        pub identity_public_key: Option<String>,
+        /// Random nonce for replay prevention (hex, 64 chars = 32 bytes).
+        #[serde(default)]
+        pub nonce: Option<String>,
+        /// Ed25519 signature over (nonce || timestamp) (hex, 128 chars = 64 bytes).
+        #[serde(default)]
+        pub signature: Option<String>,
+        /// Unix timestamp in seconds, must be within ±60s of relay clock.
+        #[serde(default)]
+        pub timestamp: Option<u64>,
     }
 
     /// Server response to client handshake for version negotiation.
@@ -232,6 +368,7 @@ mod protocol {
             "recovery_proof".to_string(),
             "account_revoked".to_string(),
             "forwarding_hints".to_string(),
+            "authenticated_handshake".to_string(),
         ];
         if is_noise_session {
             features.push("noise_nk".to_string());
@@ -494,6 +631,8 @@ pub struct ConnectionDeps {
     pub noise_static_key: Option<[u8; 32]>,
     /// When true, reject plaintext (v1) connections.
     pub require_noise_encryption: bool,
+    /// Nonce tracker for handshake replay prevention. Shared across all connections.
+    pub nonce_tracker: Arc<NonceTracker>,
 }
 
 /// Handles a WebSocket connection.
@@ -513,6 +652,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
         hint_store,
         noise_static_key,
         require_noise_encryption,
+        nonce_tracker,
     } = deps;
     // Generate a random session label for logging.
     // The relay must never log client_id (identity fingerprint) to prevent
@@ -644,6 +784,29 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         if !validate_client_id(rt) {
                             warn!("[{}] Invalid routing_token format", session);
                             return;
+                        }
+                    }
+                    // Verify signed handshake if auth fields are present.
+                    // When all four auth fields are provided, the relay verifies the
+                    // Ed25519 signature and checks that the derived client_id matches.
+                    // Legacy clients (no auth fields) are accepted without verification.
+                    if let (Some(ref pk), Some(ref nonce), Some(ref sig), Some(ts)) = (
+                        &hs.identity_public_key,
+                        &hs.nonce,
+                        &hs.signature,
+                        hs.timestamp,
+                    ) {
+                        match verify_signed_handshake(pk, nonce, sig, ts, &nonce_tracker) {
+                            Ok(derived_id) => {
+                                if derived_id != hs.client_id {
+                                    warn!("[{}] Authenticated client_id mismatch", session);
+                                    return;
+                                }
+                            }
+                            Err(reason) => {
+                                warn!("[{}] Handshake auth failed: {}", session, reason);
+                                return;
+                            }
                         }
                     }
                     (
@@ -1267,6 +1430,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ring::signature::KeyPair;
 
     #[test]
     fn test_validate_client_id_valid() {
@@ -1294,6 +1458,10 @@ mod tests {
             device_id: None,
             routing_token: None,
             suppress_presence: false,
+            identity_public_key: None,
+            nonce: None,
+            signature: None,
+            timestamp: None,
         };
         let json = serde_json::to_string(&hs).unwrap();
         let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
@@ -1309,6 +1477,10 @@ mod tests {
             device_id: None,
             routing_token: Some("b".repeat(64)),
             suppress_presence: false,
+            identity_public_key: None,
+            nonce: None,
+            signature: None,
+            timestamp: None,
         };
         let json = serde_json::to_string(&hs).unwrap();
         let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
@@ -1322,6 +1494,10 @@ mod tests {
             device_id: None,
             routing_token: None,
             suppress_presence: true,
+            identity_public_key: None,
+            nonce: None,
+            signature: None,
+            timestamp: None,
         };
         let json = serde_json::to_string(&hs).unwrap();
         let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
@@ -1330,13 +1506,17 @@ mod tests {
 
     #[test]
     fn test_handshake_backward_compat_missing_fields() {
-        // Old clients won't send routing_token or suppress_presence
+        // Old clients won't send routing_token, suppress_presence, or auth fields
         let json =
             r#"{"client_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#;
         let parsed: protocol::Handshake = serde_json::from_str(json).unwrap();
         assert!(parsed.routing_token.is_none());
         assert!(!parsed.suppress_presence);
         assert!(parsed.device_id.is_none());
+        assert!(parsed.identity_public_key.is_none());
+        assert!(parsed.nonce.is_none());
+        assert!(parsed.signature.is_none());
+        assert!(parsed.timestamp.is_none());
     }
 
     #[test]
@@ -1392,6 +1572,9 @@ mod tests {
             assert!(hs_ack.features.contains(&"purge".to_string()));
             assert!(hs_ack.features.contains(&"recovery_proof".to_string()));
             assert!(hs_ack.features.contains(&"device_sync".to_string()));
+            assert!(hs_ack
+                .features
+                .contains(&"authenticated_handshake".to_string()));
         } else {
             panic!("Expected HandshakeAck payload");
         }
@@ -1428,5 +1611,153 @@ mod tests {
         } else {
             panic!("Expected PurgeRequest payload after roundtrip");
         }
+    }
+
+    // ================================================================
+    // NonceTracker tests
+    // ================================================================
+
+    #[test]
+    fn test_nonce_tracker_accepts_fresh_nonce() {
+        let tracker = NonceTracker::new();
+        assert!(tracker.check_and_insert(b"nonce1"));
+    }
+
+    #[test]
+    fn test_nonce_tracker_rejects_replay() {
+        let tracker = NonceTracker::new();
+        assert!(tracker.check_and_insert(b"nonce1"));
+        assert!(!tracker.check_and_insert(b"nonce1"));
+    }
+
+    #[test]
+    fn test_nonce_tracker_accepts_different_nonces() {
+        let tracker = NonceTracker::new();
+        assert!(tracker.check_and_insert(b"nonce1"));
+        assert!(tracker.check_and_insert(b"nonce2"));
+    }
+
+    // ================================================================
+    // decode_hex tests
+    // ================================================================
+
+    #[test]
+    fn test_decode_hex_valid() {
+        let result = decode_hex("0102ff").unwrap();
+        assert_eq!(result, vec![0x01, 0x02, 0xff]);
+    }
+
+    #[test]
+    fn test_decode_hex_odd_length() {
+        assert!(decode_hex("abc").is_err());
+    }
+
+    #[test]
+    fn test_decode_hex_invalid_char() {
+        assert!(decode_hex("zz").is_err());
+    }
+
+    // ================================================================
+    // verify_signed_handshake tests
+    // ================================================================
+
+    /// Helper: generate an Ed25519 keypair, sign (nonce || timestamp), and return
+    /// (public_key_hex, nonce_hex, signature_hex, timestamp, derived_client_id).
+    fn make_test_signed_handshake(
+    ) -> (String, String, String, u64, String) {
+        let rng = ring::rand::SystemRandom::new();
+        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+
+        let public_key = key_pair.public_key().as_ref();
+        let public_key_hex: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
+
+        let nonce = [42u8; 32];
+        let nonce_hex: String = nonce.iter().map(|b| format!("{:02x}", b)).collect();
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let mut sign_data = Vec::with_capacity(40);
+        sign_data.extend_from_slice(&nonce);
+        sign_data.extend_from_slice(&timestamp.to_be_bytes());
+
+        let signature = key_pair.sign(&sign_data);
+        let sig_hex: String = signature.as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+
+        (public_key_hex.clone(), nonce_hex, sig_hex, timestamp, public_key_hex)
+    }
+
+    #[test]
+    fn test_verify_signed_handshake_valid() {
+        let (pk, nonce, sig, ts, expected_id) = make_test_signed_handshake();
+        let tracker = NonceTracker::new();
+        let result = verify_signed_handshake(&pk, &nonce, &sig, ts, &tracker);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), expected_id);
+    }
+
+    #[test]
+    fn test_verify_signed_handshake_bad_signature() {
+        let (pk, nonce, mut sig, ts, _) = make_test_signed_handshake();
+        // Corrupt the signature
+        sig.replace_range(0..2, "ff");
+        let tracker = NonceTracker::new();
+        let result = verify_signed_handshake(&pk, &nonce, &sig, ts, &tracker);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "signature verification failed");
+    }
+
+    #[test]
+    fn test_verify_signed_handshake_expired_timestamp() {
+        let (_pk, nonce, _, _, _) = make_test_signed_handshake();
+
+        // Re-sign with old timestamp
+        let rng = ring::rand::SystemRandom::new();
+        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let pub_hex: String = key_pair.public_key().as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+
+        let old_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() - 120; // 2 minutes ago
+
+        let nonce_bytes = decode_hex(&nonce).unwrap();
+        let mut sign_data = Vec::with_capacity(40);
+        sign_data.extend_from_slice(&nonce_bytes);
+        sign_data.extend_from_slice(&old_ts.to_be_bytes());
+        let sig = key_pair.sign(&sign_data);
+        let sig_hex: String = sig.as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+
+        let tracker = NonceTracker::new();
+        let result = verify_signed_handshake(&pub_hex, &nonce, &sig_hex, old_ts, &tracker);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "timestamp outside allowed window");
+    }
+
+    #[test]
+    fn test_verify_signed_handshake_nonce_replay() {
+        let (pk, nonce, sig, ts, _) = make_test_signed_handshake();
+        let tracker = NonceTracker::new();
+
+        // First call succeeds
+        let result1 = verify_signed_handshake(&pk, &nonce, &sig, ts, &tracker);
+        assert!(result1.is_ok());
+
+        // Second call with same nonce fails
+        let result2 = verify_signed_handshake(&pk, &nonce, &sig, ts, &tracker);
+        assert!(result2.is_err());
+        assert_eq!(result2.unwrap_err(), "nonce replay detected");
+    }
+
+    #[test]
+    fn test_verify_signed_handshake_wrong_key_length() {
+        let tracker = NonceTracker::new();
+        let result = verify_signed_handshake("aabb", "cc".repeat(32).as_str(), "dd".repeat(64).as_str(), 0, &tracker);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "public key must be 32 bytes");
     }
 }

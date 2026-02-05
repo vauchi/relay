@@ -156,6 +156,7 @@ async fn main() {
     // Initialize connection registry for delivery notifications
     let registry = Arc::new(ConnectionRegistry::new());
     let blob_sender_map = handler::new_blob_sender_map();
+    let nonce_tracker = Arc::new(handler::NonceTracker::new());
 
     // Initialize federation state
     let config = Arc::new(config);
@@ -364,6 +365,7 @@ async fn main() {
         let recovery_rate_limiter = recovery_rate_limiter.clone();
         let registry = registry.clone();
         let blob_sender_map = blob_sender_map.clone();
+        let nonce_tracker = nonce_tracker.clone();
         let metrics = metrics.clone();
         let hint_store = hint_store.clone();
         let peer_registry = peer_registry.clone();
@@ -512,6 +514,7 @@ async fn main() {
                                 },
                                 noise_static_key,
                                 require_noise_encryption: config.require_noise_encryption,
+                                nonce_tracker,
                             },
                         )
                         .await;
