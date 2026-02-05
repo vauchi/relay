@@ -289,22 +289,17 @@ impl SqliteBlobStore {
              PRAGMA cache_size=10000;",
         )?;
 
-        // Create table if not exists (v2 schema: no sender_id)
+        // Create table if not exists
         conn.execute(
             "CREATE TABLE IF NOT EXISTS blobs (
                 id TEXT PRIMARY KEY,
                 recipient_id TEXT NOT NULL,
                 data BLOB NOT NULL,
-                created_at_secs INTEGER NOT NULL
+                created_at_secs INTEGER NOT NULL,
+                hop_count INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )?;
-
-        // Migrate from v1 schema (with sender_id) to v2 (without)
-        Self::migrate_drop_sender_id(&conn)?;
-
-        // Migrate: add hop_count column if missing
-        Self::migrate_add_hop_count(&conn)?;
 
         // Create index for recipient lookups
         conn.execute(
@@ -321,46 +316,6 @@ impl SqliteBlobStore {
         Ok(SqliteBlobStore {
             conn: Mutex::new(conn),
         })
-    }
-
-    /// Migrates v1 schema (with sender_id column) to v2 (without).
-    /// No-op if the column doesn't exist.
-    fn migrate_drop_sender_id(conn: &Connection) -> Result<(), rusqlite::Error> {
-        // Check if sender_id column exists
-        let has_sender_id: bool = conn
-            .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='blobs'")?
-            .query_row([], |row| row.get::<_, String>(0))
-            .map(|sql| sql.contains("sender_id"))
-            .unwrap_or(false);
-
-        if has_sender_id {
-            conn.execute_batch(
-                "CREATE TABLE blobs_v2 (
-                    id TEXT PRIMARY KEY,
-                    recipient_id TEXT NOT NULL,
-                    data BLOB NOT NULL,
-                    created_at_secs INTEGER NOT NULL
-                );
-                INSERT INTO blobs_v2 (id, recipient_id, data, created_at_secs)
-                    SELECT id, recipient_id, data, created_at_secs FROM blobs;
-                DROP TABLE blobs;
-                ALTER TABLE blobs_v2 RENAME TO blobs;",
-            )?;
-        }
-
-        Ok(())
-    }
-
-    /// Adds the hop_count column if it doesn't exist.
-    fn migrate_add_hop_count(conn: &Connection) -> Result<(), rusqlite::Error> {
-        let has_hop_count = conn.prepare("SELECT hop_count FROM blobs LIMIT 0").is_ok();
-        if !has_hop_count {
-            conn.execute(
-                "ALTER TABLE blobs ADD COLUMN hop_count INTEGER NOT NULL DEFAULT 0",
-                [],
-            )?;
-        }
-        Ok(())
     }
 
     /// Creates an in-memory SQLite database (for testing).
@@ -807,51 +762,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sqlite_migration_from_v1_schema() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("migration_test.db");
-
-        // Create a v1 database with sender_id column
-        {
-            let conn = Connection::open(&db_path).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE blobs (
-                    id TEXT PRIMARY KEY,
-                    recipient_id TEXT NOT NULL,
-                    sender_id TEXT NOT NULL,
-                    data BLOB NOT NULL,
-                    created_at_secs INTEGER NOT NULL
-                );
-                INSERT INTO blobs VALUES ('blob-1', 'recipient-1', 'sender-should-be-dropped', X'010203', 1000);",
-            ).unwrap();
-        }
-
-        // Open with new code — migration should drop sender_id
-        let store = SqliteBlobStore::open(&db_path).unwrap();
-        assert_eq!(store.blob_count(), 1);
-
-        let blobs = store.peek("recipient-1");
-        assert_eq!(blobs.len(), 1);
-        assert_eq!(blobs[0].id, "blob-1");
-        assert_eq!(blobs[0].data, vec![1, 2, 3]);
-
-        // Verify sender_id column no longer exists
-        let conn = store.conn.lock().unwrap();
-        let schema: String = conn
-            .query_row(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='blobs'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(
-            !schema.contains("sender_id"),
-            "sender_id column should be removed after migration, got: {}",
-            schema
-        );
-    }
-
-    #[test]
     fn test_sqlite_wal_mode_enabled() {
         let store = SqliteBlobStore::in_memory().unwrap();
         let conn = store.conn.lock().unwrap();
@@ -1064,30 +974,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_sqlite_migration_adds_hop_count() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("migrate_hop.db");
-
-        // Create a database without hop_count column
-        {
-            let conn = Connection::open(&db_path).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE blobs (
-                    id TEXT PRIMARY KEY,
-                    recipient_id TEXT NOT NULL,
-                    data BLOB NOT NULL,
-                    created_at_secs INTEGER NOT NULL
-                );
-                INSERT INTO blobs VALUES ('b1', 'r1', X'010203', 1000);",
-            )
-            .unwrap();
-        }
-
-        // Open with new code — migration should add hop_count
-        let store = SqliteBlobStore::open(&db_path).unwrap();
-        let blobs = store.peek("r1");
-        assert_eq!(blobs.len(), 1);
-        assert_eq!(blobs[0].hop_count, 0); // Default value from migration
-    }
 }

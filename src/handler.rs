@@ -296,11 +296,6 @@ mod protocol {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct EncryptedUpdate {
         pub recipient_id: String,
-        /// Accepted for backward compatibility with older clients but not stored or forwarded.
-        /// The relay must not learn who sent a message — sender identity belongs inside the
-        /// encrypted ciphertext.
-        #[serde(default)]
-        pub sender_id: Option<String>,
         pub ciphertext: Vec<u8>,
     }
 
@@ -538,7 +533,6 @@ mod protocol {
                 .as_secs(),
             payload: MessagePayload::EncryptedUpdate(EncryptedUpdate {
                 recipient_id: recipient_id.to_string(),
-                sender_id: None,
                 ciphertext: data.to_vec(),
             }),
         }
@@ -1122,7 +1116,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                             continue;
                         }
 
-                        // Store blob for recipient (sender_id deliberately not stored)
+                        // Store blob for recipient
                         let blob = StoredBlob::new(update.ciphertext);
                         let blob_id = blob.id.clone();
                         storage.store(&update.recipient_id, blob);

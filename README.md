@@ -109,7 +109,6 @@ Messages are length-prefixed JSON:
   "payload": {
     "type": "EncryptedUpdate",
     "recipient_id": "hex-encoded-public-key",
-    "sender_id": "hex-encoded-public-key",
     "ciphertext": [encrypted bytes]
   }
 }
