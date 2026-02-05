@@ -78,6 +78,12 @@ const NONCE_TTL: Duration = Duration::from_secs(120);
 /// Maximum allowed clock skew between client and relay (±60 seconds).
 const TIMESTAMP_WINDOW: u64 = 60;
 
+impl Default for NonceTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NonceTracker {
     /// Creates a new empty nonce tracker.
     pub fn new() -> Self {
@@ -109,7 +115,7 @@ impl NonceTracker {
 /// Decodes a hex string into bytes. Returns `Err` if the string has odd length
 /// or contains non-hex characters.
 fn decode_hex(hex: &str) -> Result<Vec<u8>, &'static str> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err("odd hex length");
     }
     let mut bytes = Vec::with_capacity(hex.len() / 2);
@@ -1663,8 +1669,7 @@ mod tests {
 
     /// Helper: generate an Ed25519 keypair, sign (nonce || timestamp), and return
     /// (public_key_hex, nonce_hex, signature_hex, timestamp, derived_client_id).
-    fn make_test_signed_handshake(
-    ) -> (String, String, String, u64, String) {
+    fn make_test_signed_handshake() -> (String, String, String, u64, String) {
         let rng = ring::rand::SystemRandom::new();
         let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
         let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
@@ -1685,9 +1690,19 @@ mod tests {
         sign_data.extend_from_slice(&timestamp.to_be_bytes());
 
         let signature = key_pair.sign(&sign_data);
-        let sig_hex: String = signature.as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+        let sig_hex: String = signature
+            .as_ref()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
 
-        (public_key_hex.clone(), nonce_hex, sig_hex, timestamp, public_key_hex)
+        (
+            public_key_hex.clone(),
+            nonce_hex,
+            sig_hex,
+            timestamp,
+            public_key_hex,
+        )
     }
 
     #[test]
@@ -1718,12 +1733,18 @@ mod tests {
         let rng = ring::rand::SystemRandom::new();
         let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
         let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
-        let pub_hex: String = key_pair.public_key().as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+        let pub_hex: String = key_pair
+            .public_key()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
 
         let old_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() - 120; // 2 minutes ago
+            .as_secs()
+            - 120; // 2 minutes ago
 
         let nonce_bytes = decode_hex(&nonce).unwrap();
         let mut sign_data = Vec::with_capacity(40);
@@ -1756,7 +1777,13 @@ mod tests {
     #[test]
     fn test_verify_signed_handshake_wrong_key_length() {
         let tracker = NonceTracker::new();
-        let result = verify_signed_handshake("aabb", "cc".repeat(32).as_str(), "dd".repeat(64).as_str(), 0, &tracker);
+        let result = verify_signed_handshake(
+            "aabb",
+            "cc".repeat(32).as_str(),
+            "dd".repeat(64).as_str(),
+            0,
+            &tracker,
+        );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "public key must be 32 bytes");
     }

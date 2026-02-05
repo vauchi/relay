@@ -2434,10 +2434,7 @@ async fn test_invalid_signature_rejected() {
 
     let (mut hs, _) = make_signed_handshake_envelope();
     // Corrupt the signature by changing its first two hex chars
-    let bad_sig = format!(
-        "ff{}",
-        &hs["payload"]["signature"].as_str().unwrap()[2..]
-    );
+    let bad_sig = format!("ff{}", &hs["payload"]["signature"].as_str().unwrap()[2..]);
     hs["payload"]["signature"] = json!(bad_sig);
 
     let frame = encode_envelope(&hs);
