@@ -1063,8 +1063,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         }
 
                         debug!(
-                            "[{}] Processed recovery query with {} hashes",
-                            session,
+                            "Processed recovery query with {} hashes",
                             query.key_hashes.len()
                         );
                     }
