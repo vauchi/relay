@@ -352,9 +352,9 @@ pub enum StorageBackend {
 /// Creates a blob store based on the backend type.
 pub fn create_blob_store(backend: StorageBackend, data_dir: Option<&Path>) -> Box<dyn BlobStore> {
     match backend {
-        StorageBackend::Memory => {
-            Box::new(SqliteBlobStore::in_memory().expect("Failed to create in-memory SQLite database"))
-        }
+        StorageBackend::Memory => Box::new(
+            SqliteBlobStore::in_memory().expect("Failed to create in-memory SQLite database"),
+        ),
         StorageBackend::Sqlite => {
             let path = data_dir
                 .map(|d| d.join("blobs.db"))
@@ -717,5 +717,4 @@ mod tests {
             assert_eq!(blobs[0].created_at_secs, 999);
         }
     }
-
 }

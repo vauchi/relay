@@ -138,8 +138,12 @@ async fn start_full_server(
                     Ok(Ok(ws_stream)) => {
                         let deps = ConnectionDeps {
                             storage: storage as Arc<dyn BlobStore>,
-                            recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-                            device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
+                            recovery_storage: Arc::new(
+                                SqliteRecoveryProofStore::in_memory().unwrap(),
+                            ),
+                            device_sync_storage: Arc::new(
+                                SqliteDeviceSyncStore::in_memory().unwrap(),
+                            ),
                             rate_limiter: Arc::new(RateLimiter::new(60)),
                             recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
                             registry: Arc::new(ConnectionRegistry::new()),
