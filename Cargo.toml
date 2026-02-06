@@ -10,8 +10,8 @@ description = "Relay server for Vauchi - encrypted blob storage and forwarding"
 license = "GPL-3.0-or-later"
 
 [dependencies]
-# Async runtime
-tokio = { version = "1", features = ["full"] }
+# Async runtime (minimal features: excludes fs, signal, process, io-std, parking_lot)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }
 
 # WebSocket server
 tokio-tungstenite = "0.24"

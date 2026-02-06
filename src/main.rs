@@ -26,8 +26,8 @@ use vauchi_relay::device_sync_storage::{create_device_sync_store, DeviceSyncStor
 use vauchi_relay::federation_connector::{self, OffloadManager};
 use vauchi_relay::federation_handler::{self, FederationDeps};
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
-use vauchi_relay::gossip;
 use vauchi_relay::handler;
+use vauchi_relay::peer_registry::gossip;
 use vauchi_relay::http::{create_router, HttpState};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key;
@@ -174,16 +174,12 @@ async fn main() {
         for peer_url in &config.federation_peers {
             let peer_url = peer_url.clone();
             let own_relay_id = config.federation_relay_id.clone();
-            let storage = storage.clone();
-            let hint_store = hint_store.clone();
             let peer_registry = peer_registry.clone();
             let config = config.clone();
             tokio::spawn(async move {
                 federation_connector::maintain_peer_connection(
                     peer_url,
                     own_relay_id,
-                    storage,
-                    hint_store,
                     peer_registry,
                     config,
                 )

@@ -11,7 +11,6 @@ pub mod federation_handler;
 pub mod federation_protocol;
 pub mod federation_tls;
 pub mod forwarding_hints;
-pub mod gossip;
 pub mod handler;
 pub mod http;
 pub mod integrity;

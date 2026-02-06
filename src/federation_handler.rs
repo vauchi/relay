@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -19,12 +20,28 @@ use tokio_tungstenite::WebSocketStream;
 use tracing::{debug, info, warn};
 
 use crate::config::RelayConfig;
-use crate::federation_protocol::{self, FederationPayload, FEDERATION_PROTOCOL_VERSION};
+use crate::federation_protocol::{
+    self, create_federation_envelope, encode_federation_message, FederationPayload,
+    FEDERATION_PROTOCOL_VERSION,
+};
 use crate::forwarding_hints::ForwardingHintStore;
-use crate::gossip;
 use crate::integrity;
+use crate::peer_registry::gossip;
 use crate::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
 use crate::storage::{BlobStore, StoredBlob};
+
+/// Helper to send a federation message over WebSocket.
+/// Encodes the payload and sends as binary. Errors are silently ignored
+/// (fire-and-forget pattern for acks).
+async fn send_federation_msg(
+    write: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+    payload: FederationPayload,
+) {
+    let envelope = create_federation_envelope(payload);
+    if let Ok(data) = encode_federation_message(&envelope) {
+        let _ = write.send(Message::Binary(data)).await;
+    }
+}
 
 /// Dependencies for handling a federation connection.
 pub struct FederationDeps {
@@ -68,8 +85,8 @@ pub async fn handle_federation_connection(
                                 "[fed-{}] Version mismatch: got {}, expected {}",
                                 session, version, FEDERATION_PROTOCOL_VERSION
                             );
-                            // Send rejection
-                            let ack = federation_protocol::create_federation_envelope(
+                            send_federation_msg(
+                                &mut write,
                                 FederationPayload::PeerHandshakeAck {
                                     relay_id: config.federation_relay_id.clone(),
                                     version: FEDERATION_PROTOCOL_VERSION,
@@ -77,10 +94,8 @@ pub async fn handle_federation_connection(
                                     capacity_used_bytes: 0,
                                     capacity_max_bytes: 0,
                                 },
-                            );
-                            if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
-                                let _ = write.send(Message::Binary(data)).await;
-                            }
+                            )
+                            .await;
                             return;
                         }
                         (relay_id, version)
@@ -194,31 +209,29 @@ pub async fn handle_federation_connection(
                     } => {
                         // Reject if hop_count >= 1 (prevent re-offloading)
                         if hop_count >= 1 {
-                            let ack = federation_protocol::create_federation_envelope(
+                            send_federation_msg(
+                                &mut write,
                                 FederationPayload::OffloadAck {
                                     blob_id,
                                     accepted: false,
                                     reason: Some("hop_count too high".to_string()),
                                 },
-                            );
-                            if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
-                                let _ = write.send(Message::Binary(data)).await;
-                            }
+                            )
+                            .await;
                             continue;
                         }
 
                         // Verify integrity
                         if !integrity::verify_integrity_hash(&blob_data, &integrity_hash) {
-                            let ack = federation_protocol::create_federation_envelope(
+                            send_federation_msg(
+                                &mut write,
                                 FederationPayload::OffloadAck {
                                     blob_id,
                                     accepted: false,
                                     reason: Some("integrity check failed".to_string()),
                                 },
-                            );
-                            if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
-                                let _ = write.send(Message::Binary(data)).await;
-                            }
+                            )
+                            .await;
                             continue;
                         }
 
@@ -226,16 +239,15 @@ pub async fn handle_federation_connection(
                         let current_usage = storage.storage_size_bytes();
                         let usage_ratio = current_usage as f64 / config.max_storage_bytes as f64;
                         if usage_ratio >= config.federation_offload_refuse {
-                            let ack = federation_protocol::create_federation_envelope(
+                            send_federation_msg(
+                                &mut write,
                                 FederationPayload::OffloadAck {
                                     blob_id,
                                     accepted: false,
                                     reason: Some("at capacity".to_string()),
                                 },
-                            );
-                            if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
-                                let _ = write.send(Message::Binary(data)).await;
-                            }
+                            )
+                            .await;
                             continue;
                         }
 
@@ -246,16 +258,15 @@ pub async fn handle_federation_connection(
                         offload_count += 1;
 
                         // Send acceptance ack
-                        let ack = federation_protocol::create_federation_envelope(
+                        send_federation_msg(
+                            &mut write,
                             FederationPayload::OffloadAck {
                                 blob_id,
                                 accepted: true,
                                 reason: None,
                             },
-                        );
-                        if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
-                            let _ = write.send(Message::Binary(data)).await;
-                        }
+                        )
+                        .await;
                     }
                     FederationPayload::CapacityReport {
                         used_bytes,
@@ -270,13 +281,7 @@ pub async fn handle_federation_connection(
                     } => {
                         peer_registry.set_status(&peer_relay_id, PeerStatus::Draining);
                         info!("[fed-{}] Peer is draining", session);
-                        // Send DrainAck
-                        let ack = federation_protocol::create_federation_envelope(
-                            FederationPayload::DrainAck,
-                        );
-                        if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
-                            let _ = write.send(Message::Binary(data)).await;
-                        }
+                        send_federation_msg(&mut write, FederationPayload::DrainAck).await;
                     }
                     FederationPayload::PeerAdvertisement { peers } => {
                         if config.federation_gossip_enabled {
@@ -291,15 +296,13 @@ pub async fn handle_federation_connection(
                                 peers.len(),
                                 new_count
                             );
-                            // Send acknowledgment
-                            let ack = federation_protocol::create_federation_envelope(
+                            send_federation_msg(
+                                &mut write,
                                 FederationPayload::PeerAdvertisementAck {
                                     new_peers_count: new_count,
                                 },
-                            );
-                            if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
-                                let _ = write.send(Message::Binary(data)).await;
-                            }
+                            )
+                            .await;
                             // Touch the sender peer so it doesn't expire
                             peer_registry.touch_peer(
                                 &peer_relay_id,

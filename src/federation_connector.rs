@@ -28,8 +28,6 @@ use crate::storage::BlobStore;
 pub async fn maintain_peer_connection(
     peer_url: String,
     own_relay_id: String,
-    storage: Arc<dyn BlobStore>,
-    _hint_store: Arc<dyn ForwardingHintStore>,
     peer_registry: Arc<PeerRegistry>,
     config: Arc<RelayConfig>,
 ) {
@@ -43,7 +41,6 @@ pub async fn maintain_peer_connection(
         match try_connect_to_peer(
             &peer_url,
             &own_relay_id,
-            storage.clone(),
             peer_registry.clone(),
             config.clone(),
             session,
@@ -72,7 +69,6 @@ pub async fn maintain_peer_connection(
 async fn try_connect_to_peer(
     peer_url: &str,
     own_relay_id: &str,
-    _storage: Arc<dyn BlobStore>,
     peer_registry: Arc<PeerRegistry>,
     config: Arc<RelayConfig>,
     session: &str,
