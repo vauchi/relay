@@ -433,11 +433,11 @@ pub mod gossip {
 
     use tracing::{debug, info, warn};
 
+    use super::PeerRegistry;
     use crate::config::RelayConfig;
     use crate::federation_protocol::{
         create_federation_envelope, encode_federation_message, AdvertisedPeer, FederationPayload,
     };
-    use super::PeerRegistry;
 
     /// Runs the periodic gossip advertisement task.
     ///
