@@ -497,50 +497,49 @@ async fn test_federation_1000_users_across_3_relays() {
             handles.push(tokio::spawn(async move {
                 let client_id = common::generate_test_client_id_wide(user_id);
 
-                match timeout(Duration::from_secs(10), connect_async(&relay_url)).await {
-                    Ok(Ok((mut ws, _))) => {
-                        // Handshake
-                        let hs = make_client_handshake(&client_id);
-                        if ws.send(Message::Binary(encode_client(&hs))).await.is_err() {
-                            return;
-                        }
-
-                        // Wait for HandshakeAck
-                        match timeout(Duration::from_secs(5), ws.next()).await {
-                            Ok(Some(Ok(Message::Binary(data)))) => {
-                                let resp = decode_client(&data);
-                                if resp["payload"]["type"] != "HandshakeAck" {
-                                    return;
-                                }
-                                conn_counter.fetch_add(1, Ordering::Relaxed);
-                            }
-                            _ => return,
-                        }
-
-                        // Send a message to a user on a different relay
-                        let target_user = (user_id + 400) % 1000;
-                        let recipient_id = common::generate_test_client_id_wide(target_user);
-                        let update = make_encrypted_update(&recipient_id, &[user_id as u8; 32]);
-
-                        if ws
-                            .send(Message::Binary(encode_client(&update)))
-                            .await
-                            .is_ok()
-                        {
-                            // Wait for Stored ack
-                            if let Ok(Some(Ok(Message::Binary(data)))) =
-                                timeout(Duration::from_secs(5), ws.next()).await
-                            {
-                                let resp = decode_client(&data);
-                                if resp["payload"]["status"] == "Stored" {
-                                    send_counter.fetch_add(1, Ordering::Relaxed);
-                                }
-                            }
-                        }
-
-                        ws.close(None).await.ok();
+                if let Ok(Ok((mut ws, _))) =
+                    timeout(Duration::from_secs(10), connect_async(&relay_url)).await
+                {
+                    // Handshake
+                    let hs = make_client_handshake(&client_id);
+                    if ws.send(Message::Binary(encode_client(&hs))).await.is_err() {
+                        return;
                     }
-                    _ => {}
+
+                    // Wait for HandshakeAck
+                    let Ok(Some(Ok(Message::Binary(data)))) =
+                        timeout(Duration::from_secs(5), ws.next()).await
+                    else {
+                        return;
+                    };
+                    let resp = decode_client(&data);
+                    if resp["payload"]["type"] != "HandshakeAck" {
+                        return;
+                    }
+                    conn_counter.fetch_add(1, Ordering::Relaxed);
+
+                    // Send a message to a user on a different relay
+                    let target_user = (user_id + 400) % 1000;
+                    let recipient_id = common::generate_test_client_id_wide(target_user);
+                    let update = make_encrypted_update(&recipient_id, &[user_id as u8; 32]);
+
+                    if ws
+                        .send(Message::Binary(encode_client(&update)))
+                        .await
+                        .is_ok()
+                    {
+                        // Wait for Stored ack
+                        if let Ok(Some(Ok(Message::Binary(data)))) =
+                            timeout(Duration::from_secs(5), ws.next()).await
+                        {
+                            let resp = decode_client(&data);
+                            if resp["payload"]["status"] == "Stored" {
+                                send_counter.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
+
+                    ws.close(None).await.ok();
                 }
             }));
         }
@@ -1000,35 +999,31 @@ async fn test_concurrent_federation_connections() {
         let counter = successful.clone();
 
         handles.push(tokio::spawn(async move {
-            match timeout(Duration::from_secs(10), connect_async(&url)).await {
-                Ok(Ok((mut ws, _))) => {
-                    let hs = make_peer_handshake(
-                        &format!("peer-{}", i),
-                        &format!("127.0.0.1:{}", 9000 + i),
-                    );
-                    if ws.send(Message::Binary(encode_fed(&hs))).await.is_err() {
-                        return;
-                    }
-
-                    match timeout(Duration::from_secs(5), ws.next()).await {
-                        Ok(Some(Ok(Message::Binary(data)))) => {
-                            let resp = decode_fed(&data);
-                            if let FederationPayload::PeerHandshakeAck { accepted, .. } =
-                                resp.payload
-                            {
-                                if accepted {
-                                    counter.fetch_add(1, Ordering::Relaxed);
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-
-                    // Hold connection briefly
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    ws.close(None).await.ok();
+            if let Ok(Ok((mut ws, _))) =
+                timeout(Duration::from_secs(10), connect_async(&url)).await
+            {
+                let hs = make_peer_handshake(
+                    &format!("peer-{}", i),
+                    &format!("127.0.0.1:{}", 9000 + i),
+                );
+                if ws.send(Message::Binary(encode_fed(&hs))).await.is_err() {
+                    return;
                 }
-                _ => {}
+
+                if let Ok(Some(Ok(Message::Binary(data)))) =
+                    timeout(Duration::from_secs(5), ws.next()).await
+                {
+                    let resp = decode_fed(&data);
+                    if let FederationPayload::PeerHandshakeAck { accepted, .. } = resp.payload {
+                        if accepted {
+                            counter.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }
+
+                // Hold connection briefly
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                ws.close(None).await.ok();
             }
         }));
     }
