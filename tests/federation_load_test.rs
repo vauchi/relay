@@ -999,13 +999,10 @@ async fn test_concurrent_federation_connections() {
         let counter = successful.clone();
 
         handles.push(tokio::spawn(async move {
-            if let Ok(Ok((mut ws, _))) =
-                timeout(Duration::from_secs(10), connect_async(&url)).await
+            if let Ok(Ok((mut ws, _))) = timeout(Duration::from_secs(10), connect_async(&url)).await
             {
-                let hs = make_peer_handshake(
-                    &format!("peer-{}", i),
-                    &format!("127.0.0.1:{}", 9000 + i),
-                );
+                let hs =
+                    make_peer_handshake(&format!("peer-{}", i), &format!("127.0.0.1:{}", 9000 + i));
                 if ws.send(Message::Binary(encode_fed(&hs))).await.is_err() {
                     return;
                 }
