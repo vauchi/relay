@@ -73,6 +73,9 @@ pub struct RelayConfig {
     pub federation_tls_key_path: Option<String>,
     /// Path to CA certificate bundle for verifying peer certificates.
     pub federation_tls_ca_path: Option<String>,
+    /// Address for the mTLS federation listener (only used when mTLS is configured).
+    /// Defaults to the same host as `listen_addr` with port + 1.
+    pub federation_mtls_addr: Option<SocketAddr>,
 }
 
 impl Default for RelayConfig {
@@ -106,6 +109,7 @@ impl Default for RelayConfig {
             federation_tls_cert_path: None,
             federation_tls_key_path: None,
             federation_tls_ca_path: None,
+            federation_mtls_addr: None,
         }
     }
 }
@@ -273,6 +277,12 @@ impl RelayConfig {
         if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_CA") {
             if !val.is_empty() {
                 config.federation_tls_ca_path = Some(val);
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_MTLS_ADDR") {
+            if let Ok(parsed) = val.parse() {
+                config.federation_mtls_addr = Some(parsed);
             }
         }
 

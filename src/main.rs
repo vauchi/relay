@@ -25,6 +25,7 @@ use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::{create_device_sync_store, DeviceSyncStore};
 use vauchi_relay::federation_connector::{self, OffloadManager};
 use vauchi_relay::federation_handler::{self, FederationDeps};
+use vauchi_relay::federation_tls;
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
 use vauchi_relay::handler;
 use vauchi_relay::http::{create_router, HttpState};
@@ -170,20 +171,114 @@ async fn main() {
             config.federation_peers.len()
         );
 
-        // Spawn per-peer connector tasks
+        // Load mTLS configuration for federation connections
+        let federation_tls_config = match federation_tls::load_federation_tls(&config) {
+            Ok(Some(tls_config)) => {
+                info!("Federation mTLS enabled — outbound and inbound connections authenticated");
+                Some(tls_config)
+            }
+            Ok(None) => {
+                if federation_tls::is_mtls_configured(&config) {
+                    error!("Federation mTLS partially configured — all three paths required");
+                }
+                None
+            }
+            Err(e) => {
+                error!("Failed to load federation mTLS config: {}", e);
+                error!("Federation connections will be unauthenticated");
+                None
+            }
+        };
+
+        // Extract client config for outbound connections
+        let tls_client_config = federation_tls_config
+            .as_ref()
+            .map(|c| c.client_config.clone());
+
+        // Spawn per-peer connector tasks (with optional mTLS)
         for peer_url in &config.federation_peers {
             let peer_url = peer_url.clone();
             let own_relay_id = config.federation_relay_id.clone();
             let peer_registry = peer_registry.clone();
             let config = config.clone();
+            let tls_config = tls_client_config.clone();
             tokio::spawn(async move {
                 federation_connector::maintain_peer_connection(
                     peer_url,
                     own_relay_id,
                     peer_registry,
                     config,
+                    tls_config,
                 )
                 .await;
+            });
+        }
+
+        // Spawn mTLS federation listener when configured
+        if let Some(ref tls_config) = federation_tls_config {
+            let mtls_addr = config.federation_mtls_addr.unwrap_or_else(|| {
+                let mut addr = config.listen_addr;
+                addr.set_port(addr.port() + 1);
+                addr
+            });
+            let acceptor = tokio_rustls::TlsAcceptor::from(tls_config.server_config.clone());
+            let fed_storage = storage.clone();
+            let fed_hint_store = hint_store.clone();
+            let fed_peer_registry = peer_registry.clone();
+            let fed_config = config.clone();
+
+            tokio::spawn(async move {
+                let listener = match TcpListener::bind(&mtls_addr).await {
+                    Ok(l) => l,
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to bind federation mTLS listener on {}: {}",
+                            mtls_addr,
+                            e
+                        );
+                        return;
+                    }
+                };
+                info!("Federation mTLS listener on {}", mtls_addr);
+
+                while let Ok((stream, _)) = listener.accept().await {
+                    let acceptor = acceptor.clone();
+                    let storage = fed_storage.clone();
+                    let hint_store = fed_hint_store.clone();
+                    let peer_registry = fed_peer_registry.clone();
+                    let config = fed_config.clone();
+
+                    tokio::spawn(async move {
+                        // TLS handshake — rejects peers without valid client cert
+                        let tls_stream = match acceptor.accept(stream).await {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!("Federation mTLS handshake rejected: {}", e);
+                                return;
+                            }
+                        };
+
+                        // WebSocket upgrade over TLS
+                        match tokio_tungstenite::accept_async(tls_stream).await {
+                            Ok(ws_stream) => {
+                                info!("New mTLS federation connection");
+                                federation_handler::handle_federation_connection(
+                                    ws_stream,
+                                    FederationDeps {
+                                        storage,
+                                        hint_store,
+                                        peer_registry,
+                                        config,
+                                    },
+                                )
+                                .await;
+                            }
+                            Err(e) => {
+                                tracing::warn!("Federation WebSocket upgrade failed: {}", e);
+                            }
+                        }
+                    });
+                }
             });
         }
 

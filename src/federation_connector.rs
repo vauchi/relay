@@ -11,9 +11,11 @@
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::WebSocketStream;
 use tracing::{debug, info, warn};
 
 use crate::config::RelayConfig;
@@ -25,11 +27,13 @@ use crate::storage::BlobStore;
 
 /// Maintains a persistent connection to a peer relay.
 /// Reconnects with exponential backoff on failure.
+/// When `tls_client_config` is provided, connections use mTLS for authentication.
 pub async fn maintain_peer_connection(
     peer_url: String,
     own_relay_id: String,
     peer_registry: Arc<PeerRegistry>,
     config: Arc<RelayConfig>,
+    tls_client_config: Option<Arc<tokio_rustls::rustls::ClientConfig>>,
 ) {
     let mut backoff_secs = 1u64;
     let max_backoff_secs = 60u64;
@@ -44,6 +48,7 @@ pub async fn maintain_peer_connection(
             peer_registry.clone(),
             config.clone(),
             session,
+            tls_client_config.clone(),
         )
         .await
         {
@@ -66,18 +71,99 @@ pub async fn maintain_peer_connection(
 }
 
 /// Attempts a single connection to a peer relay.
+/// Uses mTLS when `tls_client_config` is provided.
 async fn try_connect_to_peer(
     peer_url: &str,
     own_relay_id: &str,
     peer_registry: Arc<PeerRegistry>,
     config: Arc<RelayConfig>,
     session: &str,
+    tls_client_config: Option<Arc<tokio_rustls::rustls::ClientConfig>>,
 ) -> Result<(), String> {
     let federation_url = format!("{}/federation", peer_url);
-    let (ws_stream, _) = tokio_tungstenite::connect_async(&federation_url)
-        .await
-        .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
+    if let Some(ref client_config) = tls_client_config {
+        info!("[fed-conn-{}] Using mTLS for peer connection", session);
+        let ws_stream = connect_with_tls(&federation_url, client_config).await?;
+        handle_peer_session(
+            ws_stream,
+            own_relay_id,
+            peer_url,
+            peer_registry,
+            config,
+            session,
+        )
+        .await
+    } else {
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&federation_url)
+            .await
+            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
+        handle_peer_session(
+            ws_stream,
+            own_relay_id,
+            peer_url,
+            peer_registry,
+            config,
+            session,
+        )
+        .await
+    }
+}
+
+/// Connects to a peer relay using TLS, then upgrades to WebSocket.
+async fn connect_with_tls(
+    url: &str,
+    client_config: &Arc<tokio_rustls::rustls::ClientConfig>,
+) -> Result<WebSocketStream<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>, String> {
+    // Parse host and port from WebSocket URL
+    let stripped = url
+        .strip_prefix("wss://")
+        .or_else(|| url.strip_prefix("ws://"))
+        .ok_or_else(|| "Invalid WebSocket URL scheme".to_string())?;
+
+    let authority = stripped.split('/').next().unwrap_or(stripped);
+    let (host, port) = if let Some((h, p)) = authority.rsplit_once(':') {
+        let port: u16 = p.parse().map_err(|_| "Invalid port in URL".to_string())?;
+        (h.to_string(), port)
+    } else {
+        (authority.to_string(), 443u16)
+    };
+
+    // TCP connect
+    let tcp_stream = tokio::net::TcpStream::connect(format!("{}:{}", host, port))
+        .await
+        .map_err(|e| format!("TCP connect failed: {}", e))?;
+
+    // TLS handshake with mTLS client certificate
+    let connector = tokio_rustls::TlsConnector::from(client_config.clone());
+    let server_name = tokio_rustls::rustls::pki_types::ServerName::try_from(host)
+        .map_err(|e| format!("Invalid server name: {}", e))?;
+    let tls_stream = connector
+        .connect(server_name, tcp_stream)
+        .await
+        .map_err(|e| format!("TLS handshake failed: {}", e))?;
+
+    // WebSocket upgrade over TLS
+    let (ws_stream, _) = tokio_tungstenite::client_async(url, tls_stream)
+        .await
+        .map_err(|e| format!("WebSocket upgrade over TLS failed: {}", e))?;
+
+    Ok(ws_stream)
+}
+
+/// Handles the federation protocol session after WebSocket connection is established.
+/// Generic over the stream type to support both plain TCP and TLS connections.
+async fn handle_peer_session<S>(
+    ws_stream: WebSocketStream<S>,
+    own_relay_id: &str,
+    peer_url: &str,
+    peer_registry: Arc<PeerRegistry>,
+    config: Arc<RelayConfig>,
+    session: &str,
+) -> Result<(), String>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let (mut write, mut read) = ws_stream.split();
 
     // Send PeerHandshake
@@ -448,5 +534,56 @@ mod tests {
         } else {
             panic!("Expected OffloadBlob message");
         }
+    }
+
+    // Trace: codebase-review-tracker item #131
+    #[tokio::test]
+    async fn test_connect_with_tls_invalid_host() {
+        // Build a minimal client config (no real certs needed for this test)
+        let root_store = tokio_rustls::rustls::RootCertStore::empty();
+        let client_config = Arc::new(
+            tokio_rustls::rustls::ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth(),
+        );
+
+        // Attempting TLS to unreachable host should fail at TCP connect
+        let result = connect_with_tls("wss://127.0.0.1:1/federation", &client_config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("TCP connect failed") || err.contains("connect"),
+            "Expected TCP connect failure, got: {}",
+            err
+        );
+    }
+
+    // Trace: codebase-review-tracker item #131
+    #[tokio::test]
+    async fn test_connect_with_tls_invalid_url() {
+        let root_store = tokio_rustls::rustls::RootCertStore::empty();
+        let client_config = Arc::new(
+            tokio_rustls::rustls::ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth(),
+        );
+
+        let result = connect_with_tls("http://not-websocket/federation", &client_config).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid WebSocket URL scheme"));
+    }
+
+    // Trace: codebase-review-tracker item #131
+    #[test]
+    fn test_maintain_peer_connection_accepts_tls_config() {
+        // Verify the function signature accepts None (backward compatible)
+        // This is a compile-time check — we don't actually connect
+        let _fn_ref: fn(
+            String,
+            String,
+            Arc<PeerRegistry>,
+            Arc<RelayConfig>,
+            Option<Arc<tokio_rustls::rustls::ClientConfig>>,
+        ) -> _ = |a, b, c, d, e| maintain_peer_connection(a, b, c, d, e);
     }
 }

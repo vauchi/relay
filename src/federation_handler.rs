@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
@@ -33,10 +33,12 @@ use crate::storage::{BlobStore, StoredBlob};
 /// Helper to send a federation message over WebSocket.
 /// Encodes the payload and sends as binary. Errors are silently ignored
 /// (fire-and-forget pattern for acks).
-async fn send_federation_msg(
-    write: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+async fn send_federation_msg<S>(
+    write: &mut SplitSink<WebSocketStream<S>, Message>,
     payload: FederationPayload,
-) {
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let envelope = create_federation_envelope(payload);
     if let Ok(data) = encode_federation_message(&envelope) {
         let _ = write.send(Message::Binary(data)).await;
@@ -52,10 +54,11 @@ pub struct FederationDeps {
 }
 
 /// Handles an incoming federation WebSocket connection from a peer relay.
-pub async fn handle_federation_connection(
-    ws_stream: WebSocketStream<TcpStream>,
-    deps: FederationDeps,
-) {
+/// Generic over the stream type to support both plain TCP and mTLS connections.
+pub async fn handle_federation_connection<S>(ws_stream: WebSocketStream<S>, deps: FederationDeps)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
     let FederationDeps {
         storage,
         hint_store: _hint_store,
