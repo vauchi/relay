@@ -575,6 +575,7 @@ mod tests {
 
     // Trace: codebase-review-tracker item #131
     #[test]
+    #[allow(clippy::type_complexity)]
     fn test_maintain_peer_connection_accepts_tls_config() {
         // Verify the function signature accepts None (backward compatible)
         // This is a compile-time check — we don't actually connect
