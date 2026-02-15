@@ -102,7 +102,7 @@ impl Default for RelayConfig {
             federation_peer_timeout_secs: 30,
             federation_capacity_interval_secs: 60,
             max_storage_bytes: 1_073_741_824, // 1 GB
-            require_noise_encryption: false,
+            require_noise_encryption: true,
             federation_gossip_enabled: false,
             federation_gossip_interval_secs: 120,
             federation_peer_ttl_secs: 3600,

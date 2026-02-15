@@ -286,7 +286,10 @@ where
                         reason,
                     } => {
                         if accepted {
-                            debug!("[fed-conn-{}] Offload ack: blob {} accepted", session, blob_id);
+                            debug!(
+                                "[fed-conn-{}] Offload ack: blob {} accepted",
+                                session, blob_id
+                            );
                         } else {
                             warn!(
                                 "[fed-conn-{}] Offload ack: blob {} rejected: {:?}",
@@ -397,7 +400,10 @@ impl OffloadManager {
 
         // Filter out blobs that are already pending ack
         let pending_ids: std::collections::HashSet<String> = {
-            let pending = self.pending_offloads.lock().unwrap_or_else(|e| e.into_inner());
+            let pending = self
+                .pending_offloads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             pending.keys().cloned().collect()
         };
         let candidates: Vec<_> = candidates
