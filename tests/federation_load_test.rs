@@ -623,12 +623,26 @@ async fn test_offload_under_load() {
         hint_store: relay_a.hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry: relay_a.peer_registry.clone(),
         config: relay_a.config.clone(),
+        pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let mut total_offloaded = 0;
     for _ in 0..10 {
         let offloaded = manager.check_and_offload().await;
         total_offloaded += offloaded;
+
+        // Simulate ack for all pending offloads (complete the cycle)
+        let pending_ids: Vec<String> = manager
+            .pending_offloads
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        for blob_id in pending_ids {
+            manager.handle_offload_ack(&blob_id, true);
+        }
+
         if offloaded == 0 {
             break;
         }
@@ -814,6 +828,7 @@ async fn test_federation_reconnection_after_partition() {
             federation_offload_threshold: 0.01,
             ..Default::default()
         }),
+        pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let offloaded = manager.check_and_offload().await;
@@ -944,6 +959,7 @@ async fn test_high_volume_offload_batch() {
         hint_store: relay_a.hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry: relay_a.peer_registry.clone(),
         config: relay_a.config.clone(),
+        pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let start = Instant::now();
@@ -953,6 +969,19 @@ async fn test_high_volume_offload_batch() {
     for _ in 0..100 {
         let offloaded = manager.check_and_offload().await;
         total_offloaded += offloaded;
+
+        // Simulate ack for all pending offloads (complete the cycle)
+        let pending_ids: Vec<String> = manager
+            .pending_offloads
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        for blob_id in pending_ids {
+            manager.handle_offload_ack(&blob_id, true);
+        }
+
         if offloaded == 0 && relay_a.storage.storage_size_bytes() < 10_000 {
             break;
         }

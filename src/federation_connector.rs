@@ -34,6 +34,7 @@ pub async fn maintain_peer_connection(
     peer_registry: Arc<PeerRegistry>,
     config: Arc<RelayConfig>,
     tls_client_config: Option<Arc<tokio_rustls::rustls::ClientConfig>>,
+    offload_manager: Option<Arc<OffloadManager>>,
 ) {
     let mut backoff_secs = 1u64;
     let max_backoff_secs = 60u64;
@@ -49,6 +50,7 @@ pub async fn maintain_peer_connection(
             config.clone(),
             session,
             tls_client_config.clone(),
+            offload_manager.clone(),
         )
         .await
         {
@@ -79,6 +81,7 @@ async fn try_connect_to_peer(
     config: Arc<RelayConfig>,
     session: &str,
     tls_client_config: Option<Arc<tokio_rustls::rustls::ClientConfig>>,
+    offload_manager: Option<Arc<OffloadManager>>,
 ) -> Result<(), String> {
     let federation_url = format!("{}/federation", peer_url);
 
@@ -92,6 +95,7 @@ async fn try_connect_to_peer(
             peer_registry,
             config,
             session,
+            offload_manager,
         )
         .await
     } else {
@@ -105,6 +109,7 @@ async fn try_connect_to_peer(
             peer_registry,
             config,
             session,
+            offload_manager,
         )
         .await
     }
@@ -160,6 +165,7 @@ async fn handle_peer_session<S>(
     peer_registry: Arc<PeerRegistry>,
     config: Arc<RelayConfig>,
     session: &str,
+    offload_manager: Option<Arc<OffloadManager>>,
 ) -> Result<(), String>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -275,19 +281,22 @@ where
 
                 match envelope.payload {
                     FederationPayload::OffloadAck {
-                        blob_id: _,
+                        blob_id,
                         accepted,
                         reason,
                     } => {
                         if accepted {
-                            debug!("[fed-conn-{}] Offload ack: blob accepted", session);
+                            debug!("[fed-conn-{}] Offload ack: blob {} accepted", session, blob_id);
                         } else {
                             warn!(
-                                "[fed-conn-{}] Offload ack: blob rejected: {:?}",
-                                session, reason
+                                "[fed-conn-{}] Offload ack: blob {} rejected: {:?}",
+                                session, blob_id, reason
                             );
                         }
-                        // OffloadManager handles the ack via a separate mechanism
+                        // Delegate to OffloadManager to delete or retry
+                        if let Some(ref offload_mgr) = offload_manager {
+                            offload_mgr.handle_offload_ack(&blob_id, accepted);
+                        }
                     }
                     FederationPayload::CapacityReport {
                         used_bytes,
@@ -337,17 +346,31 @@ where
     Ok(())
 }
 
+/// Metadata for a blob pending offload acknowledgment.
+#[derive(Debug, Clone)]
+pub struct PendingOffload {
+    pub routing_id: String,
+    pub created_at_secs: u64,
+    pub target_relay: String,
+}
+
 /// Manages offloading blobs to federation peers when storage exceeds threshold.
+///
+/// Blobs are only deleted from local storage after the peer confirms receipt
+/// via an `OffloadAck { accepted: true }` message. This prevents data loss
+/// if the peer fails to store the blob.
 pub struct OffloadManager {
     pub storage: Arc<dyn BlobStore>,
     pub hint_store: Arc<dyn ForwardingHintStore>,
     pub peer_registry: Arc<PeerRegistry>,
     pub config: Arc<RelayConfig>,
+    /// Blobs sent to peers awaiting acknowledgment. Keyed by blob_id.
+    pub pending_offloads: Arc<std::sync::Mutex<std::collections::HashMap<String, PendingOffload>>>,
 }
 
 impl OffloadManager {
     /// Checks storage usage and offloads blobs if above threshold.
-    /// Returns the number of blobs successfully offloaded.
+    /// Returns the number of blobs sent (not yet confirmed).
     pub async fn check_and_offload(&self) -> usize {
         let used = self.storage.storage_size_bytes();
         let ratio = used as f64 / self.config.max_storage_bytes as f64;
@@ -372,7 +395,17 @@ impl OffloadManager {
         let batch_size = 10;
         let candidates = self.storage.get_oldest_blobs(batch_size);
 
-        let mut offloaded = 0;
+        // Filter out blobs that are already pending ack
+        let pending_ids: std::collections::HashSet<String> = {
+            let pending = self.pending_offloads.lock().unwrap_or_else(|e| e.into_inner());
+            pending.keys().cloned().collect()
+        };
+        let candidates: Vec<_> = candidates
+            .into_iter()
+            .filter(|(_, blob)| !pending_ids.contains(&blob.id))
+            .collect();
+
+        let mut sent = 0;
         for (routing_id, blob) in candidates {
             let hash = integrity::compute_integrity_hash(&blob.data);
 
@@ -396,25 +429,57 @@ impl OffloadManager {
                 break;
             }
 
-            // Remove from local storage and create forwarding hint
-            if self.storage.remove_blob(&blob.id) {
-                let hint = ForwardingHint {
-                    routing_id,
-                    blob_id: blob.id,
-                    target_relay: peer.url.clone(),
-                    created_at_secs: blob.created_at_secs,
-                    expires_at_secs: blob.created_at_secs + self.config.blob_ttl_secs,
-                };
-                self.hint_store.store_hint(hint);
-                offloaded += 1;
+            // Track as pending — only delete when ack received
+            if let Ok(mut pending) = self.pending_offloads.lock() {
+                pending.insert(
+                    blob.id.clone(),
+                    PendingOffload {
+                        routing_id,
+                        created_at_secs: blob.created_at_secs,
+                        target_relay: peer.url.clone(),
+                    },
+                );
+            }
+            sent += 1;
+        }
+
+        if sent > 0 {
+            info!("Sent {} blobs to peer relay (awaiting ack)", sent);
+        }
+
+        sent
+    }
+
+    /// Called when an `OffloadAck` is received from a peer.
+    ///
+    /// If accepted, removes the blob from local storage and creates a forwarding hint.
+    /// If rejected, removes from pending so it can be retried later.
+    pub fn handle_offload_ack(&self, blob_id: &str, accepted: bool) {
+        let pending_info = {
+            let mut pending = match self.pending_offloads.lock() {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            pending.remove(blob_id)
+        };
+
+        if let Some(info) = pending_info {
+            if accepted {
+                if self.storage.remove_blob(blob_id) {
+                    let hint = ForwardingHint {
+                        routing_id: info.routing_id,
+                        blob_id: blob_id.to_string(),
+                        target_relay: info.target_relay,
+                        created_at_secs: info.created_at_secs,
+                        expires_at_secs: info.created_at_secs + self.config.blob_ttl_secs,
+                    };
+                    self.hint_store.store_hint(hint);
+                    debug!("Offload confirmed: blob {} deleted locally", blob_id);
+                }
+            } else {
+                warn!("Offload rejected for blob {}, will retry later", blob_id);
             }
         }
-
-        if offloaded > 0 {
-            info!("Offloaded {} blobs to peer relay", offloaded);
-        }
-
-        offloaded
     }
 }
 
@@ -450,6 +515,7 @@ mod tests {
             hint_store: hint_store.clone(),
             peer_registry: registry,
             config,
+            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
 
         let offloaded = manager.check_and_offload().await;
@@ -472,6 +538,7 @@ mod tests {
             hint_store,
             peer_registry: registry,
             config,
+            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
 
         let offloaded = manager.check_and_offload().await;
@@ -479,7 +546,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_offload_manager_successful_offload() {
+    async fn test_offload_manager_sends_to_peer() {
         let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
         let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
         let registry = Arc::new(PeerRegistry::new(0.95));
@@ -509,19 +576,20 @@ mod tests {
             hint_store: hint_store.clone(),
             peer_registry: registry,
             config,
+            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
 
-        let offloaded = manager.check_and_offload().await;
-        assert_eq!(offloaded, 1);
+        let sent = manager.check_and_offload().await;
+        assert_eq!(sent, 1);
 
-        // Blob removed from local storage
-        assert_eq!(storage.blob_count(), 0);
+        // Blob still in local storage (awaiting ack)
+        assert_eq!(storage.blob_count(), 1);
 
-        // Hint created
-        assert_eq!(hint_store.hint_count(), 1);
-        let hints = hint_store.get_hints("r1");
-        assert_eq!(hints.len(), 1);
-        assert_eq!(hints[0].target_relay, "ws://peer-1:8080");
+        // No hint yet (awaiting ack)
+        assert_eq!(hint_store.hint_count(), 0);
+
+        // Blob is in pending_offloads
+        assert_eq!(manager.pending_offloads.lock().unwrap().len(), 1);
 
         // Message was sent via the channel
         let sent_data = rx.try_recv().unwrap();
@@ -534,6 +602,62 @@ mod tests {
         } else {
             panic!("Expected OffloadBlob message");
         }
+
+        // Simulate ack: blob accepted
+        manager.handle_offload_ack(&blob_id, true);
+
+        // Now blob is deleted and hint created
+        assert_eq!(storage.blob_count(), 0);
+        assert_eq!(hint_store.hint_count(), 1);
+        let hints = hint_store.get_hints("r1");
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0].target_relay, "ws://peer-1:8080");
+        assert!(manager.pending_offloads.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_offload_ack_rejected_keeps_blob() {
+        let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+        let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
+        let registry = Arc::new(PeerRegistry::new(0.95));
+        let config = make_test_config(100, 0.01);
+
+        let blob = StoredBlob::new(vec![1; 50]);
+        let blob_id = blob.id.clone();
+        storage.store("r1", blob);
+
+        let (tx, _rx) = mpsc::channel(64);
+        registry.register_peer(PeerInfo {
+            relay_id: "peer-1".to_string(),
+            url: "ws://peer-1:8080".to_string(),
+            capacity_used_bytes: 10,
+            capacity_max_bytes: 1000,
+            status: PeerStatus::Connected,
+            sender: Some(tx),
+            origin: PeerOrigin::Configured,
+            last_seen_secs: 1000,
+        });
+
+        let manager = OffloadManager {
+            storage: storage.clone(),
+            hint_store: hint_store.clone(),
+            peer_registry: registry,
+            config,
+            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        };
+
+        manager.check_and_offload().await;
+        assert_eq!(manager.pending_offloads.lock().unwrap().len(), 1);
+
+        // Simulate ack: blob rejected
+        manager.handle_offload_ack(&blob_id, false);
+
+        // Blob still in local storage (not deleted)
+        assert_eq!(storage.blob_count(), 1);
+        // No hint created
+        assert_eq!(hint_store.hint_count(), 0);
+        // Pending cleared
+        assert!(manager.pending_offloads.lock().unwrap().is_empty());
     }
 
     // Trace: codebase-review-tracker item #131
@@ -585,6 +709,7 @@ mod tests {
             Arc<PeerRegistry>,
             Arc<RelayConfig>,
             Option<Arc<tokio_rustls::rustls::ClientConfig>>,
-        ) -> _ = |a, b, c, d, e| maintain_peer_connection(a, b, c, d, e);
+            Option<Arc<OffloadManager>>,
+        ) -> _ = |a, b, c, d, e, f| maintain_peer_connection(a, b, c, d, e, f);
     }
 }

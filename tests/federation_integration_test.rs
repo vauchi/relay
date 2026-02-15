@@ -760,6 +760,7 @@ async fn test_offload_manager_below_threshold_does_nothing() {
         hint_store: hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry,
         config,
+        pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let offloaded = manager.check_and_offload().await;
@@ -782,6 +783,7 @@ async fn test_offload_manager_no_peers_available() {
         hint_store: hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry,
         config,
+        pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let offloaded = manager.check_and_offload().await;
@@ -820,20 +822,17 @@ async fn test_offload_manager_successful_offload_with_hints() {
         hint_store: hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry,
         config,
+        pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let offloaded = manager.check_and_offload().await;
     assert_eq!(offloaded, 1);
 
-    // Blob removed from local storage
-    assert_eq!(storage.blob_count(), 0);
+    // Blob still in storage (awaiting ack from peer)
+    assert_eq!(storage.blob_count(), 1);
 
-    // Forwarding hint created
-    assert_eq!(hint_store.hint_count(), 1);
-    let hints = hint_store.get_hints("route-1");
-    assert_eq!(hints.len(), 1);
-    assert_eq!(hints[0].blob_id, blob_id);
-    assert_eq!(hints[0].target_relay, "ws://peer-1:8080");
+    // No forwarding hint yet (created on ack)
+    assert_eq!(hint_store.hint_count(), 0);
 
     // Message sent to peer via channel
     let sent_data = rx.try_recv().unwrap();
@@ -851,6 +850,15 @@ async fn test_offload_manager_successful_offload_with_hints() {
         }
         other => panic!("Expected OffloadBlob, got {:?}", other),
     }
+
+    // Simulate ack from peer — now blob is deleted and hint is created
+    manager.handle_offload_ack(&blob_id, true);
+    assert_eq!(storage.blob_count(), 0);
+    assert_eq!(hint_store.hint_count(), 1);
+    let hints = hint_store.get_hints("route-1");
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].blob_id, blob_id);
+    assert_eq!(hints[0].target_relay, "ws://peer-1:8080");
 }
 
 // ============================================================================
@@ -1166,10 +1174,14 @@ async fn test_end_to_end_offload_with_forwarding_hints() {
         hint_store: relay_a_hints.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry: relay_a_registry,
         config: relay_a_config,
+        pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let offloaded = manager.check_and_offload().await;
     assert_eq!(offloaded, 1);
+
+    // Simulate ack from peer to complete the offload cycle
+    manager.handle_offload_ack(&_blob_id, true);
 
     // Verify: blob removed from Relay A, hint created
     assert_eq!(relay_a_storage.blob_count(), 0);

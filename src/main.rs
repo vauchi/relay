@@ -195,6 +195,15 @@ async fn main() {
             .as_ref()
             .map(|c| c.client_config.clone());
 
+        // Create offload manager (shared with peer connectors and capacity monitor)
+        let offload_manager = Arc::new(OffloadManager {
+            storage: storage.clone(),
+            hint_store: hint_store.clone(),
+            peer_registry: peer_registry.clone(),
+            config: config.clone(),
+            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        });
+
         // Spawn per-peer connector tasks (with optional mTLS)
         for peer_url in &config.federation_peers {
             let peer_url = peer_url.clone();
@@ -202,6 +211,7 @@ async fn main() {
             let peer_registry = peer_registry.clone();
             let config = config.clone();
             let tls_config = tls_client_config.clone();
+            let offload_mgr = offload_manager.clone();
             tokio::spawn(async move {
                 federation_connector::maintain_peer_connection(
                     peer_url,
@@ -209,6 +219,7 @@ async fn main() {
                     peer_registry,
                     config,
                     tls_config,
+                    Some(offload_mgr),
                 )
                 .await;
             });
@@ -283,17 +294,12 @@ async fn main() {
         }
 
         // Spawn capacity monitor / offload task
-        let offload_manager = OffloadManager {
-            storage: storage.clone(),
-            hint_store: hint_store.clone(),
-            peer_registry: peer_registry.clone(),
-            config: config.clone(),
-        };
         let capacity_interval = config.federation_capacity_interval_secs;
+        let offload_mgr_task = offload_manager.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(capacity_interval)).await;
-                offload_manager.check_and_offload().await;
+                offload_mgr_task.check_and_offload().await;
             }
         });
 
