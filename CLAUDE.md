@@ -23,4 +23,4 @@ RUST_LOG=debug cargo run -p vauchi-relay    # With debug logging
 
 ## Testing
 
-Integration tests should use test relay instances. See `scripts/relay-test.sh`.
+Integration tests should use test relay instances. Run with `cargo test -p vauchi-relay`.
