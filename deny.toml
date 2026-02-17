@@ -59,11 +59,12 @@ deny = [
     { name = "openssl-sys", wrappers = [] },
 ]
 
-skip = []
+# vauchi-protocol is our own crate pinned by branch — wildcard is intentional
+skip = [{ crate = "vauchi-protocol" }]
 skip-tree = []
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+allow-git = ["https://gitlab.com/vauchi/core.git"]
