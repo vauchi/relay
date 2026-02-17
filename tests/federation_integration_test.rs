@@ -180,7 +180,11 @@ fn make_client_purge() -> serde_json::Value {
     message.extend_from_slice(&timestamp.to_be_bytes());
 
     let signature = key_pair.sign(&message);
-    let sig_hex: String = signature.as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+    let sig_hex: String = signature
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
 
     serde_json::json!({
         "version": 1,

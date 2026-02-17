@@ -168,7 +168,11 @@ fn make_purge_request(include_device_sync: bool) -> Value {
     message.extend_from_slice(&timestamp.to_be_bytes());
 
     let signature = key_pair.sign(&message);
-    let sig_hex: String = signature.as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+    let sig_hex: String = signature
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
 
     json!({
         "version": 1,

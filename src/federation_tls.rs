@@ -214,27 +214,167 @@ mod tests {
         assert!(result.unwrap_err().contains("Failed to open"));
     }
 
-    /// Verify that server_config uses WebPkiClientVerifier (mTLS enforcement).
-    ///
-    /// This is a structural test: when federation TLS is configured with valid
-    /// certs, the resulting server_config must require client certificates.
-    /// Without client certs, the TLS handshake will fail at the rustls level —
-    /// no application-level code is needed to reject unauthenticated peers.
+    /// Generate test CA, server cert, and write them to temp files.
+    /// Returns (ca_file, cert_file, key_file).
+    fn generate_test_certs() -> (
+        tempfile::NamedTempFile,
+        tempfile::NamedTempFile,
+        tempfile::NamedTempFile,
+    ) {
+        use rcgen::{
+            BasicConstraints, CertificateParams, DistinguishedName, DnType,
+            ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose, SanType,
+            PKCS_ECDSA_P256_SHA256,
+        };
+        use std::io::Write;
+
+        // Generate CA
+        let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut ca_params = CertificateParams::default();
+        let mut ca_dn = DistinguishedName::new();
+        ca_dn.push(DnType::CommonName, "Test CA");
+        ca_params.distinguished_name = ca_dn;
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+        let ca_issuer = Issuer::new(ca_params, ca_key);
+
+        // Generate server cert signed by CA
+        let server_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut server_params = CertificateParams::default();
+        let mut server_dn = DistinguishedName::new();
+        server_dn.push(DnType::CommonName, "test-relay");
+        server_params.distinguished_name = server_dn;
+        server_params.is_ca = IsCa::NoCa;
+        server_params.subject_alt_names = vec![SanType::DnsName("localhost".try_into().unwrap())];
+        server_params.extended_key_usages = vec![
+            ExtendedKeyUsagePurpose::ServerAuth,
+            ExtendedKeyUsagePurpose::ClientAuth,
+        ];
+        let server_cert = server_params.signed_by(&server_key, &ca_issuer).unwrap();
+
+        // Write to temp files
+        let mut ca_file = tempfile::NamedTempFile::new().unwrap();
+        ca_file.write_all(ca_cert.pem().as_bytes()).unwrap();
+
+        let mut cert_file = tempfile::NamedTempFile::new().unwrap();
+        cert_file.write_all(server_cert.pem().as_bytes()).unwrap();
+
+        let mut key_file = tempfile::NamedTempFile::new().unwrap();
+        key_file
+            .write_all(server_key.serialize_pem().as_bytes())
+            .unwrap();
+
+        (ca_file, cert_file, key_file)
+    }
+
     #[test]
-    fn test_server_config_requires_client_cert() {
-        // The server_config is built with `with_client_cert_verifier` (line 135).
-        // rustls::server::WebPkiClientVerifier.client_auth_mandatory() returns true
-        // by default, meaning the TLS handshake itself rejects connections
-        // without a valid client certificate.
-        //
-        // This is verified at the code level: load_federation_tls() uses
-        // WebPkiClientVerifier::builder(root_store).build() which defaults to
-        // mandatory client auth. Any connection without a cert signed by
-        // a CA in the root_store will be rejected during TLS handshake.
-        //
-        // A full integration test (connecting without client cert and asserting
-        // handshake failure) requires test certificates. See the federation
-        // integration tests for end-to-end verification.
-        assert!(true, "Server config uses WebPkiClientVerifier with mandatory client auth");
+    fn test_load_federation_tls_with_valid_certs() {
+        let (ca_file, cert_file, key_file) = generate_test_certs();
+
+        let config = RelayConfig {
+            federation_tls_cert_path: Some(cert_file.path().to_str().unwrap().to_string()),
+            federation_tls_key_path: Some(key_file.path().to_str().unwrap().to_string()),
+            federation_tls_ca_path: Some(ca_file.path().to_str().unwrap().to_string()),
+            ..Default::default()
+        };
+
+        let tls = load_federation_tls(&config).expect("load_federation_tls failed");
+        assert!(tls.is_some(), "Expected Some(FederationTlsConfig)");
+    }
+
+    /// Verify that server_config enforces mandatory client certificates (mTLS).
+    ///
+    /// Connects to a TLS listener backed by the federation server_config.
+    /// A client without a certificate must be rejected at the TLS handshake.
+    /// A client presenting a valid CA-signed certificate must succeed.
+    #[tokio::test]
+    async fn test_server_config_requires_client_cert() {
+        use tokio::net::TcpListener;
+        use tokio_rustls::TlsAcceptor;
+
+        let (ca_file, cert_file, key_file) = generate_test_certs();
+
+        let config = RelayConfig {
+            federation_tls_cert_path: Some(cert_file.path().to_str().unwrap().to_string()),
+            federation_tls_key_path: Some(key_file.path().to_str().unwrap().to_string()),
+            federation_tls_ca_path: Some(ca_file.path().to_str().unwrap().to_string()),
+            ..Default::default()
+        };
+
+        let tls_config = load_federation_tls(&config).unwrap().unwrap();
+        let acceptor = TlsAcceptor::from(tls_config.server_config.clone());
+
+        // Build a root store trusting our test CA (used by both client scenarios)
+        let ca_pem = std::fs::read(ca_file.path()).unwrap();
+        let ca_certs = rustls_pemfile::certs(&mut &ca_pem[..])
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let mut root_store = rustls::RootCertStore::empty();
+        for cert in ca_certs {
+            root_store.add(cert).unwrap();
+        }
+
+        let server_name = pki_types::ServerName::try_from("localhost").unwrap();
+
+        // --- Test 1: Connection WITHOUT client cert must be rejected ---
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let acceptor1 = acceptor.clone();
+        let server_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            acceptor1.accept(stream).await
+        });
+
+        let no_auth_config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store.clone())
+            .with_no_client_auth();
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(no_auth_config));
+
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let _client_result = connector.connect(server_name.clone(), tcp).await;
+
+        let server_result = server_task.await.unwrap();
+        assert!(
+            server_result.is_err(),
+            "Server should reject connection without client certificate"
+        );
+
+        // --- Test 2: Connection WITH valid client cert must succeed ---
+        let listener2 = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr2 = listener2.local_addr().unwrap();
+
+        let acceptor2 = acceptor.clone();
+        let server_task2 = tokio::spawn(async move {
+            let (stream, _) = listener2.accept().await.unwrap();
+            acceptor2.accept(stream).await
+        });
+
+        // Reuse the server cert+key as client cert (it has ClientAuth EKU)
+        let client_cert_pem = std::fs::read(cert_file.path()).unwrap();
+        let client_key_pem = std::fs::read(key_file.path()).unwrap();
+        let client_certs = rustls_pemfile::certs(&mut &client_cert_pem[..])
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let client_key = rustls_pemfile::private_key(&mut &client_key_pem[..])
+            .unwrap()
+            .unwrap();
+
+        let with_auth_config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_client_auth_cert(client_certs, client_key)
+            .unwrap();
+        let connector2 = tokio_rustls::TlsConnector::from(Arc::new(with_auth_config));
+
+        let tcp2 = tokio::net::TcpStream::connect(addr2).await.unwrap();
+        let _client_tls = connector2.connect(server_name, tcp2).await;
+
+        let server_result2 = server_task2.await.unwrap();
+        assert!(
+            server_result2.is_ok(),
+            "Server should accept connection with valid client certificate, got: {:?}",
+            server_result2.err()
+        );
     }
 }
