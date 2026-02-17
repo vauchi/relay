@@ -47,7 +47,9 @@ license-files = [{ path = "LICENSE", hash = 0x2cf3b4b0 }]
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+# Warn rather than deny: vauchi-protocol is a first-party git dep without a
+# registry version, which counts as a wildcard.  This is intentional.
+wildcards = "warn"
 highlight = "all"
 workspace-default-features = "allow"
 external-default-features = "allow"
@@ -59,8 +61,7 @@ deny = [
     { name = "openssl-sys", wrappers = [] },
 ]
 
-# vauchi-protocol is our own crate pinned by branch — wildcard is intentional
-skip = [{ crate = "vauchi-protocol" }]
+skip = []
 skip-tree = []
 
 [sources]
