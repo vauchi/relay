@@ -197,167 +197,12 @@ fn verify_signed_handshake(
 
 /// Wire protocol message types (subset of vauchi-core protocol).
 mod protocol {
-    use serde::{Deserialize, Serialize};
+    // Re-export all shared types from vauchi-protocol.
+    pub use vauchi_protocol::*;
 
-    pub const PROTOCOL_VERSION: u8 = 1;
-    pub const FRAME_HEADER_SIZE: usize = 4;
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct MessageEnvelope {
-        pub version: u8,
-        pub message_id: String,
-        pub timestamp: u64,
-        pub payload: MessagePayload,
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[serde(tag = "type")]
-    pub enum MessagePayload {
-        EncryptedUpdate(EncryptedUpdate),
-        Acknowledgment(Acknowledgment),
-        Handshake(Handshake),
-        // Recovery proof operations
-        RecoveryProofStore(RecoveryProofStore),
-        RecoveryProofQuery(RecoveryProofQuery),
-        RecoveryProofResponse(RecoveryProofResponse),
-        // Device sync operations (inter-device synchronization)
-        DeviceSyncMessage(DeviceSyncMessage),
-        DeviceSyncAck(DeviceSyncAck),
-        // Server response to client handshake (version negotiation)
-        HandshakeAck(HandshakeAck),
-        // Data purge (GDPR-friendly: allows clients to delete all their stored data)
-        PurgeRequest(PurgeRequest),
-        PurgeResponse(PurgeResponse),
-        // Account revocation signal (GDPR: card owner deletes account)
-        AccountRevoked(AccountRevoked),
-        // Forwarding hints for offloaded blobs (federation)
-        ForwardingHints(ForwardingHints),
-        #[serde(other)]
-        Unknown,
-    }
-
-    /// Forwarding hints sent to clients when their blobs have been offloaded
-    /// to peer relays. The client can connect to those relays to retrieve them.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct ForwardingHints {
-        pub hints: Vec<ForwardingHintInfo>,
-    }
-
-    /// A single forwarding hint pointing to a peer relay.
-    /// Note: routing_id is NOT included — the client knows their own routing_id.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct ForwardingHintInfo {
-        pub blob_id: String,
-        pub relay_url: String,
-        pub expires_at_secs: u64,
-    }
-
-    /// Account revocation signal sent to contacts when the card owner deletes their account.
-    ///
-    /// The relay routes this like an EncryptedUpdate: store as blob for recipient_id.
-    /// The relay does NOT verify the signature — that is the recipient's job.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct AccountRevoked {
-        /// Owner's public key fingerprint (hex-encoded).
-        pub sender_id: String,
-        /// Contact's public key fingerprint (hex-encoded).
-        pub recipient_id: String,
-        /// Unix timestamp of revocation.
-        pub timestamp: u64,
-        /// Ed25519 signature (base64 or hex-encoded, opaque to relay).
-        pub signature: Vec<u8>,
-    }
-
-    /// Inter-device sync message for syncing changes between devices of the same identity.
-    /// Routes by (identity_id, target_device_id) rather than just recipient_id.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct DeviceSyncMessage {
-        /// User's public identity ID (for routing).
-        pub identity_id: String,
-        /// Target device ID (hex-encoded, 64 chars = 32 bytes).
-        pub target_device_id: String,
-        /// Sender device ID (hex-encoded, 64 chars = 32 bytes).
-        pub sender_device_id: String,
-        /// ECDH-encrypted payload containing SyncItems.
-        pub encrypted_payload: Vec<u8>,
-        /// Version number for ordering and deduplication.
-        pub version: u64,
-    }
-
-    /// Acknowledgment for device sync messages.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct DeviceSyncAck {
-        /// The message_id being acknowledged.
-        pub message_id: String,
-        /// Version that was synced to.
-        pub synced_version: u64,
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct EncryptedUpdate {
-        pub recipient_id: String,
-        pub ciphertext: Vec<u8>,
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct Acknowledgment {
-        pub message_id: String,
-        pub status: AckStatus,
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-    pub enum AckStatus {
-        /// Message received by relay and stored for delivery
-        Stored,
-        /// Message delivered to recipient (recipient came online)
-        Delivered,
-        /// Recipient acknowledged receipt (end-to-end confirmation)
-        ReceivedByRecipient,
-        /// Delivery failed
-        Failed,
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct Handshake {
-        pub client_id: String,
-        /// Optional device ID for inter-device sync (hex-encoded, 64 chars).
-        /// If present, device sync messages will be delivered.
-        #[serde(default)]
-        pub device_id: Option<String>,
-        /// Optional anonymous routing token (hex-encoded, 64 chars).
-        /// When present, used for blob routing instead of client_id.
-        /// Enables clients to route messages without revealing their identity
-        /// fingerprint to the relay.
-        #[serde(default)]
-        pub routing_token: Option<String>,
-        /// When true, the relay will not send delivery notifications
-        /// for this client's blobs, preventing online status inference.
-        #[serde(default)]
-        pub suppress_presence: bool,
-        /// Ed25519 public key proving ownership of client_id (hex, 64 chars = 32 bytes).
-        #[serde(default)]
-        pub identity_public_key: Option<String>,
-        /// Random nonce for replay prevention (hex, 64 chars = 32 bytes).
-        #[serde(default)]
-        pub nonce: Option<String>,
-        /// Ed25519 signature over (nonce || timestamp) (hex, 128 chars = 64 bytes).
-        #[serde(default)]
-        pub signature: Option<String>,
-        /// Unix timestamp in seconds, must be within ±60s of relay clock.
-        #[serde(default)]
-        pub timestamp: Option<u64>,
-    }
-
-    /// Server response to client handshake for version negotiation.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct HandshakeAck {
-        /// Server protocol version.
-        pub protocol_version: u8,
-        /// Server software version.
-        pub server_version: String,
-        /// Supported features list.
-        pub features: Vec<String>,
-    }
+    // =========================================================================
+    // Relay-specific envelope factory functions
+    // =========================================================================
 
     /// Creates a handshake acknowledgment envelope.
     pub fn create_handshake_ack(is_noise_session: bool) -> MessageEnvelope {
@@ -389,125 +234,6 @@ mod protocol {
         }
     }
 
-    // =========================================================================
-    // Recovery Proof Messages
-    // =========================================================================
-
-    /// Store a recovery proof on the relay.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct RecoveryProofStore {
-        /// Hash of the old public key (32 bytes, hex-encoded).
-        pub key_hash: String,
-        /// Serialized recovery proof (opaque blob).
-        pub proof_data: Vec<u8>,
-    }
-
-    /// Query for recovery proofs (batch).
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct RecoveryProofQuery {
-        /// List of key hashes to query (hex-encoded).
-        pub key_hashes: Vec<String>,
-    }
-
-    /// Response to a recovery proof query.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct RecoveryProofResponse {
-        /// Map of key_hash -> proof_data for found proofs.
-        pub proofs: Vec<RecoveryProofEntry>,
-    }
-
-    /// A single recovery proof entry in a response.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct RecoveryProofEntry {
-        pub key_hash: String,
-        pub proof_data: Vec<u8>,
-    }
-
-    // =========================================================================
-    // Data Purge Messages
-    // =========================================================================
-
-    /// Request to delete all stored data for the connected client.
-    /// The relay will remove all blobs, device sync messages, and
-    /// any ephemeral state associated with the client's routing ID.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct PurgeRequest {
-        /// If true, also purge device sync messages (requires client_id-based identity).
-        #[serde(default)]
-        pub include_device_sync: bool,
-        /// If true, also purge recovery proofs for this client.
-        /// Requires `recovery_key_hash` to identify which proof to delete.
-        #[serde(default)]
-        pub include_recovery_proofs: bool,
-        /// Hash of the old public key (hex-encoded, 64 chars = 32 bytes).
-        /// Required when `include_recovery_proofs` is true.
-        #[serde(default)]
-        pub recovery_key_hash: Option<String>,
-        // v2: Signed purge fields (optional for backward compat)
-        /// Hex-encoded Ed25519 public key (32 bytes = 64 hex chars).
-        #[serde(default)]
-        pub public_key: Option<String>,
-        /// Hex-encoded Ed25519 signature over (public_key || purge_token || timestamp).
-        #[serde(default)]
-        pub signature: Option<String>,
-        /// Hex-encoded 32-byte one-time purge token (replay prevention).
-        #[serde(default)]
-        pub purge_token: Option<String>,
-        /// Unix timestamp in seconds.
-        #[serde(default)]
-        pub timestamp: Option<u64>,
-    }
-
-    impl PurgeRequest {
-        /// Returns true if all v2 signature fields are present.
-        pub fn is_authenticated(&self) -> bool {
-            self.public_key.is_some()
-                && self.signature.is_some()
-                && self.purge_token.is_some()
-                && self.timestamp.is_some()
-        }
-
-        /// Verifies the Ed25519 signature over (public_key || purge_token || timestamp).
-        pub fn verify_signature(&self) -> Result<(), String> {
-            let pk_hex = self.public_key.as_ref().ok_or("missing public_key")?;
-            let sig_hex = self.signature.as_ref().ok_or("missing signature")?;
-            let token_hex = self.purge_token.as_ref().ok_or("missing purge_token")?;
-            let timestamp = self.timestamp.ok_or("missing timestamp")?;
-
-            let pk_bytes = hex::decode(pk_hex).map_err(|e| e.to_string())?;
-            let sig_bytes = hex::decode(sig_hex).map_err(|e| e.to_string())?;
-            let token_bytes = hex::decode(token_hex).map_err(|e| e.to_string())?;
-
-            if pk_bytes.len() != 32 {
-                return Err("public key must be 32 bytes".to_string());
-            }
-
-            // Reconstruct signed message: public_key || purge_token || timestamp_be_bytes
-            let mut message = Vec::with_capacity(32 + 32 + 8);
-            message.extend_from_slice(&pk_bytes);
-            message.extend_from_slice(&token_bytes);
-            message.extend_from_slice(&timestamp.to_be_bytes());
-
-            let public_key =
-                ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
-            public_key
-                .verify(&message, &sig_bytes)
-                .map_err(|_| "invalid signature".to_string())
-        }
-    }
-
-    /// Response to a purge request with counts of deleted items.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct PurgeResponse {
-        /// Number of blobs deleted.
-        pub blobs_deleted: usize,
-        /// Number of device sync messages deleted.
-        pub device_sync_deleted: usize,
-        /// Number of recovery proofs deleted.
-        #[serde(default)]
-        pub recovery_proofs_deleted: usize,
-    }
-
     /// Creates a purge response envelope.
     pub fn create_purge_response(
         message_id: &str,
@@ -530,28 +256,6 @@ mod protocol {
         }
     }
 
-    /// Decodes a message from binary data (with length prefix).
-    pub fn decode_message(data: &[u8]) -> Result<MessageEnvelope, String> {
-        if data.len() < FRAME_HEADER_SIZE {
-            return Err("Frame too short".to_string());
-        }
-
-        let json = &data[FRAME_HEADER_SIZE..];
-        serde_json::from_slice(json).map_err(|e| e.to_string())
-    }
-
-    /// Encodes a message to binary data (with length prefix).
-    pub fn encode_message(envelope: &MessageEnvelope) -> Result<Vec<u8>, String> {
-        let json = serde_json::to_vec(envelope).map_err(|e| e.to_string())?;
-        let len = json.len() as u32;
-
-        let mut frame = Vec::with_capacity(FRAME_HEADER_SIZE + json.len());
-        frame.extend_from_slice(&len.to_be_bytes());
-        frame.extend_from_slice(&json);
-
-        Ok(frame)
-    }
-
     /// Creates an acknowledgment envelope.
     pub fn create_ack(message_id: &str, status: AckStatus) -> MessageEnvelope {
         MessageEnvelope {
@@ -569,7 +273,6 @@ mod protocol {
     }
 
     /// Creates an encrypted update envelope for delivery.
-    /// The relay does not include sender identity — it only forwards the opaque ciphertext.
     pub fn create_update_delivery(
         blob_id: &str,
         recipient_id: &str,
@@ -629,7 +332,7 @@ mod protocol {
     }
 
     /// Creates a device sync acknowledgment envelope.
-    #[allow(dead_code)] // Prepared for future device sync acknowledgment feature
+    #[allow(dead_code)]
     pub fn create_device_sync_ack(message_id: &str, synced_version: u64) -> MessageEnvelope {
         MessageEnvelope {
             version: PROTOCOL_VERSION,
@@ -643,6 +346,51 @@ mod protocol {
                 synced_version,
             }),
         }
+    }
+}
+
+// =========================================================================
+// Relay-specific extension trait for PurgeRequest signature verification.
+// The struct is defined in vauchi-protocol; crypto logic stays in relay.
+// =========================================================================
+
+trait PurgeVerify {
+    fn is_authenticated(&self) -> bool;
+    fn verify_signature(&self) -> Result<(), String>;
+}
+
+impl PurgeVerify for protocol::PurgeRequest {
+    fn is_authenticated(&self) -> bool {
+        self.public_key.is_some()
+            && self.signature.is_some()
+            && self.purge_token.is_some()
+            && self.timestamp.is_some()
+    }
+
+    fn verify_signature(&self) -> Result<(), String> {
+        let pk_hex = self.public_key.as_ref().ok_or("missing public_key")?;
+        let sig_hex = self.signature.as_ref().ok_or("missing signature")?;
+        let token_hex = self.purge_token.as_ref().ok_or("missing purge_token")?;
+        let timestamp = self.timestamp.ok_or("missing timestamp")?;
+
+        let pk_bytes = hex::decode(pk_hex).map_err(|e| e.to_string())?;
+        let sig_bytes = hex::decode(sig_hex).map_err(|e| e.to_string())?;
+        let token_bytes = hex::decode(token_hex).map_err(|e| e.to_string())?;
+
+        if pk_bytes.len() != 32 {
+            return Err("public key must be 32 bytes".to_string());
+        }
+
+        let mut message = Vec::with_capacity(32 + 32 + 8);
+        message.extend_from_slice(&pk_bytes);
+        message.extend_from_slice(&token_bytes);
+        message.extend_from_slice(&timestamp.to_be_bytes());
+
+        let public_key =
+            ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
+        public_key
+            .verify(&message, &sig_bytes)
+            .map_err(|_| "invalid signature".to_string())
     }
 }
 

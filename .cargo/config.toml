@@ -1,0 +1,6 @@
+# Local development path override — points at sibling core checkout.
+# This lets the relay build against the local vauchi-protocol source instead of the
+# remote git dependency, which is essential when the local core has API changes
+# that haven't been pushed to main yet.
+[patch."https://gitlab.com/vauchi/core.git"]
+vauchi-protocol = { path = "../core/vauchi-protocol" }
