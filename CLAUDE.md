@@ -11,7 +11,7 @@ WebSocket relay server for message forwarding between clients.
 
 - **Stateless design**: Relay should not persist sensitive data
 - **No decryption**: Relay forwards encrypted blobs, never decrypts
-- **Standalone**: Does not depend on `vauchi-core` (defines its own message types)
+- **Protocol types**: Uses `vauchi-protocol` crate (from `core/` repo) for shared message types; does **not** depend on `vauchi-core`
 
 ## Commands
 
