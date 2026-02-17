@@ -10,6 +10,7 @@
 
 mod common;
 
+use ring::signature::KeyPair;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -155,15 +156,43 @@ fn make_client_handshake(client_id: &str) -> serde_json::Value {
     })
 }
 
-/// Creates a client PurgeRequest message.
+/// Creates a client PurgeRequest message with a valid Ed25519 signature.
 fn make_client_purge() -> serde_json::Value {
+    let rng = ring::rand::SystemRandom::new();
+    let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+
+    let public_key = key_pair.public_key().as_ref();
+    let pk_hex: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
+
+    let purge_token = [0x42u8; 32];
+    let token_hex: String = purge_token.iter().map(|b| format!("{:02x}", b)).collect();
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    // Sign: public_key || purge_token || timestamp_be_bytes
+    let mut message = Vec::with_capacity(32 + 32 + 8);
+    message.extend_from_slice(public_key);
+    message.extend_from_slice(&purge_token);
+    message.extend_from_slice(&timestamp.to_be_bytes());
+
+    let signature = key_pair.sign(&message);
+    let sig_hex: String = signature.as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+
     serde_json::json!({
         "version": 1,
         "message_id": uuid::Uuid::new_v4().to_string(),
         "timestamp": 1000,
         "payload": {
             "type": "PurgeRequest",
-            "include_device_sync": false
+            "include_device_sync": false,
+            "public_key": pk_hex,
+            "signature": sig_hex,
+            "purge_token": token_hex,
+            "timestamp": timestamp
         }
     })
 }

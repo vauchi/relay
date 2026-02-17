@@ -443,6 +443,57 @@ mod protocol {
         /// Required when `include_recovery_proofs` is true.
         #[serde(default)]
         pub recovery_key_hash: Option<String>,
+        // v2: Signed purge fields (optional for backward compat)
+        /// Hex-encoded Ed25519 public key (32 bytes = 64 hex chars).
+        #[serde(default)]
+        pub public_key: Option<String>,
+        /// Hex-encoded Ed25519 signature over (public_key || purge_token || timestamp).
+        #[serde(default)]
+        pub signature: Option<String>,
+        /// Hex-encoded 32-byte one-time purge token (replay prevention).
+        #[serde(default)]
+        pub purge_token: Option<String>,
+        /// Unix timestamp in seconds.
+        #[serde(default)]
+        pub timestamp: Option<u64>,
+    }
+
+    impl PurgeRequest {
+        /// Returns true if all v2 signature fields are present.
+        pub fn is_authenticated(&self) -> bool {
+            self.public_key.is_some()
+                && self.signature.is_some()
+                && self.purge_token.is_some()
+                && self.timestamp.is_some()
+        }
+
+        /// Verifies the Ed25519 signature over (public_key || purge_token || timestamp).
+        pub fn verify_signature(&self) -> Result<(), String> {
+            let pk_hex = self.public_key.as_ref().ok_or("missing public_key")?;
+            let sig_hex = self.signature.as_ref().ok_or("missing signature")?;
+            let token_hex = self.purge_token.as_ref().ok_or("missing purge_token")?;
+            let timestamp = self.timestamp.ok_or("missing timestamp")?;
+
+            let pk_bytes = hex::decode(pk_hex).map_err(|e| e.to_string())?;
+            let sig_bytes = hex::decode(sig_hex).map_err(|e| e.to_string())?;
+            let token_bytes = hex::decode(token_hex).map_err(|e| e.to_string())?;
+
+            if pk_bytes.len() != 32 {
+                return Err("public key must be 32 bytes".to_string());
+            }
+
+            // Reconstruct signed message: public_key || purge_token || timestamp_be_bytes
+            let mut message = Vec::with_capacity(32 + 32 + 8);
+            message.extend_from_slice(&pk_bytes);
+            message.extend_from_slice(&token_bytes);
+            message.extend_from_slice(&timestamp.to_be_bytes());
+
+            let public_key =
+                ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
+            public_key
+                .verify(&message, &sig_bytes)
+                .map_err(|_| "invalid signature".to_string())
+        }
     }
 
     /// Response to a purge request with counts of deleted items.
@@ -1284,6 +1335,37 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         }
                     }
                     protocol::MessagePayload::PurgeRequest(purge) => {
+                        // Require authenticated purge requests (v2 signature)
+                        if purge.is_authenticated() {
+                            if let Err(e) = purge.verify_signature() {
+                                warn!(
+                                    "[{}] Rejecting purge with invalid signature: {}",
+                                    session, e
+                                );
+                                let ack = protocol::create_ack(
+                                    &envelope.message_id,
+                                    protocol::AckStatus::Failed,
+                                );
+                                if let Ok(ack_data) = protocol::encode_message(&ack) {
+                                    let _ = noise_send!(write, ack_data, noise_session, session);
+                                }
+                                continue;
+                            }
+                        } else {
+                            warn!(
+                                "[{}] Rejecting unsigned purge request (v2 signature required)",
+                                session
+                            );
+                            let ack = protocol::create_ack(
+                                &envelope.message_id,
+                                protocol::AckStatus::Failed,
+                            );
+                            if let Ok(ack_data) = protocol::encode_message(&ack) {
+                                let _ = noise_send!(write, ack_data, noise_session, session);
+                            }
+                            continue;
+                        }
+
                         // Delete all stored blobs for this client's routing ID
                         let blobs_deleted = storage.delete_all_for(&routing_id);
 
@@ -1535,6 +1617,10 @@ mod tests {
             include_device_sync: true,
             include_recovery_proofs: false,
             recovery_key_hash: None,
+            public_key: None,
+            signature: None,
+            purge_token: None,
+            timestamp: None,
         };
         let json = serde_json::to_string(&purge).unwrap();
         let parsed: protocol::PurgeRequest = serde_json::from_str(&json).unwrap();
@@ -1602,6 +1688,10 @@ mod tests {
                 include_device_sync: false,
                 include_recovery_proofs: false,
                 recovery_key_hash: None,
+                public_key: None,
+                signature: None,
+                purge_token: None,
+                timestamp: None,
             }),
         };
         let encoded = protocol::encode_message(&envelope).unwrap();
@@ -1766,6 +1856,98 @@ mod tests {
         let result2 = verify_signed_handshake(&pk, &nonce, &sig, ts, &tracker);
         assert!(result2.is_err());
         assert_eq!(result2.unwrap_err(), "nonce replay detected");
+    }
+
+    // ================================================================
+    // Purge signature verification tests (SP-2)
+    // ================================================================
+
+    #[test]
+    fn test_purge_request_rejects_missing_signature() {
+        let purge = protocol::PurgeRequest {
+            include_device_sync: true,
+            include_recovery_proofs: false,
+            recovery_key_hash: None,
+            public_key: None,
+            signature: None,
+            purge_token: None,
+            timestamp: None,
+        };
+        assert!(!purge.is_authenticated());
+    }
+
+    #[test]
+    fn test_purge_request_accepts_valid_signature() {
+        let rng = ring::rand::SystemRandom::new();
+        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+
+        let public_key = key_pair.public_key().as_ref();
+        let pk_hex: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
+
+        let purge_token = [0xABu8; 32];
+        let token_hex: String = purge_token.iter().map(|b| format!("{:02x}", b)).collect();
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Sign: public_key || purge_token || timestamp_be_bytes
+        let mut message = Vec::with_capacity(32 + 32 + 8);
+        message.extend_from_slice(public_key);
+        message.extend_from_slice(&purge_token);
+        message.extend_from_slice(&timestamp.to_be_bytes());
+
+        let signature = key_pair.sign(&message);
+        let sig_hex: String = signature.as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+
+        let purge = protocol::PurgeRequest {
+            include_device_sync: true,
+            include_recovery_proofs: false,
+            recovery_key_hash: None,
+            public_key: Some(pk_hex),
+            signature: Some(sig_hex),
+            purge_token: Some(token_hex),
+            timestamp: Some(timestamp),
+        };
+
+        assert!(purge.is_authenticated());
+        assert!(purge.verify_signature().is_ok());
+    }
+
+    #[test]
+    fn test_purge_request_rejects_bad_signature() {
+        let rng = ring::rand::SystemRandom::new();
+        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+
+        let public_key = key_pair.public_key().as_ref();
+        let pk_hex: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
+
+        let purge_token = [0xABu8; 32];
+        let token_hex: String = purge_token.iter().map(|b| format!("{:02x}", b)).collect();
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Create a bad signature (just random bytes)
+        let bad_sig: String = [0xFFu8; 64].iter().map(|b| format!("{:02x}", b)).collect();
+
+        let purge = protocol::PurgeRequest {
+            include_device_sync: true,
+            include_recovery_proofs: false,
+            recovery_key_hash: None,
+            public_key: Some(pk_hex),
+            signature: Some(bad_sig),
+            purge_token: Some(token_hex),
+            timestamp: Some(timestamp),
+        };
+
+        assert!(purge.is_authenticated());
+        assert!(purge.verify_signature().is_err());
     }
 
     #[test]
