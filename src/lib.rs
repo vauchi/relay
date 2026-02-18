@@ -21,6 +21,7 @@ pub mod peer_registry;
 pub mod rate_limit;
 pub mod recovery_storage;
 pub mod storage;
+pub mod url_validation;
 
 use config::RelayConfig;
 use std::sync::Arc;

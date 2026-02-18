@@ -313,7 +313,7 @@ async fn create_relay(
 ) -> SimulatedRelay {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
-    let peer_registry = Arc::new(PeerRegistry::new(0.95));
+    let peer_registry = Arc::new(PeerRegistry::new_allow_private(0.95));
     let config = make_fed_config(relay_id, max_storage, offload_threshold);
     let connection_registry = Arc::new(ConnectionRegistry::new());
 

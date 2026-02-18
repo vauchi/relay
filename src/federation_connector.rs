@@ -83,6 +83,10 @@ async fn try_connect_to_peer(
     tls_client_config: Option<Arc<tokio_rustls::rustls::ClientConfig>>,
     offload_manager: Option<Arc<OffloadManager>>,
 ) -> Result<(), String> {
+    // Validate URL against SSRF blocklist (Tracker #133)
+    crate::url_validation::validate_federation_url(peer_url)
+        .map_err(|e| format!("SSRF validation failed for {}: {}", peer_url, e))?;
+
     let federation_url = format!("{}/federation", peer_url);
 
     if let Some(ref client_config) = tls_client_config {
@@ -133,6 +137,12 @@ async fn connect_with_tls(
     } else {
         (authority.to_string(), 443u16)
     };
+
+    // Validate resolved host against SSRF blocklist (Tracker #133)
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        crate::url_validation::validate_resolved_ip(ip)
+            .map_err(|e| format!("SSRF: {}", e))?;
+    }
 
     // TCP connect
     let tcp_stream = tokio::net::TcpStream::connect(format!("{}:{}", host, port))
@@ -677,14 +687,24 @@ mod tests {
                 .with_no_client_auth(),
         );
 
-        // Attempting TLS to unreachable host should fail at TCP connect
+        // Loopback should now be blocked by SSRF validation (#133)
         let result = connect_with_tls("wss://127.0.0.1:1/federation", &client_config).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            err.contains("TCP connect failed") || err.contains("connect"),
-            "Expected TCP connect failure, got: {}",
+            err.contains("SSRF") || err.contains("loopback"),
+            "Expected SSRF block, got: {}",
             err
+        );
+
+        // Non-routable public IP should fail at TCP connect
+        let result2 = connect_with_tls("wss://198.51.100.1:1/federation", &client_config).await;
+        assert!(result2.is_err());
+        let err2 = result2.unwrap_err();
+        assert!(
+            err2.contains("TCP connect failed") || err2.contains("connect"),
+            "Expected TCP connect failure, got: {}",
+            err2
         );
     }
 

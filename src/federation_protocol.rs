@@ -7,6 +7,13 @@
 //! Wire format for relay-to-relay communication. Uses the same framing as the
 //! client protocol (4-byte BE length prefix + JSON) but with federation-specific
 //! message types.
+//!
+//! ## Encoding Overhead (Tracker #135)
+//!
+//! Blob data is currently JSON-encoded (base64 for `Vec<u8>` via serde_json),
+//! adding ~33% overhead for binary payloads. A future optimization would switch
+//! to a binary encoding (postcard, MessagePack, or raw length-prefixed frames)
+//! for `OffloadBlob` while keeping JSON for control messages.
 
 use serde::{Deserialize, Serialize};
 
@@ -486,6 +493,43 @@ mod tests {
         } else {
             panic!("Expected OffloadBlob");
         }
+    }
+
+    // Trace: codebase-review-tracker item #135
+    #[test]
+    fn test_offload_blob_json_overhead_documented() {
+        // Quantifies the JSON encoding overhead for binary blob data.
+        // serde_json encodes Vec<u8> as a JSON number array [171,171,...],
+        // NOT base64, resulting in ~4x overhead for arbitrary binary data.
+        // This confirms the need for binary encoding (postcard/MessagePack).
+        let blob_data = vec![0xABu8; 10_000];
+        let envelope = FederationEnvelope {
+            version: 1,
+            message_id: "overhead-test".to_string(),
+            timestamp: 1000,
+            payload: FederationPayload::OffloadBlob {
+                blob_id: "blob-overhead".to_string(),
+                routing_id: "route-1".to_string(),
+                data: blob_data.clone(),
+                created_at_secs: 500,
+                integrity_hash: "hash".to_string(),
+                hop_count: 0,
+            },
+        };
+        let encoded = encode_federation_message(&envelope).unwrap();
+        let overhead_ratio = encoded.len() as f64 / blob_data.len() as f64;
+        // JSON number array encoding: each byte 0xAB → "171," = ~4 chars.
+        // Overhead is ~4x for random binary data, confirming #135's concern.
+        assert!(
+            overhead_ratio > 2.0,
+            "Expected significant JSON overhead for binary data, got {:.2}x (has encoding changed?)",
+            overhead_ratio,
+        );
+        assert!(
+            overhead_ratio < 6.0,
+            "JSON overhead {:.2}x is unexpectedly high, encoding may be broken",
+            overhead_ratio,
+        );
     }
 
     #[test]

@@ -306,6 +306,52 @@ impl RelayConfig {
     pub fn cleanup_interval(&self) -> Duration {
         Duration::from_secs(self.cleanup_interval_secs)
     }
+
+    /// Validates config invariants and returns warnings/errors.
+    ///
+    /// Call after loading config to detect dangerous configurations.
+    pub fn validate(&self) -> Vec<ConfigWarning> {
+        let mut warnings = Vec::new();
+
+        // Tracker #44: Gossip without mTLS is unauthenticated — any peer
+        // can inject fake advertisements. Require mTLS when gossip is enabled.
+        if self.federation_gossip_enabled && self.federation_tls_cert_path.is_none() {
+            warnings.push(ConfigWarning {
+                level: ConfigWarningLevel::Error,
+                message: "federation_gossip_enabled=true requires mTLS (RELAY_FEDERATION_TLS_CERT). \
+                    Without mTLS, gossip advertisements are unauthenticated and vulnerable to \
+                    injection attacks.".to_string(),
+            });
+        }
+
+        // Offload threshold sanity
+        if self.federation_offload_threshold >= self.federation_offload_refuse {
+            warnings.push(ConfigWarning {
+                level: ConfigWarningLevel::Warning,
+                message: format!(
+                    "federation_offload_threshold ({}) >= federation_offload_refuse ({}). \
+                    Offloading will never trigger.",
+                    self.federation_offload_threshold, self.federation_offload_refuse
+                ),
+            });
+        }
+
+        warnings
+    }
+}
+
+/// Severity level for configuration warnings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigWarningLevel {
+    Warning,
+    Error,
+}
+
+/// A configuration validation warning or error.
+#[derive(Debug, Clone)]
+pub struct ConfigWarning {
+    pub level: ConfigWarningLevel,
+    pub message: String,
 }
 
 /// Loads or generates a stable relay ID.
@@ -391,6 +437,46 @@ mod tests {
         assert!(!config.federation_gossip_enabled);
         assert_eq!(config.federation_gossip_interval_secs, 120);
         assert_eq!(config.federation_peer_ttl_secs, 3600);
+    }
+
+    // Trace: codebase-review-tracker item #44
+    #[test]
+    fn test_validate_gossip_requires_mtls() {
+        let mut config = RelayConfig::default();
+        config.federation_gossip_enabled = true;
+        // No TLS cert path → should error
+        let warnings = config.validate();
+        assert!(
+            warnings.iter().any(|w| w.level == ConfigWarningLevel::Error
+                && w.message.contains("mTLS")),
+            "Gossip without mTLS should produce an error"
+        );
+    }
+
+    // Trace: codebase-review-tracker item #44
+    #[test]
+    fn test_validate_gossip_with_mtls_ok() {
+        let mut config = RelayConfig::default();
+        config.federation_gossip_enabled = true;
+        config.federation_tls_cert_path = Some("/path/to/cert.pem".to_string());
+        let warnings = config.validate();
+        assert!(
+            !warnings.iter().any(|w| w.message.contains("mTLS")),
+            "Gossip with mTLS configured should not warn about mTLS"
+        );
+    }
+
+    #[test]
+    fn test_validate_offload_threshold_sanity() {
+        let mut config = RelayConfig::default();
+        config.federation_offload_threshold = 0.99;
+        config.federation_offload_refuse = 0.95;
+        let warnings = config.validate();
+        assert!(
+            warnings.iter().any(|w| w.level == ConfigWarningLevel::Warning
+                && w.message.contains("threshold")),
+            "Inverted threshold should warn"
+        );
     }
 
     #[test]

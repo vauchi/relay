@@ -66,6 +66,9 @@ pub struct PeerRegistry {
     peers: RwLock<HashMap<String, PeerInfo>>,
     /// Refuse threshold ratio (e.g. 0.95). Peers above this are considered at capacity.
     refuse_threshold: f64,
+    /// When true, skips SSRF validation on discovered peer URLs.
+    /// Only enable in test environments — production must keep this `false`.
+    allow_private_urls: bool,
 }
 
 impl PeerRegistry {
@@ -73,6 +76,19 @@ impl PeerRegistry {
         PeerRegistry {
             peers: RwLock::new(HashMap::new()),
             refuse_threshold,
+            allow_private_urls: false,
+        }
+    }
+
+    /// Creates a registry that permits private/loopback URLs in gossip.
+    ///
+    /// Only use in test/development environments. Production relays must
+    /// use [`PeerRegistry::new`] which enforces SSRF validation.
+    pub fn new_allow_private(refuse_threshold: f64) -> Self {
+        PeerRegistry {
+            peers: RwLock::new(HashMap::new()),
+            refuse_threshold,
+            allow_private_urls: true,
         }
     }
 
@@ -156,6 +172,8 @@ impl PeerRegistry {
     /// but does not change origin. If the peer is new, adds it as
     /// `Discovered` with `Disconnected` status.
     ///
+    /// Rejects URLs that fail SSRF validation (private IPs, loopback, etc.).
+    ///
     /// Returns `true` if a new peer was added.
     pub fn add_discovered_peer(
         &self,
@@ -164,6 +182,14 @@ impl PeerRegistry {
         capacity_pct: u8,
         last_seen_secs: u64,
     ) -> bool {
+        // Validate URL against SSRF blocklist (Tracker #133)
+        if !self.allow_private_urls {
+            if let Err(e) = crate::url_validation::validate_federation_url(url) {
+                tracing::warn!("Rejecting discovered peer {} with blocked URL {}: {}", relay_id, url, e);
+                return false;
+            }
+        }
+
         let mut peers = self.peers.write().unwrap();
 
         if let Some(existing) = peers.get_mut(relay_id) {
@@ -407,6 +433,33 @@ mod tests {
 
         let peers = registry.all_peers();
         assert_eq!(peers[0].last_seen_secs, 5000);
+    }
+
+    // Trace: codebase-review-tracker item #133
+    #[test]
+    fn test_add_discovered_peer_rejects_private_ip() {
+        let registry = PeerRegistry::new(0.95);
+        let added = registry.add_discovered_peer("evil", "ws://192.168.1.1:8080", 50, 2000);
+        assert!(!added, "Private IP URLs should be rejected");
+        assert_eq!(registry.peer_count(), 0);
+    }
+
+    // Trace: codebase-review-tracker item #133
+    #[test]
+    fn test_add_discovered_peer_rejects_loopback() {
+        let registry = PeerRegistry::new(0.95);
+        let added = registry.add_discovered_peer("evil", "ws://127.0.0.1:8080", 50, 2000);
+        assert!(!added, "Loopback URLs should be rejected");
+        assert_eq!(registry.peer_count(), 0);
+    }
+
+    // Trace: codebase-review-tracker item #133
+    #[test]
+    fn test_add_discovered_peer_accepts_public_ip() {
+        let registry = PeerRegistry::new(0.95);
+        let added = registry.add_discovered_peer("legit", "wss://203.0.113.1:443", 50, 2000);
+        assert!(added, "Public IP URLs should be accepted");
+        assert_eq!(registry.peer_count(), 1);
     }
 
     #[test]
@@ -673,6 +726,33 @@ pub mod gossip {
             // First add is new, second is update
             assert_eq!(new_count, 1);
             assert_eq!(registry.peer_count(), 1);
+        }
+
+        // Trace: codebase-review-tracker item #133
+        #[test]
+        fn test_process_advertisement_rejects_ssrf_urls() {
+            let registry = PeerRegistry::new(0.95);
+
+            let advertised = vec![
+                AdvertisedPeer {
+                    relay_id: "ssrf-peer".to_string(),
+                    url: "ws://10.0.0.1:8080".to_string(),
+                    capacity_pct: 30,
+                    last_seen_secs: 2000,
+                },
+                AdvertisedPeer {
+                    relay_id: "good-peer".to_string(),
+                    url: "wss://203.0.113.50:443".to_string(),
+                    capacity_pct: 20,
+                    last_seen_secs: 2000,
+                },
+            ];
+
+            let new_count = process_peer_advertisement("my-relay", &registry, &advertised);
+            assert_eq!(new_count, 1, "Only the public-IP peer should be added");
+            assert_eq!(registry.peer_count(), 1);
+            let peers = registry.all_peers();
+            assert_eq!(peers[0].relay_id, "good-peer");
         }
 
         #[test]
