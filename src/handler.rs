@@ -749,6 +749,8 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     .as_secs(),
                 payload: protocol::MessagePayload::ForwardingHints(protocol::ForwardingHints {
                     hints: hint_infos,
+                    relay_signing_key: None,
+                    signature: None,
                 }),
             };
             if let Ok(data) = protocol::encode_message(&hint_envelope) {
