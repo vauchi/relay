@@ -864,8 +864,10 @@ async fn test_federation_reconnection_after_partition() {
     // Should be able to offload now
     // (May not offload all due to batch size, but should offload some)
     assert!(
-        offloaded_after > 0 || relay_a.storage.blob_count() < 5,
-        "Should be able to offload after partition heals"
+        offloaded_after > 0,
+        "Should offload at least one blob after partition heals (offloaded={}, blob_count={})",
+        offloaded_after,
+        relay_a.storage.blob_count()
     );
 }
 

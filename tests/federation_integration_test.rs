@@ -571,13 +571,6 @@ async fn test_offload_blob_rejected_hop_count_too_high() {
 
 #[tokio::test]
 async fn test_offload_blob_rejected_at_capacity() {
-    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
-    // Fill storage near capacity (>= 95% of 1000 bytes)
-    // Each StoredBlob has overhead, so store enough data
-    for i in 0..100 {
-        storage.store(&format!("fill-{}", i), StoredBlob::new(vec![0u8; 50]));
-    }
-
     let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
     let peer_registry = Arc::new(PeerRegistry::new(0.95));
     // Use a max_storage of 100 bytes so even a small amount triggers capacity refusal

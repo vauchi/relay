@@ -358,6 +358,11 @@ async fn test_connection_limit_rejects_excess() {
             // The limiter should still show 2 active (the 3rd was dropped).
             // Give it a moment to settle.
             tokio::time::sleep(Duration::from_millis(100)).await;
+            assert_eq!(
+                limiter.active_count(),
+                2,
+                "Limiter must still cap at 2 even if 3rd TCP connect briefly succeeded"
+            );
         }
     }
 
