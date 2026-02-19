@@ -16,7 +16,7 @@
 //! DNS resolution — use [`validate_resolved_ip`] in the connection path.
 
 use std::fmt;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv6Addr};
 
 /// Errors from federation URL validation.
 #[derive(Debug, PartialEq)]

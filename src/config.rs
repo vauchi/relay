@@ -444,8 +444,10 @@ mod tests {
     // Trace: codebase-review-tracker item #44
     #[test]
     fn test_validate_gossip_requires_mtls() {
-        let mut config = RelayConfig::default();
-        config.federation_gossip_enabled = true;
+        let config = RelayConfig {
+            federation_gossip_enabled: true,
+            ..Default::default()
+        };
         // No TLS cert path → should error
         let warnings = config.validate();
         assert!(
@@ -459,9 +461,11 @@ mod tests {
     // Trace: codebase-review-tracker item #44
     #[test]
     fn test_validate_gossip_with_mtls_ok() {
-        let mut config = RelayConfig::default();
-        config.federation_gossip_enabled = true;
-        config.federation_tls_cert_path = Some("/path/to/cert.pem".to_string());
+        let config = RelayConfig {
+            federation_gossip_enabled: true,
+            federation_tls_cert_path: Some("/path/to/cert.pem".to_string()),
+            ..Default::default()
+        };
         let warnings = config.validate();
         assert!(
             !warnings.iter().any(|w| w.message.contains("mTLS")),
@@ -471,9 +475,11 @@ mod tests {
 
     #[test]
     fn test_validate_offload_threshold_sanity() {
-        let mut config = RelayConfig::default();
-        config.federation_offload_threshold = 0.99;
-        config.federation_offload_refuse = 0.95;
+        let config = RelayConfig {
+            federation_offload_threshold: 0.99,
+            federation_offload_refuse: 0.95,
+            ..Default::default()
+        };
         let warnings = config.validate();
         assert!(
             warnings
