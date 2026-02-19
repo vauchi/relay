@@ -717,4 +717,125 @@ mod tests {
             assert_eq!(blobs[0].created_at_secs, 999);
         }
     }
+
+    // ========================================================================
+    // Property-Based Tests (CC-04)
+    // ========================================================================
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Strategy for valid recipient IDs (non-empty hex-like strings).
+        fn recipient_id_strategy() -> impl Strategy<Value = String> {
+            "[a-f0-9]{1,64}"
+        }
+
+        proptest! {
+            /// store→peek roundtrip: any data stored for a recipient is
+            /// retrievable with identical content and byte length.
+            #[test]
+            fn prop_store_peek_roundtrip(
+                data in proptest::collection::vec(any::<u8>(), 0..1024),
+                recipient in recipient_id_strategy(),
+            ) {
+                let store = SqliteBlobStore::in_memory().unwrap();
+                let blob = StoredBlob::new(data.clone());
+                let blob_id = blob.id.clone();
+
+                store.store(&recipient, blob);
+                let peeked = store.peek(&recipient);
+
+                prop_assert_eq!(peeked.len(), 1);
+                prop_assert_eq!(&peeked[0].data, &data);
+                prop_assert_eq!(&peeked[0].id, &blob_id);
+            }
+
+            /// store→take roundtrip: take returns the data and empties the store.
+            #[test]
+            fn prop_store_take_roundtrip(
+                data in proptest::collection::vec(any::<u8>(), 0..512),
+                recipient in recipient_id_strategy(),
+            ) {
+                let store = SqliteBlobStore::in_memory().unwrap();
+                store.store(&recipient, StoredBlob::new(data.clone()));
+
+                let taken = store.take(&recipient);
+                prop_assert_eq!(taken.len(), 1);
+                prop_assert_eq!(&taken[0].data, &data);
+
+                let after = store.peek(&recipient);
+                prop_assert!(after.is_empty());
+            }
+
+            /// Multiple recipients are isolated: storing for one recipient
+            /// does not affect another.
+            #[test]
+            fn prop_recipient_isolation(
+                data_a in proptest::collection::vec(any::<u8>(), 1..256),
+                data_b in proptest::collection::vec(any::<u8>(), 1..256),
+            ) {
+                let store = SqliteBlobStore::in_memory().unwrap();
+                store.store("recipient-a", StoredBlob::new(data_a.clone()));
+                store.store("recipient-b", StoredBlob::new(data_b.clone()));
+
+                let a = store.peek("recipient-a");
+                let b = store.peek("recipient-b");
+                prop_assert_eq!(a.len(), 1);
+                prop_assert_eq!(b.len(), 1);
+                prop_assert_eq!(&a[0].data, &data_a);
+                prop_assert_eq!(&b[0].data, &data_b);
+            }
+
+            /// blob_count equals the number of blobs stored minus those taken.
+            #[test]
+            fn prop_blob_count_consistent(
+                n in 1usize..20,
+                recipient in recipient_id_strategy(),
+            ) {
+                let store = SqliteBlobStore::in_memory().unwrap();
+                for _ in 0..n {
+                    store.store(&recipient, StoredBlob::new(vec![1]));
+                }
+                prop_assert_eq!(store.blob_count(), n);
+                prop_assert_eq!(store.blob_count_for(&recipient), n);
+
+                store.take(&recipient);
+                prop_assert_eq!(store.blob_count(), 0);
+            }
+
+            /// acknowledge removes exactly one blob.
+            #[test]
+            fn prop_acknowledge_removes_one(
+                n in 2usize..10,
+                recipient in recipient_id_strategy(),
+            ) {
+                let store = SqliteBlobStore::in_memory().unwrap();
+                let mut ids = Vec::new();
+                for _ in 0..n {
+                    let blob = StoredBlob::new(vec![42]);
+                    ids.push(blob.id.clone());
+                    store.store(&recipient, blob);
+                }
+
+                let removed = store.acknowledge(&recipient, &ids[0]);
+                prop_assert!(removed);
+                prop_assert_eq!(store.blob_count(), n - 1);
+            }
+
+            /// with_metadata preserves hop_count and created_at_secs.
+            #[test]
+            fn prop_with_metadata_preserves_fields(
+                data in proptest::collection::vec(any::<u8>(), 0..256),
+                created_at in any::<u64>(),
+                hop_count in any::<u8>(),
+            ) {
+                let blob = StoredBlob::with_metadata(data.clone(), created_at, hop_count);
+                prop_assert_eq!(&blob.data, &data);
+                prop_assert_eq!(blob.created_at_secs, created_at);
+                prop_assert_eq!(blob.hop_count, hop_count);
+                prop_assert!(!blob.id.is_empty());
+            }
+        }
+    }
 }

@@ -263,4 +263,96 @@ mod tests {
         limiter.consume("client-1");
         assert_eq!(limiter.client_count(), 2);
     }
+
+    // ====================================================================
+    // Property-Based Tests (CC-04)
+    // ====================================================================
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// A fresh limiter allows exactly max_per_minute requests
+            /// before blocking.
+            #[test]
+            fn prop_allows_exactly_n_then_blocks(
+                max_per_minute in 1u32..100,
+            ) {
+                let limiter = RateLimiter::new(max_per_minute);
+                let client = "test-client";
+
+                for i in 0..max_per_minute {
+                    prop_assert!(
+                        limiter.consume(client),
+                        "Request {} of {} should be allowed",
+                        i + 1,
+                        max_per_minute
+                    );
+                }
+
+                prop_assert!(
+                    !limiter.consume(client),
+                    "Request {} should be blocked (limit={})",
+                    max_per_minute + 1,
+                    max_per_minute
+                );
+            }
+
+            /// Different clients have independent buckets.
+            #[test]
+            fn prop_client_isolation(
+                max_per_minute in 1u32..50,
+                client_a in "[a-z]{1,8}",
+                client_b in "[a-z]{1,8}",
+            ) {
+                prop_assume!(client_a != client_b);
+                let limiter = RateLimiter::new(max_per_minute);
+
+                // Exhaust client_a
+                for _ in 0..max_per_minute {
+                    limiter.consume(&client_a);
+                }
+                prop_assert!(!limiter.consume(&client_a));
+
+                // client_b should still have tokens
+                prop_assert!(limiter.consume(&client_b));
+            }
+
+            /// check() is non-destructive: calling it N times doesn't
+            /// reduce the available tokens.
+            #[test]
+            fn prop_check_is_nondestructive(
+                max_per_minute in 1u32..50,
+                check_count in 1usize..20,
+            ) {
+                let limiter = RateLimiter::new(max_per_minute);
+                let client = "checker";
+
+                for _ in 0..check_count {
+                    prop_assert!(limiter.check(client));
+                }
+
+                // All tokens should still be available after checks
+                for _ in 0..max_per_minute {
+                    prop_assert!(limiter.consume(client));
+                }
+            }
+
+            /// client_count tracks unique client IDs, not total requests.
+            #[test]
+            fn prop_client_count_tracks_unique(
+                n_clients in 1usize..20,
+                requests_per in 1usize..5,
+            ) {
+                let limiter = RateLimiter::new(100);
+                for i in 0..n_clients {
+                    for _ in 0..requests_per {
+                        limiter.consume(&format!("client-{}", i));
+                    }
+                }
+                prop_assert_eq!(limiter.client_count(), n_clients);
+            }
+        }
+    }
 }
