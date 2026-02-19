@@ -35,6 +35,7 @@ stages:
   - auto-tag
   - lint
   - test
+  - mutation
   - security
   - build
   - scan
@@ -147,6 +148,48 @@ test:coverage:
       - lcov.info
       - cobertura.xml
     expire_in: 1 week
+
+# ============================================================
+# Mutation Stage (PI-02)
+# ============================================================
+
+# Nightly full mutation testing (scheduled pipeline)
+mutation:nightly:
+  extends: [.rust-job, .timeout-extended]
+  stage: mutation
+  needs: []
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  script:
+    - cargo binstall cargo-mutants --no-confirm 2>/dev/null || cargo install cargo-mutants --locked || true
+    - cargo mutants --timeout 60 --output target/mutants
+  artifacts:
+    paths:
+      - target/mutants/
+    expire_in: 1 week
+
+# Per-MR incremental mutation testing (advisory, runs after tests pass)
+mutation:incremental:
+  extends: [.rust-job, .timeout-extended]
+  stage: mutation
+  needs:
+    - job: test:coverage
+      optional: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  allow_failure: true
+  variables:
+    GIT_DEPTH: "100"
+  script:
+    - cargo binstall cargo-mutants --no-confirm 2>/dev/null || cargo install cargo-mutants --locked || true
+    - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --depth=100
+    - git diff "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"...HEAD > mr.diff
+    - cargo mutants --in-diff mr.diff --timeout 60
+  artifacts:
+    paths:
+      - mutants.out/
+    expire_in: 1 week
+    when: always
 
 # ============================================================
 # Security Stage (change-based, gated by lint, parallel with test)
