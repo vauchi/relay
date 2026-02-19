@@ -125,7 +125,7 @@ lint:clippy:
 # ============================================================
 
 test:coverage:
-  extends: [.linux-runner, .validation-rust, .timeout-standard]
+  extends: [.rust-runner, .validation-rust, .timeout-standard]
   stage: test
   needs:
     - job: lint:format
