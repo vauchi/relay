@@ -92,8 +92,10 @@ auto-tag:version:
     - if: $CI_COMMIT_BRANCH == "main"
 
 # ============================================================
-# Lint Stage (change-based)
+# Lint Stage — Preflight Gate (change-based)
 # ============================================================
+# Cheapest checks run first. Test + security jobs wait for these
+# to pass before starting (PI-13 fail-fast DAG).
 
 lint:format:
   extends: [.rust-job, .validation-rust, .timeout-quick]
@@ -116,13 +118,17 @@ lint:clippy:
     - cargo clippy --all-targets -- -D warnings
 
 # ============================================================
-# Test Stage (change-based)
+# Test Stage (change-based, gated by lint)
 # ============================================================
 
 test:coverage:
   extends: [.rust-job, .validation-rust, .timeout-standard]
   stage: test
-  needs: []
+  needs:
+    - job: lint:format
+      optional: true
+    - job: lint:clippy
+      optional: true
   before_script:
     - rustup component add llvm-tools-preview
     - cargo install cargo-llvm-cov --locked || true
@@ -142,7 +148,7 @@ test:coverage:
     expire_in: 1 week
 
 # ============================================================
-# Security Stage (change-based)
+# Security Stage (change-based, gated by lint, parallel with test)
 # ============================================================
 
 # GitLab security templates configuration
@@ -150,7 +156,11 @@ test:coverage:
 
 semgrep-sast:
   tags: [docker]
-  needs: []
+  needs:
+    - job: lint:format
+      optional: true
+    - job: lint:clippy
+      optional: true
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
@@ -168,7 +178,11 @@ gemnasium-dependency_scanning:
 
 secret_detection:
   tags: [docker]
-  needs: []
+  needs:
+    - job: lint:format
+      optional: true
+    - job: lint:clippy
+      optional: true
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
@@ -185,7 +199,11 @@ container_scanning:
 security:audit:
   extends: [.rust-job, .validation-deps, .timeout-quick]
   stage: security
-  needs: []
+  needs:
+    - job: lint:format
+      optional: true
+    - job: lint:clippy
+      optional: true
   cache:
     policy: pull  # Read-only cache
   script:
@@ -196,7 +214,11 @@ security:audit:
 security:deny:
   extends: [.rust-job, .timeout-quick]
   stage: security
-  needs: []
+  needs:
+    - job: lint:format
+      optional: true
+    - job: lint:clippy
+      optional: true
   cache:
     policy: pull
   rules:
