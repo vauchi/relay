@@ -111,7 +111,6 @@ lint:format:
   stage: lint
   needs: []
   script:
-    - rustup component add rustfmt
     - cargo fmt --all -- --check
 
 lint:clippy:
@@ -119,7 +118,6 @@ lint:clippy:
   stage: lint
   needs: []
   script:
-    - rustup component add clippy
     - cargo clippy --all-targets -- -D warnings
 
 # ============================================================
@@ -127,7 +125,7 @@ lint:clippy:
 # ============================================================
 
 test:coverage:
-  extends: [.rust-runner, .validation-rust, .timeout-standard]
+  extends: [.linux-runner, .validation-rust, .timeout-standard]
   stage: test
   needs:
     - job: lint:format
@@ -137,8 +135,6 @@ test:coverage:
   before_script:
     - !reference [.self-hosted, before_script]
     - !reference [.git-credentials, before_script]
-    - rustup component add llvm-tools-preview
-    - cargo binstall cargo-llvm-cov --no-confirm 2>/dev/null || cargo install cargo-llvm-cov --locked || true
   script:
     - cargo llvm-cov --all-targets --lcov --output-path lcov.info
     - cargo llvm-cov report --cobertura --output-path cobertura.xml
@@ -166,7 +162,6 @@ mutation:nightly:
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
   script:
-    - cargo binstall cargo-mutants --no-confirm 2>/dev/null || cargo install cargo-mutants --locked || true
     - cargo mutants --timeout 60 --output target/mutants
   artifacts:
     paths:
@@ -186,7 +181,6 @@ mutation:incremental:
   variables:
     GIT_DEPTH: "100"
   script:
-    - cargo binstall cargo-mutants --no-confirm 2>/dev/null || cargo install cargo-mutants --locked || true
     - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --depth=100
     - git diff "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"...HEAD > mr.diff
     - cargo mutants --in-diff mr.diff --timeout 60
@@ -254,7 +248,6 @@ security:audit:
     - job: lint:clippy
       optional: true
   script:
-    - cargo binstall cargo-audit --no-confirm 2>/dev/null || cargo install cargo-audit || true
     - cargo audit
 
 # Full cargo-deny check: advisories, licenses, bans, sources
@@ -270,7 +263,6 @@ security:deny:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "schedule"
   script:
-    - cargo binstall cargo-deny --no-confirm 2>/dev/null || cargo install cargo-deny || true
     - cargo deny check
 
 # ============================================================
