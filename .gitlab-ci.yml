@@ -36,6 +36,7 @@ stages:
   - lint
   - test
   - mutation
+  - load
   - security
   - build
   - scan
@@ -271,6 +272,104 @@ security:deny:
   script:
     - cargo binstall cargo-deny --no-confirm 2>/dev/null || cargo install cargo-deny || true
     - cargo deny check
+
+# ============================================================
+# Load Test Stage (PI-10)
+# ============================================================
+
+# k6 WebSocket load test — runs against a local relay instance.
+# Thresholds: p95 connection < 500ms, throughput > 10 msg/s.
+# Manual trigger on MRs, automatic on merge to main.
+load:k6:
+  extends: [.rust-job, .timeout-standard]
+  stage: load
+  needs:
+    - job: test:coverage
+      optional: true
+  image: grafana/k6:latest
+  before_script:
+    # Build relay from current source (needs Rust toolchain)
+    - apt-get update -qq && apt-get install -y -qq curl gcc pkg-config libssl-dev
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    - . "$HOME/.cargo/env"
+    - cargo build --release
+  script:
+    # Start relay in background with Noise encryption disabled for load testing
+    - |
+      RELAY_LISTEN_ADDR=127.0.0.1:8080 \
+      RELAY_REQUIRE_NOISE_ENCRYPTION=false \
+      RELAY_MAX_CONNECTIONS=500 \
+      ./target/release/vauchi-relay &
+      RELAY_PID=$!
+      sleep 2
+
+      # Verify relay is healthy
+      curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start"; kill $RELAY_PID; exit 1; }
+
+      # Run k6 load test
+      k6 run tests/load/relay-load-test.js || K6_EXIT=$?
+
+      kill $RELAY_PID 2>/dev/null || true
+      exit ${K6_EXIT:-0}
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+  allow_failure: true
+  artifacts:
+    paths:
+      - summary.json
+    expire_in: 1 week
+    when: always
+
+# ============================================================
+# DAST Stage (PI-17) — ZAP scan for WebSocket attacks
+# ============================================================
+
+# OWASP ZAP dynamic application security testing.
+# Scans relay HTTP endpoints and WebSocket for common vulnerabilities.
+# Manual trigger, advisory (allow_failure).
+dast:zap:
+  stage: load
+  needs:
+    - job: test:coverage
+      optional: true
+  image:
+    name: ghcr.io/zaproxy/zaproxy:stable
+    entrypoint: [""]
+  before_script:
+    # Build and start relay for scanning
+    - apt-get update -qq && apt-get install -y -qq curl gcc pkg-config libssl-dev
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    - . "$HOME/.cargo/env"
+    - cargo build --release
+  script:
+    - |
+      RELAY_LISTEN_ADDR=0.0.0.0:8080 \
+      RELAY_REQUIRE_NOISE_ENCRYPTION=false \
+      ./target/release/vauchi-relay &
+      RELAY_PID=$!
+      sleep 2
+
+      # Verify relay is running
+      curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start"; kill $RELAY_PID; exit 1; }
+
+      # ZAP baseline scan against HTTP endpoints
+      zap-baseline.py -t http://127.0.0.1:8080 -r zap-report.html -J zap-report.json || true
+
+      kill $RELAY_PID 2>/dev/null || true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+  allow_failure: true
+  artifacts:
+    paths:
+      - zap-report.html
+      - zap-report.json
+    expire_in: 1 week
+    when: always
 
 # ============================================================
 # Build Stage
