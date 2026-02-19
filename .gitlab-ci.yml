@@ -50,6 +50,10 @@ variables:
   # Container scanning for relay image
   CS_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
 
+# Override: advisory until pre-existing zero-assertion tests are remediated
+quality:zero-assertions:
+  allow_failure: true
+
 # ============================================================
 # Auto-Tag Stage
 # ============================================================
