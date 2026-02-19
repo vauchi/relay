@@ -172,10 +172,7 @@ impl RelaySigningKey {
     }
 
     /// Signs the canonical representation of forwarding hints.
-    pub fn sign_hints(
-        &self,
-        hints: &protocol::ForwardingHints,
-    ) -> protocol::ForwardingHints {
+    pub fn sign_hints(&self, hints: &protocol::ForwardingHints) -> protocol::ForwardingHints {
         let canonical = hints.canonical_data();
         let sig = self.keypair.sign(&canonical);
 
@@ -335,10 +332,7 @@ mod tests {
         let canonical = signed.canonical_data();
         let pk_bytes = hex::decode(signed.relay_signing_key.as_ref().unwrap()).unwrap();
         let sig_bytes = hex::decode(signed.signature.as_ref().unwrap()).unwrap();
-        let pk = ring::signature::UnparsedPublicKey::new(
-            &ring::signature::ED25519,
-            &pk_bytes,
-        );
+        let pk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
         assert!(pk.verify(&canonical, &sig_bytes).is_ok());
     }
 
@@ -372,10 +366,7 @@ mod tests {
             signature: None,
         };
 
-        let pk = ring::signature::UnparsedPublicKey::new(
-            &ring::signature::ED25519,
-            &pk_bytes,
-        );
+        let pk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
         let tampered_canonical = tampered.canonical_data();
         assert!(
             pk.verify(&tampered_canonical, &sig_bytes).is_err(),

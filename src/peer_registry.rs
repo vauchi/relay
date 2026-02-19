@@ -185,7 +185,12 @@ impl PeerRegistry {
         // Validate URL against SSRF blocklist (Tracker #133)
         if !self.allow_private_urls {
             if let Err(e) = crate::url_validation::validate_federation_url(url) {
-                tracing::warn!("Rejecting discovered peer {} with blocked URL {}: {}", relay_id, url, e);
+                tracing::warn!(
+                    "Rejecting discovered peer {} with blocked URL {}: {}",
+                    relay_id,
+                    url,
+                    e
+                );
                 return false;
             }
         }

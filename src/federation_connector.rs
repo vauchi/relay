@@ -140,8 +140,7 @@ async fn connect_with_tls(
 
     // Validate resolved host against SSRF blocklist (Tracker #133)
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        crate::url_validation::validate_resolved_ip(ip)
-            .map_err(|e| format!("SSRF: {}", e))?;
+        crate::url_validation::validate_resolved_ip(ip).map_err(|e| format!("SSRF: {}", e))?;
     }
 
     // TCP connect

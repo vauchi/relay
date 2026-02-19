@@ -172,10 +172,7 @@ async fn test_plaintext_accepted_when_noise_not_required() {
     let result = timeout(Duration::from_secs(2), ws.next()).await;
     match result {
         Ok(Some(Ok(Message::Binary(data)))) => {
-            assert!(
-                data.len() >= FRAME_HEADER_SIZE,
-                "Response frame too short"
-            );
+            assert!(data.len() >= FRAME_HEADER_SIZE, "Response frame too short");
             let json: serde_json::Value =
                 serde_json::from_slice(&data[FRAME_HEADER_SIZE..]).unwrap();
             let payload_type = json

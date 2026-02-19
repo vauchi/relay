@@ -318,9 +318,11 @@ impl RelayConfig {
         if self.federation_gossip_enabled && self.federation_tls_cert_path.is_none() {
             warnings.push(ConfigWarning {
                 level: ConfigWarningLevel::Error,
-                message: "federation_gossip_enabled=true requires mTLS (RELAY_FEDERATION_TLS_CERT). \
+                message:
+                    "federation_gossip_enabled=true requires mTLS (RELAY_FEDERATION_TLS_CERT). \
                     Without mTLS, gossip advertisements are unauthenticated and vulnerable to \
-                    injection attacks.".to_string(),
+                    injection attacks."
+                        .to_string(),
             });
         }
 
@@ -447,8 +449,9 @@ mod tests {
         // No TLS cert path → should error
         let warnings = config.validate();
         assert!(
-            warnings.iter().any(|w| w.level == ConfigWarningLevel::Error
-                && w.message.contains("mTLS")),
+            warnings
+                .iter()
+                .any(|w| w.level == ConfigWarningLevel::Error && w.message.contains("mTLS")),
             "Gossip without mTLS should produce an error"
         );
     }
@@ -473,8 +476,9 @@ mod tests {
         config.federation_offload_refuse = 0.95;
         let warnings = config.validate();
         assert!(
-            warnings.iter().any(|w| w.level == ConfigWarningLevel::Warning
-                && w.message.contains("threshold")),
+            warnings
+                .iter()
+                .any(|w| w.level == ConfigWarningLevel::Warning && w.message.contains("threshold")),
             "Inverted threshold should warn"
         );
     }
