@@ -7,6 +7,7 @@
 # WebSocket relay server
 #
 # Performance optimizations:
+#   - Self-hosted runners: sccache, persistent caches, load-balanced
 #   - Change-based rules: Jobs run only when relevant files change
 #   - Timeouts: Prevent runaway jobs from blocking runners
 #   - Interruptible: Auto-cancel on new commits (via templates)
@@ -54,10 +55,6 @@ variables:
 
   # Container scanning for relay image
   CS_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
-
-# Override: advisory until pre-existing zero-assertion tests are remediated
-quality:zero-assertions:
-  allow_failure: true
 
 # ============================================================
 # Auto-Tag Stage
@@ -110,21 +107,17 @@ auto-tag:version:
 # to pass before starting (PI-13 fail-fast DAG).
 
 lint:format:
-  extends: [.rust-job, .validation-rust, .timeout-quick]
+  extends: [.rust-runner-nocache, .validation-rust, .timeout-quick]
   stage: lint
   needs: []
-  cache:
-    policy: pull  # Read-only cache for lint
   script:
     - rustup component add rustfmt
     - cargo fmt --all -- --check
 
 lint:clippy:
-  extends: [.rust-job, .validation-rust, .timeout-quick]
+  extends: [.rust-runner-readonly, .validation-rust, .timeout-quick]
   stage: lint
   needs: []
-  cache:
-    policy: pull  # Read-only cache for lint
   script:
     - rustup component add clippy
     - cargo clippy --all-targets -- -D warnings
@@ -134,7 +127,7 @@ lint:clippy:
 # ============================================================
 
 test:coverage:
-  extends: [.rust-job, .validation-rust, .timeout-standard]
+  extends: [.rust-runner, .validation-rust, .timeout-standard]
   stage: test
   needs:
     - job: lint:format
@@ -142,8 +135,10 @@ test:coverage:
     - job: lint:clippy
       optional: true
   before_script:
+    - !reference [.self-hosted, before_script]
+    - !reference [.git-credentials, before_script]
     - rustup component add llvm-tools-preview
-    - cargo install cargo-llvm-cov --locked || true
+    - cargo binstall cargo-llvm-cov --no-confirm 2>/dev/null || cargo install cargo-llvm-cov --locked || true
   script:
     - cargo llvm-cov --all-targets --lcov --output-path lcov.info
     - cargo llvm-cov report --cobertura --output-path cobertura.xml
@@ -165,7 +160,7 @@ test:coverage:
 
 # Nightly full mutation testing (scheduled pipeline)
 mutation:nightly:
-  extends: [.rust-job, .timeout-extended]
+  extends: [.rust-runner, .timeout-extended]
   stage: mutation
   needs: []
   rules:
@@ -180,7 +175,7 @@ mutation:nightly:
 
 # Per-MR incremental mutation testing (advisory, runs after tests pass)
 mutation:incremental:
-  extends: [.rust-job, .timeout-extended]
+  extends: [.rust-runner, .timeout-extended]
   stage: mutation
   needs:
     - job: test:coverage
@@ -251,30 +246,26 @@ container_scanning:
 
 # Rust-specific security (runs on dependency changes)
 security:audit:
-  extends: [.rust-job, .validation-deps, .timeout-quick]
+  extends: [.rust-runner-readonly, .validation-deps, .timeout-quick]
   stage: security
   needs:
     - job: lint:format
       optional: true
     - job: lint:clippy
       optional: true
-  cache:
-    policy: pull  # Read-only cache
   script:
-    - cargo install cargo-audit || true
+    - cargo binstall cargo-audit --no-confirm 2>/dev/null || cargo install cargo-audit || true
     - cargo audit
 
 # Full cargo-deny check: advisories, licenses, bans, sources
 security:deny:
-  extends: [.rust-job, .timeout-quick]
+  extends: [.rust-runner-readonly, .timeout-quick]
   stage: security
   needs:
     - job: lint:format
       optional: true
     - job: lint:clippy
       optional: true
-  cache:
-    policy: pull
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -290,11 +281,12 @@ security:deny:
 # Thresholds: p95 connection < 500ms, throughput > 10 msg/s.
 # Manual trigger on MRs, automatic on merge to main.
 load:k6:
-  extends: [.rust-job, .timeout-standard]
+  extends: .timeout-standard
   stage: load
   needs:
     - job: test:coverage
       optional: true
+  tags: [docker]
   image: grafana/k6:latest
   before_script:
     # Build relay from current source (needs Rust toolchain)
@@ -385,7 +377,7 @@ dast:zap:
 # ============================================================
 
 build:release:
-  extends: [.rust-job, .timeout-standard]
+  extends: [.linux-runner, .timeout-standard]
   stage: build
   script:
     - cargo build --release
