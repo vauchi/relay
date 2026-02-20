@@ -38,8 +38,8 @@ stages:
   - test
   - security
   - mutation
-  - load
   - build
+  - load
   - scan
 
 # Override: advisory until pre-existing zero-assertion tests are remediated
