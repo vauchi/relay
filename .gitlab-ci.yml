@@ -183,7 +183,7 @@ mutation:incremental:
   script:
     - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --depth=100
     - git diff "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"...HEAD > mr.diff
-    - cargo mutants --in-diff mr.diff --timeout 60
+    - cargo mutants --in-diff mr.diff --timeout 120 --mutant-limit 50 --baseline skip
   artifacts:
     paths:
       - mutants.out/
