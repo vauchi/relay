@@ -136,7 +136,7 @@ test:coverage:
     - !reference [.self-hosted, before_script]
     - !reference [.git-credentials, before_script]
   script:
-    - cargo llvm-cov --all-targets --lcov --output-path lcov.info
+    - cargo llvm-cov nextest --all-targets --lcov --output-path lcov.info
     - cargo llvm-cov report --cobertura --output-path cobertura.xml
     - cargo llvm-cov report
   coverage: '/Total:\s+(\d+(?:\.\d+)?%)/'
