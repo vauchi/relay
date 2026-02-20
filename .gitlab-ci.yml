@@ -36,9 +36,9 @@ stages:
   - auto-tag
   - lint
   - test
+  - security
   - mutation
   - load
-  - security
   - build
   - scan
 
@@ -276,16 +276,22 @@ load:k6:
   extends: .timeout-standard
   stage: load
   needs:
+    - job: build:release
+      artifacts: true
+      optional: true
     - job: test:coverage
       optional: true
   tags: [docker]
   image: grafana/k6:latest
   before_script:
-    # Build relay from current source (needs Rust toolchain)
-    - apt-get update -qq && apt-get install -y -qq curl gcc pkg-config libssl-dev
-    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-    - . "$HOME/.cargo/env"
-    - cargo build --release
+    - |
+      # Use prebuilt binary from build:release if available, otherwise compile
+      if [ ! -f "target/release/vauchi-relay" ]; then
+        apt-get update -qq && apt-get install -y -qq curl gcc pkg-config libssl-dev
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+        . "$HOME/.cargo/env"
+        cargo build --release
+      fi
   script:
     # Start relay in background with Noise encryption disabled for load testing
     - |
@@ -294,7 +300,12 @@ load:k6:
       RELAY_MAX_CONNECTIONS=500 \
       ./target/release/vauchi-relay &
       RELAY_PID=$!
-      sleep 2
+
+      # Wait for relay to be ready (poll health endpoint)
+      for i in $(seq 1 30); do
+        curl -sf http://127.0.0.1:8080/health && break
+        sleep 0.5
+      done
 
       # Verify relay is healthy
       curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start"; kill $RELAY_PID; exit 1; }
@@ -325,30 +336,41 @@ load:k6:
 dast:zap:
   stage: load
   needs:
+    - job: build:release
+      artifacts: true
+      optional: true
     - job: test:coverage
       optional: true
   image:
     name: ghcr.io/zaproxy/zaproxy:stable
     entrypoint: [""]
   before_script:
-    # Build and start relay for scanning
-    - apt-get update -qq && apt-get install -y -qq curl gcc pkg-config libssl-dev
-    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-    - . "$HOME/.cargo/env"
-    - cargo build --release
+    - |
+      # Use prebuilt binary from build:release if available, otherwise compile
+      if [ ! -f "target/release/vauchi-relay" ]; then
+        apt-get update -qq && apt-get install -y -qq curl gcc pkg-config libssl-dev
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+        . "$HOME/.cargo/env"
+        cargo build --release
+      fi
   script:
     - |
       RELAY_LISTEN_ADDR=0.0.0.0:8080 \
       RELAY_REQUIRE_NOISE_ENCRYPTION=false \
       ./target/release/vauchi-relay &
       RELAY_PID=$!
-      sleep 2
+
+      # Wait for relay to be ready (poll health endpoint)
+      for i in $(seq 1 30); do
+        curl -sf http://127.0.0.1:8080/health && break
+        sleep 0.5
+      done
 
       # Verify relay is running
       curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start"; kill $RELAY_PID; exit 1; }
 
       # ZAP baseline scan against HTTP endpoints
-      zap-baseline.py -t http://127.0.0.1:8080 -r zap-report.html -J zap-report.json || true
+      zap-baseline.py -t http://127.0.0.1:8080 -r zap-report.html -J zap-report.json
 
       kill $RELAY_PID 2>/dev/null || true
   rules:
@@ -371,6 +393,11 @@ dast:zap:
 build:release:
   extends: [.linux-runner, .timeout-standard]
   stage: build
+  needs:
+    - job: test:coverage
+      optional: true
+    - job: lint:format
+      optional: true
   script:
     - cargo build --release
   artifacts:
