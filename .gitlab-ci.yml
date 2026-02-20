@@ -124,14 +124,29 @@ lint:clippy:
 # Test Stage (change-based, gated by lint)
 # ============================================================
 
-test:coverage:
-  extends: [.rust-runner, .validation-rust, .timeout-standard]
+# MR: fast nextest (no coverage overhead)
+test:
+  extends: [.rust-runner, .validation-rust, .timeout-quick]
   stage: test
   needs:
     - job: lint:format
       optional: true
     - job: lint:clippy
       optional: true
+  script:
+    - cargo nextest run --all-targets
+
+# Main: full coverage with llvm-cov
+coverage:
+  extends: [.rust-runner, .timeout-standard]
+  stage: test
+  needs:
+    - job: lint:format
+      optional: true
+    - job: lint:clippy
+      optional: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   before_script:
     - !reference [.self-hosted, before_script]
     - !reference [.git-credentials, before_script]
@@ -173,7 +188,7 @@ mutation:incremental:
   extends: [.rust-runner, .timeout-extended]
   stage: mutation
   needs:
-    - job: test:coverage
+    - job: test
       optional: true
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -279,7 +294,7 @@ load:k6:
     - job: build:release
       artifacts: true
       optional: true
-    - job: test:coverage
+    - job: test
       optional: true
   tags: [docker]
   image: grafana/k6:latest
@@ -339,7 +354,7 @@ dast:zap:
     - job: build:release
       artifacts: true
       optional: true
-    - job: test:coverage
+    - job: test
       optional: true
   image:
     name: ghcr.io/zaproxy/zaproxy:stable
@@ -394,7 +409,7 @@ build:release:
   extends: [.linux-runner, .timeout-standard]
   stage: build
   needs:
-    - job: test:coverage
+    - job: test
       optional: true
     - job: lint:format
       optional: true
@@ -417,11 +432,14 @@ build:docker:
   variables:
     DOCKER_BUILDKIT: "1"
   script:
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
-    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest
     - |
       if [ -n "$CI_REGISTRY_PASSWORD" ]; then
         echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+      fi
+    - docker build --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest
+    - |
+      if [ -n "$CI_REGISTRY_PASSWORD" ]; then
         docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
         docker push $CI_REGISTRY_IMAGE:latest
       fi
