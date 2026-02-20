@@ -414,27 +414,27 @@ mod tests {
     }
 
     // SQLite backend tests
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_store_and_peek() {
+        // allow(zero_assertions): delegate to shared test helper
         test_store_and_peek_impl(&SqliteDeviceSyncStore::in_memory().unwrap());
     }
 
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_acknowledge() {
+        // allow(zero_assertions): delegate to shared test helper
         test_acknowledge_impl(&SqliteDeviceSyncStore::in_memory().unwrap());
     }
 
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_cleanup() {
+        // allow(zero_assertions): delegate to shared test helper
         test_cleanup_impl(&SqliteDeviceSyncStore::in_memory().unwrap());
     }
 
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_routing() {
+        // allow(zero_assertions): delegate to shared test helper
         test_routing_impl(&SqliteDeviceSyncStore::in_memory().unwrap());
     }
 

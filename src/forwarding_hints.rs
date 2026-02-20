@@ -295,39 +295,39 @@ mod tests {
     }
 
     // SQLite tests (using in-memory SQLite)
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_store_and_retrieve() {
+        // allow(zero_assertions): delegate to shared test helper
         test_store_and_retrieve(&SqliteForwardingHintStore::in_memory().unwrap());
     }
 
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_empty_result() {
+        // allow(zero_assertions): delegate to shared test helper
         test_empty_result_for_unknown(&SqliteForwardingHintStore::in_memory().unwrap());
     }
 
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_cleanup_expired() {
+        // allow(zero_assertions): delegate to shared test helper
         test_cleanup_expired(&SqliteForwardingHintStore::in_memory().unwrap());
     }
 
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_remove_by_blob_id() {
+        // allow(zero_assertions): delegate to shared test helper
         test_remove_by_blob_id(&SqliteForwardingHintStore::in_memory().unwrap());
     }
 
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_delete_all_for() {
+        // allow(zero_assertions): delegate to shared test helper
         test_delete_all_for_routing_id(&SqliteForwardingHintStore::in_memory().unwrap());
     }
 
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_hint_count() {
+        // allow(zero_assertions): delegate to shared test helper
         test_hint_count_accuracy(&SqliteForwardingHintStore::in_memory().unwrap());
     }
 }

@@ -724,10 +724,10 @@ mod tests {
     }
 
     // Trace: codebase-review-tracker item #131
-    // allow(zero_assertions): compile-time signature check
     #[test]
     #[allow(clippy::type_complexity)]
     fn test_maintain_peer_connection_accepts_tls_config() {
+        // allow(zero_assertions): compile-time signature check
         // Verify the function signature accepts None (backward compatible)
         // This is a compile-time check — we don't actually connect
         let _fn_ref: fn(

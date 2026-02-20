@@ -438,27 +438,27 @@ mod tests {
     }
 
     // SQLite backend tests
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_store_and_peek() {
+        // allow(zero_assertions): delegate to shared test helper
         test_store_impl(&SqliteBlobStore::in_memory().unwrap());
     }
 
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_take() {
+        // allow(zero_assertions): delegate to shared test helper
         test_take_impl(&SqliteBlobStore::in_memory().unwrap());
     }
 
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_acknowledge() {
+        // allow(zero_assertions): delegate to shared test helper
         test_acknowledge_impl(&SqliteBlobStore::in_memory().unwrap());
     }
 
-    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_cleanup() {
+        // allow(zero_assertions): delegate to shared test helper
         test_cleanup_impl(&SqliteBlobStore::in_memory().unwrap());
     }
 
