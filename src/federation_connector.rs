@@ -498,6 +498,7 @@ impl OffloadManager {
     }
 }
 
+// INLINE_TEST_REQUIRED: Tests need access to private federation internals and mock types
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,6 +724,7 @@ mod tests {
     }
 
     // Trace: codebase-review-tracker item #131
+    // allow(zero_assertions): compile-time signature check
     #[test]
     #[allow(clippy::type_complexity)]
     fn test_maintain_peer_connection_accepts_tls_config() {

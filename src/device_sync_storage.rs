@@ -292,6 +292,7 @@ pub fn create_device_sync_store(data_dir: Option<&Path>) -> Box<dyn DeviceSyncSt
 // Tests
 // ============================================================================
 
+// INLINE_TEST_REQUIRED: Tests need access to private SqliteDeviceSyncStore internals
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,21 +414,25 @@ mod tests {
     }
 
     // SQLite backend tests
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_store_and_peek() {
         test_store_and_peek_impl(&SqliteDeviceSyncStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_acknowledge() {
         test_acknowledge_impl(&SqliteDeviceSyncStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_cleanup() {
         test_cleanup_impl(&SqliteDeviceSyncStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_routing() {
         test_routing_impl(&SqliteDeviceSyncStore::in_memory().unwrap());

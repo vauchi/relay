@@ -290,26 +290,31 @@ mod tests {
     }
 
     // SQLite backend tests
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_store_and_get() {
         test_store_and_get_impl(&SqliteRecoveryProofStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_get_nonexistent() {
         test_get_nonexistent_impl(&SqliteRecoveryProofStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_overwrite() {
         test_overwrite_impl(&SqliteRecoveryProofStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_batch_get() {
         test_batch_get_impl(&SqliteRecoveryProofStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_remove() {
         test_remove_impl(&SqliteRecoveryProofStore::in_memory().unwrap());

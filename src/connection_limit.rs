@@ -165,6 +165,7 @@ mod tests {
         );
     }
 
+    // allow(zero_assertions): compile-time Send check
     #[test]
     fn test_guard_is_send() {
         // Verify the guard can be sent across threads (required for tokio::spawn)

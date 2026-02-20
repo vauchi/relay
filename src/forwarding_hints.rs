@@ -173,6 +173,7 @@ impl ForwardingHintStore for SqliteForwardingHintStore {
     }
 }
 
+// INLINE_TEST_REQUIRED: Tests need access to private SqliteForwardingHintStore internals
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,31 +295,37 @@ mod tests {
     }
 
     // SQLite tests (using in-memory SQLite)
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_store_and_retrieve() {
         test_store_and_retrieve(&SqliteForwardingHintStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_empty_result() {
         test_empty_result_for_unknown(&SqliteForwardingHintStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_cleanup_expired() {
         test_cleanup_expired(&SqliteForwardingHintStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_remove_by_blob_id() {
         test_remove_by_blob_id(&SqliteForwardingHintStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_delete_all_for() {
         test_delete_all_for_routing_id(&SqliteForwardingHintStore::in_memory().unwrap());
     }
 
+    // allow(zero_assertions): delegate to shared test helper
     #[test]
     fn test_sqlite_hint_count() {
         test_hint_count_accuracy(&SqliteForwardingHintStore::in_memory().unwrap());
