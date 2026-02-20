@@ -17,6 +17,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::padding;
+
 pub const FEDERATION_PROTOCOL_VERSION: u8 = 1;
 const FRAME_HEADER_SIZE: usize = 4;
 
@@ -102,25 +104,34 @@ pub struct AdvertisedPeer {
     pub last_seen_secs: u64,
 }
 
-/// Encodes a federation envelope to binary with 4-byte BE length prefix.
+/// Encodes a federation envelope to binary with padding for traffic analysis resistance.
+///
+/// The frame is serialized to JSON, then padded to a fixed bucket size.
+/// Wire format: `[padding envelope: length prefix + JSON + random padding]`
 pub fn encode_federation_message(envelope: &FederationEnvelope) -> Result<Vec<u8>, String> {
     let json = serde_json::to_vec(envelope).map_err(|e| e.to_string())?;
-    let len = json.len() as u32;
 
     let mut frame = Vec::with_capacity(FRAME_HEADER_SIZE + json.len());
+    let len = json.len() as u32;
     frame.extend_from_slice(&len.to_be_bytes());
     frame.extend_from_slice(&json);
 
-    Ok(frame)
+    Ok(padding::pad(&frame))
 }
 
-/// Decodes a federation envelope from binary with 4-byte BE length prefix.
+/// Decodes a federation envelope from a padded binary frame.
 pub fn decode_federation_message(data: &[u8]) -> Result<FederationEnvelope, String> {
-    if data.len() < FRAME_HEADER_SIZE {
+    if !padding::is_valid_bucket_size(data.len()) {
+        return Err(format!("Invalid padded frame size: {}", data.len()));
+    }
+
+    let frame = padding::unpad(data).ok_or_else(|| "Failed to unpad frame".to_string())?;
+
+    if frame.len() < FRAME_HEADER_SIZE {
         return Err("Frame too short".to_string());
     }
 
-    let json = &data[FRAME_HEADER_SIZE..];
+    let json = &frame[FRAME_HEADER_SIZE..];
     serde_json::from_slice(json).map_err(|e| e.to_string())
 }
 
@@ -414,34 +425,35 @@ mod tests {
 
     #[test]
     fn test_unknown_variant_deserialization() {
-        // Simulate a future message type
+        // Simulate a future message type — must go through encode (padding)
         let json = r#"{"version":1,"message_id":"test-9","timestamp":9000,"payload":{"type":"FuturePayload","data":"something"}}"#;
         let mut frame = Vec::new();
         frame.extend_from_slice(&(json.len() as u32).to_be_bytes());
         frame.extend_from_slice(json.as_bytes());
+        // Pad the raw frame as encode_federation_message would
+        let padded = crate::padding::pad(&frame);
 
-        let decoded = decode_federation_message(&frame).unwrap();
+        let decoded = decode_federation_message(&padded).unwrap();
         assert!(matches!(decoded.payload, FederationPayload::Unknown));
     }
 
     #[test]
-    fn test_encode_decode_with_length_prefix() {
+    fn test_encode_decode_with_padding() {
         let envelope = create_federation_envelope(FederationPayload::DrainAck);
         let encoded = encode_federation_message(&envelope).unwrap();
 
-        // Verify length prefix
-        let len = u32::from_be_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]) as usize;
-        assert_eq!(len, encoded.len() - 4);
+        // Encoded output should be a valid padded bucket size
+        assert!(crate::padding::is_valid_bucket_size(encoded.len()));
 
         let decoded = decode_federation_message(&encoded).unwrap();
         assert!(matches!(decoded.payload, FederationPayload::DrainAck));
     }
 
     #[test]
-    fn test_frame_too_short() {
+    fn test_invalid_frame_size_rejected() {
         let result = decode_federation_message(&[0, 1]);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Frame too short"));
+        assert!(result.unwrap_err().contains("Invalid padded frame size"));
     }
 
     #[test]

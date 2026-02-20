@@ -16,6 +16,7 @@ pub mod http;
 pub mod integrity;
 pub mod metrics;
 pub mod noise_key;
+pub mod padding;
 pub mod noise_transport;
 pub mod peer_registry;
 pub mod rate_limit;
