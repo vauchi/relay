@@ -320,6 +320,7 @@ async fn do_handshake(
 // Tests: Handshake
 // ============================================================================
 
+// @scenario: relay_network:Client connects to relay via WebSocket
 #[tokio::test]
 async fn test_handshake_returns_ack_with_version() {
     let (deps, _, _) = test_deps();
@@ -339,6 +340,7 @@ async fn test_handshake_returns_ack_with_version() {
     ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Relay rejects invalid client identifiers
 #[tokio::test]
 async fn test_handshake_invalid_client_id_disconnects() {
     let (deps, _, _) = test_deps();
@@ -362,6 +364,7 @@ async fn test_handshake_invalid_client_id_disconnects() {
     }
 }
 
+// @scenario: relay_network:Relay rejects non-handshake first message
 #[tokio::test]
 async fn test_handshake_non_handshake_message_disconnects() {
     let (deps, _, _) = test_deps();
@@ -385,6 +388,7 @@ async fn test_handshake_non_handshake_message_disconnects() {
 // Tests: EncryptedUpdate → Stored ack
 // ============================================================================
 
+// @scenario: message_delivery:Messages persist until acknowledged
 #[tokio::test]
 async fn test_store_blob_returns_stored_ack() {
     let (deps, storage, _) = test_deps();
@@ -410,6 +414,7 @@ async fn test_store_blob_returns_stored_ack() {
     ws.close(None).await.ok();
 }
 
+// @scenario: message_delivery:Messages persist until acknowledged
 #[tokio::test]
 async fn test_store_multiple_blobs() {
     let (deps, storage, _) = test_deps();
@@ -434,6 +439,7 @@ async fn test_store_multiple_blobs() {
 // Tests: Pending blob delivery on connect
 // ============================================================================
 
+// @scenario: sync_updates:Pending updates delivered on connect
 #[tokio::test]
 async fn test_pending_blobs_delivered_on_connect() {
     let (deps, storage, _) = test_deps();
@@ -465,6 +471,7 @@ async fn test_pending_blobs_delivered_on_connect() {
     ws.close(None).await.ok();
 }
 
+// @scenario: sync_updates:Pending updates delivered on connect
 #[tokio::test]
 async fn test_no_pending_blobs_no_delivery() {
     let (deps, _, _) = test_deps();
@@ -486,6 +493,7 @@ async fn test_no_pending_blobs_no_delivery() {
 // Tests: Acknowledgment → blob removal
 // ============================================================================
 
+// @scenario: message_delivery:Client acknowledges message receipt
 #[tokio::test]
 async fn test_acknowledge_removes_blob() {
     let (deps, storage, _) = test_deps();
@@ -528,6 +536,7 @@ async fn test_acknowledge_removes_blob() {
 // Tests: Quota enforcement
 // ============================================================================
 
+// @scenario: relay_network:Relay enforces storage quotas
 #[tokio::test]
 async fn test_quota_blob_count_exceeded() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -576,6 +585,7 @@ async fn test_quota_blob_count_exceeded() {
     ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Relay enforces storage quotas
 #[tokio::test]
 async fn test_quota_byte_limit_exceeded() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -624,6 +634,7 @@ async fn test_quota_byte_limit_exceeded() {
 // Tests: Recovery proof store and query
 // ============================================================================
 
+// @scenario: identity_management:Store and query recovery proofs
 #[tokio::test]
 async fn test_recovery_proof_store_and_query() {
     let (deps, _, _) = test_deps();
@@ -653,6 +664,7 @@ async fn test_recovery_proof_store_and_query() {
     ws.close(None).await.ok();
 }
 
+// @scenario: identity_management:Store and query recovery proofs
 #[tokio::test]
 async fn test_recovery_query_nonexistent() {
     let (deps, _, _) = test_deps();
@@ -675,6 +687,7 @@ async fn test_recovery_query_nonexistent() {
 // Tests: PurgeRequest
 // ============================================================================
 
+// @scenario: relay_network:Client purges stored data
 #[tokio::test]
 async fn test_purge_deletes_blobs() {
     let (deps, storage, _) = test_deps();
@@ -714,6 +727,7 @@ async fn test_purge_deletes_blobs() {
     ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Client purges stored data
 #[tokio::test]
 async fn test_purge_empty_returns_zero() {
     let (deps, _, _) = test_deps();
@@ -737,6 +751,7 @@ async fn test_purge_empty_returns_zero() {
 // Tests: Routing token
 // ============================================================================
 
+// @scenario: relay_network:Routing tokens enable anonymous addressing
 #[tokio::test]
 async fn test_routing_token_used_for_storage() {
     let (deps, storage, _) = test_deps();
@@ -771,6 +786,7 @@ async fn test_routing_token_used_for_storage() {
 // Tests: Delivered ack via ConnectionRegistry
 // ============================================================================
 
+// @scenario: message_delivery:Sender receives delivery confirmation
 #[tokio::test]
 async fn test_delivered_ack_to_sender() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -897,6 +913,7 @@ async fn test_delivered_ack_to_sender() {
 // Tests: Suppress presence
 // ============================================================================
 
+// @scenario: relay_network:Suppress presence hides delivery notifications
 #[tokio::test]
 async fn test_suppress_presence_no_delivered_ack() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -1004,6 +1021,7 @@ async fn test_suppress_presence_no_delivered_ack() {
 // Tests: Device sync
 // ============================================================================
 
+// @scenario: device_management:Device sync messages stored and acknowledged
 #[tokio::test]
 async fn test_device_sync_store_and_ack() {
     let (deps, _, _) = test_deps();
@@ -1028,6 +1046,7 @@ async fn test_device_sync_store_and_ack() {
     ws.close(None).await.ok();
 }
 
+// @scenario: security:Device sync identity mismatch rejected
 #[tokio::test]
 async fn test_device_sync_identity_mismatch_rejected() {
     let (deps, _, _) = test_deps();
@@ -1062,6 +1081,7 @@ async fn test_device_sync_identity_mismatch_rejected() {
 // Tests: Connection close
 // ============================================================================
 
+// @scenario: relay_network:Client gracefully disconnects
 #[tokio::test]
 async fn test_clean_close() {
     let (deps, _, _) = test_deps();
@@ -1082,6 +1102,7 @@ async fn test_clean_close() {
     }
 }
 
+// @scenario: relay_network:WebSocket ping-pong keepalive
 #[tokio::test]
 async fn test_ping_pong() {
     let (deps, _, _) = test_deps();
@@ -1214,6 +1235,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
 // Tests: Unknown message type
 // ============================================================================
 
+// @scenario: relay_network:Relay ignores unknown message types
 #[tokio::test]
 async fn test_unknown_message_type_ignored() {
     let (deps, _, _) = test_deps();
@@ -1254,6 +1276,7 @@ async fn test_unknown_message_type_ignored() {
 // Group A: Message encoding edge cases
 // ============================================================================
 
+// @scenario: relay_network:Relay handles malformed messages gracefully
 #[tokio::test]
 async fn test_malformed_json_continues_connection() {
     let (deps, _, _) = test_deps();
@@ -1287,6 +1310,7 @@ async fn test_malformed_json_continues_connection() {
     ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Relay handles malformed messages gracefully
 #[tokio::test]
 async fn test_truncated_frame_too_short() {
     let (deps, _, _) = test_deps();
@@ -1315,6 +1339,7 @@ async fn test_truncated_frame_too_short() {
     ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Relay enforces message size limits
 #[tokio::test]
 async fn test_oversized_message_silently_dropped() {
     let (deps, storage, _, _) = test_deps_custom(
@@ -1358,6 +1383,7 @@ async fn test_oversized_message_silently_dropped() {
     ws.close(None).await.ok();
 }
 
+// @scenario: message_delivery:Messages persist until acknowledged
 #[tokio::test]
 async fn test_zero_length_ciphertext_stored() {
     let (deps, storage, _) = test_deps();
@@ -1380,6 +1406,7 @@ async fn test_zero_length_ciphertext_stored() {
     ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Relay handles malformed messages gracefully
 #[tokio::test]
 async fn test_empty_binary_message() {
     let (deps, _, _) = test_deps();
@@ -1412,6 +1439,7 @@ async fn test_empty_binary_message() {
 // Group B: Rate limiting integration
 // ============================================================================
 
+// @scenario: relay_network:Relay enforces rate limits
 #[tokio::test]
 async fn test_rate_limit_silently_drops_excess_messages() {
     let (deps, storage, _, _) = test_deps_custom(
@@ -1456,6 +1484,7 @@ async fn test_rate_limit_silently_drops_excess_messages() {
     ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Relay enforces rate limits
 #[tokio::test]
 async fn test_recovery_rate_limit_separate_from_general() {
     let (deps, _, _, _) = test_deps_custom(
@@ -1503,6 +1532,7 @@ async fn test_recovery_rate_limit_separate_from_general() {
     ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Relay enforces rate limits
 #[tokio::test]
 async fn test_recovery_query_rate_limited() {
     let (deps, _, _, _) = test_deps_custom(
@@ -1548,6 +1578,7 @@ async fn test_recovery_query_rate_limited() {
 // Group C: Connection lifecycle & timeout
 // ============================================================================
 
+// @scenario: relay_network:Relay disconnects idle clients
 #[tokio::test]
 async fn test_idle_timeout_disconnects_client() {
     let (deps, _, _, _) = test_deps_custom(
@@ -1579,6 +1610,7 @@ async fn test_idle_timeout_disconnects_client() {
     }
 }
 
+// @scenario: relay_network:Relay disconnects clients without handshake
 #[tokio::test]
 async fn test_handshake_timeout_disconnects() {
     let (deps, _, _, _) = test_deps_custom(
@@ -1610,6 +1642,7 @@ async fn test_handshake_timeout_disconnects() {
     }
 }
 
+// @scenario: relay_network:Relay ignores text WebSocket frames
 #[tokio::test]
 async fn test_text_message_ignored_connection_stays() {
     let (deps, _, _) = test_deps();
@@ -1637,6 +1670,7 @@ async fn test_text_message_ignored_connection_stays() {
     ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Relay ignores duplicate handshake
 #[tokio::test]
 async fn test_duplicate_handshake_ignored() {
     let (deps, _, _) = test_deps();
@@ -1672,6 +1706,7 @@ async fn test_duplicate_handshake_ignored() {
 // Group D: Device sync delivery & ack
 // ============================================================================
 
+// @scenario: sync_updates:Pending device sync delivered on connect
 #[tokio::test]
 async fn test_pending_device_sync_delivered_on_connect() {
     let (deps, _, _, device_sync_storage) = test_deps_custom(
@@ -1728,6 +1763,7 @@ async fn test_pending_device_sync_delivered_on_connect() {
     ws.close(None).await.ok();
 }
 
+// @scenario: device_management:Device sync requires device identifier
 #[tokio::test]
 async fn test_device_sync_not_delivered_without_device_id() {
     let (deps, _, _, device_sync_storage) = test_deps_custom(
@@ -1768,6 +1804,7 @@ async fn test_device_sync_not_delivered_without_device_id() {
     ws.close(None).await.ok();
 }
 
+// @scenario: sync_updates:Device sync acknowledged and removed
 #[tokio::test]
 async fn test_device_sync_ack_removes_message() {
     let (deps, _, _, device_sync_storage) = test_deps_custom(
@@ -1831,6 +1868,7 @@ async fn test_device_sync_ack_removes_message() {
     ws.close(None).await.ok();
 }
 
+// @scenario: device_management:Device sync ack ignored without device id
 #[tokio::test]
 async fn test_device_sync_ack_without_device_id_ignored() {
     let (deps, _, _, device_sync_storage) = test_deps_custom(
@@ -1889,6 +1927,7 @@ async fn test_device_sync_ack_without_device_id_ignored() {
 // Group E: Purge with device sync
 // ============================================================================
 
+// @scenario: relay_network:Client purges stored data
 #[tokio::test]
 async fn test_purge_with_device_sync_deletes_both() {
     let (deps, storage, _, device_sync_storage) = test_deps_custom(
@@ -1943,6 +1982,7 @@ async fn test_purge_with_device_sync_deletes_both() {
     ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Client purges stored data
 #[tokio::test]
 async fn test_purge_without_device_sync_preserves_sync() {
     let (deps, storage, _, device_sync_storage) = test_deps_custom(
@@ -2008,6 +2048,7 @@ async fn test_purge_without_device_sync_preserves_sync() {
 // Group F: Multi-client concurrency
 // ============================================================================
 
+// @scenario: sync_updates:Pending updates delivered on connect
 #[tokio::test]
 async fn test_concurrent_store_and_receive() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -2075,6 +2116,7 @@ async fn test_concurrent_store_and_receive() {
     recipient_ws.close(None).await.ok();
 }
 
+// @scenario: message_delivery:Sender receives delivery confirmation
 #[tokio::test]
 async fn test_received_by_recipient_after_delivered_not_forwarded() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -2175,6 +2217,7 @@ async fn test_received_by_recipient_after_delivered_not_forwarded() {
     recipient_ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Suppress presence hides delivery notifications
 #[tokio::test]
 async fn test_suppress_presence_blocks_received_by_recipient() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -2265,6 +2308,7 @@ async fn test_suppress_presence_blocks_received_by_recipient() {
 // Group G: Additional edge cases
 // ============================================================================
 
+// @scenario: relay_network:Relay rejects invalid client identifiers
 #[tokio::test]
 async fn test_invalid_routing_token_format_disconnects() {
     let (deps, _, _) = test_deps();
@@ -2291,6 +2335,7 @@ async fn test_invalid_routing_token_format_disconnects() {
     }
 }
 
+// @scenario: relay_network:Relay rejects invalid client identifiers
 #[tokio::test]
 async fn test_invalid_device_id_format_disconnects() {
     let (deps, _, _) = test_deps();
@@ -2314,6 +2359,7 @@ async fn test_invalid_device_id_format_disconnects() {
     }
 }
 
+// @scenario: identity_management:Invalid recovery key hash rejected
 #[tokio::test]
 async fn test_recovery_store_invalid_key_hash() {
     let (deps, _, _) = test_deps();
@@ -2441,6 +2487,7 @@ fn make_signed_handshake_with_nonce(nonce_bytes: &[u8; 32]) -> (Value, String) {
     (envelope, client_id)
 }
 
+// @scenario: security:Authenticated handshake with valid signature accepted
 #[tokio::test]
 async fn test_authenticated_handshake_accepted() {
     let (deps, _, _) = test_deps();
@@ -2458,6 +2505,7 @@ async fn test_authenticated_handshake_accepted() {
     ws.close(None).await.ok();
 }
 
+// @scenario: security:Invalid signature rejected at handshake
 #[tokio::test]
 async fn test_invalid_signature_rejected() {
     let (deps, _, _) = test_deps();
@@ -2482,6 +2530,7 @@ async fn test_invalid_signature_rejected() {
     }
 }
 
+// @scenario: security:Client ID mismatch rejected at handshake
 #[tokio::test]
 async fn test_client_id_mismatch_rejected() {
     let (deps, _, _) = test_deps();
@@ -2505,6 +2554,7 @@ async fn test_client_id_mismatch_rejected() {
     }
 }
 
+// @scenario: security:Nonce replay rejected at handshake
 #[tokio::test]
 async fn test_nonce_replay_rejected() {
     // Two connections share the same nonce_tracker via shared deps
@@ -2584,6 +2634,7 @@ async fn test_nonce_replay_rejected() {
     }
 }
 
+// @scenario: security:Expired timestamp rejected at handshake
 #[tokio::test]
 async fn test_expired_timestamp_rejected() {
     let (deps, _, _) = test_deps();
@@ -2646,6 +2697,7 @@ async fn test_expired_timestamp_rejected() {
     }
 }
 
+// @scenario: relay_network:Legacy unauthenticated handshake still accepted
 #[tokio::test]
 async fn test_unauthenticated_handshake_still_accepted() {
     // Legacy clients without auth fields should still work
@@ -2668,6 +2720,7 @@ async fn test_unauthenticated_handshake_still_accepted() {
     ws.close(None).await.ok();
 }
 
+// @scenario: relay_network:Routing tokens enable anonymous addressing
 #[tokio::test]
 async fn test_routing_token_no_auth_required() {
     // routing_token mode should work without authentication

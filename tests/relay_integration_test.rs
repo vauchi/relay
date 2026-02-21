@@ -17,6 +17,7 @@ mod common;
 
 /// Test: Blob storage stores and retrieves correctly
 /// Based on: Scenario: Updates are delivered when recipient connects
+// @scenario: message_delivery:Messages persist until acknowledged
 #[test]
 fn test_blob_store_and_retrieve() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -34,6 +35,7 @@ fn test_blob_store_and_retrieve() {
 
 /// Test: Multiple blobs for same recipient
 /// Based on: Scenario: Offline recipient receives all pending updates
+// @scenario: sync_updates:Pending updates delivered on connect
 #[test]
 fn test_multiple_blobs_for_recipient() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -48,6 +50,7 @@ fn test_multiple_blobs_for_recipient() {
 
 /// Test: Blobs are separate per recipient
 /// Based on: Scenario: Updates are routed to correct recipient
+// @scenario: relay_network:Updates routed to correct recipient
 #[test]
 fn test_blobs_separate_per_recipient() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -66,6 +69,7 @@ fn test_blobs_separate_per_recipient() {
 
 /// Test: Acknowledgment removes specific blob
 /// Based on: Scenario: Client acknowledges receipt
+// @scenario: message_delivery:Client acknowledges message receipt
 #[test]
 fn test_acknowledge_removes_blob() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -94,6 +98,7 @@ fn test_acknowledge_removes_blob() {
 
 /// Test: Acknowledge non-existent blob returns false
 /// Based on: Scenario: Invalid acknowledgment is ignored
+// @scenario: message_delivery:Invalid acknowledgment is ignored
 #[test]
 fn test_acknowledge_nonexistent_returns_false() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -110,6 +115,7 @@ fn test_acknowledge_nonexistent_returns_false() {
 
 /// Test: Take removes all blobs for recipient
 /// Based on: Scenario: Recipient retrieves all pending updates
+// @scenario: sync_updates:Pending updates delivered on connect
 #[test]
 fn test_take_removes_all() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -128,6 +134,7 @@ fn test_take_removes_all() {
 
 /// Test: Cleanup removes expired blobs
 /// Based on: Scenario: Stale updates are cleaned up
+// @scenario: relay_network:Stale updates cleaned up
 #[test]
 fn test_cleanup_expired() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -147,6 +154,7 @@ fn test_cleanup_expired() {
 
 /// Test: Storage metrics are accurate
 /// Based on: Scenario: Relay reports storage metrics
+// @scenario: relay_network:Relay reports storage metrics
 #[test]
 fn test_storage_metrics() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -168,6 +176,7 @@ fn test_storage_metrics() {
 
 /// Test: Thread-safe concurrent access
 /// Based on: Scenario: Multiple clients connect simultaneously
+// @scenario: relay_network:Multiple clients connect simultaneously
 #[test]
 fn test_concurrent_access() {
     use std::thread;
@@ -203,6 +212,7 @@ fn test_concurrent_access() {
 
 /// Test: Peek doesn't modify storage
 /// Based on: Scenario: Peeking doesn't consume updates
+// @scenario: sync_updates:Peeking does not consume updates
 #[test]
 fn test_peek_idempotent() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -221,6 +231,7 @@ fn test_peek_idempotent() {
 }
 
 /// Test: Empty recipient returns empty vec
+// @scenario: sync_updates:No pending updates returns empty
 #[test]
 fn test_empty_recipient() {
     let store = SqliteBlobStore::in_memory().unwrap();

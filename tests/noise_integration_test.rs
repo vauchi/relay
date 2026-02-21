@@ -41,6 +41,7 @@ fn build_v2_wire_message(handshake: &[u8]) -> Vec<u8> {
     msg
 }
 
+// @scenario: noise_protocol:Client completes Noise NK handshake with relay
 #[test]
 fn test_client_to_relay_full_noise_handshake() {
     let relay_kp = generate_relay_keypair();
@@ -84,6 +85,7 @@ fn test_client_to_relay_full_noise_handshake() {
     assert_eq!(dec2, relay_msg);
 }
 
+// @scenario: noise_protocol:V2 framed protocol messages after handshake
 #[test]
 fn test_v2_handshake_with_framed_protocol_messages() {
     // Simulate what actually happens: after Noise handshake, all protocol
@@ -120,6 +122,7 @@ fn test_v2_handshake_with_framed_protocol_messages() {
     assert_eq!(&decrypted[4..], json);
 }
 
+// @scenario: noise_protocol:Wrong relay public key rejected
 #[test]
 fn test_wrong_relay_key_rejected() {
     let relay_kp = generate_relay_keypair();
@@ -134,6 +137,7 @@ fn test_wrong_relay_key_rejected() {
     assert!(result.is_err(), "Should reject handshake with wrong key");
 }
 
+// @scenario: noise_protocol:Sequential messages maintain transport state
 #[test]
 fn test_multiple_sequential_messages_maintain_state() {
     let relay_kp = generate_relay_keypair();
@@ -169,6 +173,7 @@ fn test_multiple_sequential_messages_maintain_state() {
     }
 }
 
+// @scenario: noise_protocol:Independent sessions are cryptographically isolated
 #[test]
 fn test_independent_sessions_are_isolated() {
     let relay_kp = generate_relay_keypair();
@@ -234,6 +239,7 @@ fn test_independent_sessions_are_isolated() {
 ///
 /// Traces to: noise_protocol.feature @transport
 ///   "replaying an earlier message should fail decryption"
+// @scenario: noise_protocol:Replayed messages detected and rejected
 #[test]
 fn test_message_replay_detection() {
     let relay_kp = generate_relay_keypair();
@@ -282,6 +288,7 @@ fn test_message_replay_detection() {
 ///
 /// Traces to: noise_protocol.feature @transport
 ///   Scenario: Corrupted ciphertext is detected
+// @scenario: noise_protocol:Corrupted ciphertext detected
 #[test]
 fn test_corrupted_ciphertext() {
     let relay_kp = generate_relay_keypair();
@@ -330,6 +337,7 @@ fn test_corrupted_ciphertext() {
 ///
 /// Traces to: noise_protocol.feature @transport
 ///   Scenario: Sequential messages use advancing nonces
+// @scenario: noise_protocol:Sequential nonce ordering verified
 #[test]
 fn test_sequential_nonce_verification() {
     let relay_kp = generate_relay_keypair();
@@ -422,6 +430,7 @@ fn test_sequential_nonce_verification() {
 ///
 /// Traces to: noise_protocol.feature @transport
 ///   (implied by nonce security properties)
+// @scenario: noise_protocol:Nonce exhaustion handled gracefully
 #[test]
 fn test_nonce_exhaustion() {
     let relay_kp = generate_relay_keypair();

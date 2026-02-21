@@ -210,6 +210,7 @@ async fn raw_http_get(addr: &str, path: &str) -> String {
 // Tests: HTTP health endpoints
 // ============================================================================
 
+// @scenario: relay_network:Health endpoint returns server status
 #[tokio::test]
 async fn test_health_endpoint_returns_json() {
     let (url, _, _) = start_full_server(100).await;
@@ -228,6 +229,7 @@ async fn test_health_endpoint_returns_json() {
     assert!(response.contains(r#""blob_count":"#));
 }
 
+// @scenario: relay_network:Health endpoint returns server status
 #[tokio::test]
 async fn test_up_endpoint_returns_json() {
     let (url, _, _) = start_full_server(100).await;
@@ -243,6 +245,7 @@ async fn test_up_endpoint_returns_json() {
     assert!(response.contains(r#""status":"healthy""#));
 }
 
+// @scenario: relay_network:Health endpoint returns server status
 #[tokio::test]
 async fn test_ready_endpoint_returns_json() {
     let (url, _, _) = start_full_server(100).await;
@@ -258,6 +261,7 @@ async fn test_ready_endpoint_returns_json() {
     assert!(response.contains(r#""status":"healthy""#));
 }
 
+// @scenario: relay_network:Unknown HTTP paths return error
 #[tokio::test]
 async fn test_unknown_http_path_returns_error() {
     let (url, _, _) = start_full_server(100).await;
@@ -277,6 +281,7 @@ async fn test_unknown_http_path_returns_error() {
 // Tests: WebSocket upgrade through peek
 // ============================================================================
 
+// @scenario: relay_network:Client connects to relay via WebSocket
 #[tokio::test]
 async fn test_websocket_upgrade_works_through_peek() {
     let (url, _, _) = start_full_server(100).await;
@@ -328,6 +333,7 @@ async fn test_websocket_upgrade_works_through_peek() {
 // Tests: Connection limiting
 // ============================================================================
 
+// @scenario: relay_network:Relay enforces connection limits
 #[tokio::test]
 async fn test_connection_limit_rejects_excess() {
     let (url, limiter, _) = start_full_server(2).await;
@@ -370,6 +376,7 @@ async fn test_connection_limit_rejects_excess() {
     drop(ws2);
 }
 
+// @scenario: relay_network:Relay enforces connection limits
 #[tokio::test]
 async fn test_connection_limit_releases_on_disconnect() {
     let (url, limiter, _) = start_full_server(1).await;
@@ -431,6 +438,7 @@ async fn test_connection_limit_releases_on_disconnect() {
 // Tests: Non-HTTP, non-WS traffic
 // ============================================================================
 
+// @scenario: relay_network:Non-HTTP non-WS traffic handled
 #[tokio::test]
 async fn test_non_http_non_ws_falls_through() {
     let (url, _, _) = start_full_server(100).await;
