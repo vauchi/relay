@@ -210,11 +210,11 @@ async fn raw_http_get(addr: &str, path: &str) -> String {
 // Tests: HTTP health endpoints
 // ============================================================================
 
+// @scenario: relay_network:Relay reports health status
 #[tokio::test]
 async fn test_health_endpoint_returns_json() {
     let (url, _, _) = start_full_server(100).await;
-    // Give server time to be ready
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Server is ready immediately — listener is bound before spawn (CC-06)
 
     let response = raw_http_get(&url, "/health").await;
 
@@ -228,10 +228,10 @@ async fn test_health_endpoint_returns_json() {
     assert!(response.contains(r#""blob_count":"#));
 }
 
+// @scenario: relay_network:Relay reports health status
 #[tokio::test]
 async fn test_up_endpoint_returns_json() {
     let (url, _, _) = start_full_server(100).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let response = raw_http_get(&url, "/up").await;
 
@@ -243,10 +243,10 @@ async fn test_up_endpoint_returns_json() {
     assert!(response.contains(r#""status":"healthy""#));
 }
 
+// @scenario: relay_network:Relay reports health status
 #[tokio::test]
 async fn test_ready_endpoint_returns_json() {
     let (url, _, _) = start_full_server(100).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let response = raw_http_get(&url, "/ready").await;
 
@@ -261,7 +261,6 @@ async fn test_ready_endpoint_returns_json() {
 #[tokio::test]
 async fn test_unknown_http_path_returns_error() {
     let (url, _, _) = start_full_server(100).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let response = raw_http_get(&url, "/unknown").await;
 
@@ -277,10 +276,10 @@ async fn test_unknown_http_path_returns_error() {
 // Tests: WebSocket upgrade through peek
 // ============================================================================
 
+// @scenario: relay_network:Client connects to relay via WebSocket
 #[tokio::test]
 async fn test_websocket_upgrade_works_through_peek() {
     let (url, _, _) = start_full_server(100).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let (mut ws, _) = connect_async(&url).await.unwrap();
 
@@ -328,19 +327,27 @@ async fn test_websocket_upgrade_works_through_peek() {
 // Tests: Connection limiting
 // ============================================================================
 
+// @scenario: relay_network:Relay enforces connection limits
 #[tokio::test]
 async fn test_connection_limit_rejects_excess() {
     let (url, limiter, _) = start_full_server(2).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Open 2 connections (at limit)
     let (ws1, _) = connect_async(&url).await.unwrap();
     let (ws2, _) = connect_async(&url).await.unwrap();
 
-    // Give server time to accept both
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Poll until server has accepted both (CC-06: no bare sleeps)
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if limiter.active_count() == 2 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Timed out waiting for 2 active connections");
 
-    // Active connections should be at limit
     assert_eq!(limiter.active_count(), 2);
 
     // 3rd connection: the TCP connect may succeed but WebSocket handshake
@@ -355,9 +362,17 @@ async fn test_connection_limit_rejects_excess() {
         }
         Ok(Ok(_)) => {
             // On some systems the connection may briefly succeed before being dropped.
-            // The limiter should still show 2 active (the 3rd was dropped).
-            // Give it a moment to settle.
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            // Poll until limiter settles back to 2 (CC-06: no bare sleeps)
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    if limiter.active_count() <= 2 {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("Limiter should settle back to 2");
             assert_eq!(
                 limiter.active_count(),
                 2,
@@ -370,10 +385,10 @@ async fn test_connection_limit_rejects_excess() {
     drop(ws2);
 }
 
+// @scenario: relay_network:Relay enforces connection limits
 #[tokio::test]
 async fn test_connection_limit_releases_on_disconnect() {
     let (url, limiter, _) = start_full_server(1).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // First connection
     {
@@ -410,14 +425,17 @@ async fn test_connection_limit_releases_on_disconnect() {
         ws.close(None).await.ok();
     }
 
-    // Wait for server to process the disconnect and release the guard
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    assert_eq!(
-        limiter.active_count(),
-        0,
-        "Connection slot should be released after disconnect"
-    );
+    // Poll until server processes the disconnect (CC-06: no bare sleeps)
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if limiter.active_count() == 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Connection slot should be released after disconnect");
 
     // Second connection should succeed
     let result = timeout(Duration::from_secs(2), connect_async(&url)).await;
@@ -434,7 +452,6 @@ async fn test_connection_limit_releases_on_disconnect() {
 #[tokio::test]
 async fn test_non_http_non_ws_falls_through() {
     let (url, _, _) = start_full_server(100).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let port: u16 = url
         .strip_prefix("ws://127.0.0.1:")
