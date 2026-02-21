@@ -64,6 +64,7 @@ async fn metrics_auth_middleware(
 pub fn create_router(state: HttpState) -> Router {
     Router::new()
         .route("/metrics", get(metrics_handler))
+        .route("/health", get(health_handler))
         .route("/pubkey", get(pubkey_handler))
         .route("/", get(root_handler))
         .layer(middleware::from_fn_with_state(
@@ -78,7 +79,15 @@ async fn root_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "service": "vauchi-relay-metrics",
         "version": env!("CARGO_PKG_VERSION"),
-        "endpoints": ["/metrics", "/pubkey"]
+        "endpoints": ["/health", "/metrics", "/pubkey"]
+    }))
+}
+
+/// Health check endpoint - returns 200 with JSON status if the server is running.
+async fn health_handler() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
     }))
 }
 
