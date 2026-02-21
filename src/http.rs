@@ -133,4 +133,38 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
     }
+
+    #[tokio::test]
+    async fn test_health_endpoint_returns_ok_status() {
+        let app = create_router(create_test_state());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .expect("Failed to read response body");
+        let body: serde_json::Value =
+            serde_json::from_slice(&body_bytes).expect("Response body is not valid JSON");
+
+        assert_eq!(
+            body["status"], "ok",
+            "Expected status field to be \"ok\", got: {:?}",
+            body["status"]
+        );
+        assert_eq!(
+            body["version"],
+            env!("CARGO_PKG_VERSION"),
+            "Expected version field to match CARGO_PKG_VERSION"
+        );
+    }
 }
