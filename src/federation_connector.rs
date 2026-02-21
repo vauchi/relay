@@ -186,7 +186,7 @@ where
         federation_protocol::create_federation_envelope(FederationPayload::PeerHandshake {
             relay_id: own_relay_id.to_string(),
             version: FEDERATION_PROTOCOL_VERSION,
-            listen_addr: config.listen_addr.to_string(),
+            listen_addr: config.network.listen_addr.to_string(),
         });
     let hs_data = federation_protocol::encode_federation_message(&handshake)
         .map_err(|e| format!("Failed to encode handshake: {}", e))?;
@@ -196,7 +196,7 @@ where
         .map_err(|e| format!("Failed to send handshake: {}", e))?;
 
     // Wait for PeerHandshakeAck
-    let peer_timeout = std::time::Duration::from_secs(config.federation_peer_timeout_secs);
+    let peer_timeout = std::time::Duration::from_secs(config.federation.peer_timeout_secs);
     let peer_relay_id = match timeout(peer_timeout, read.next()).await {
         Ok(Some(Ok(Message::Binary(data)))) => {
             match federation_protocol::decode_federation_message(&data) {
@@ -262,7 +262,7 @@ where
     // Read loop for incoming messages from peer
     loop {
         let msg = match timeout(
-            std::time::Duration::from_secs(config.federation_peer_timeout_secs * 4),
+            std::time::Duration::from_secs(config.federation.peer_timeout_secs * 4),
             read.next(),
         )
         .await
@@ -385,9 +385,9 @@ impl OffloadManager {
     /// Returns the number of blobs sent (not yet confirmed).
     pub async fn check_and_offload(&self) -> usize {
         let used = self.storage.storage_size_bytes();
-        let ratio = used as f64 / self.config.max_storage_bytes as f64;
+        let ratio = used as f64 / self.config.storage.max_storage_bytes as f64;
 
-        if ratio < self.config.federation_offload_threshold {
+        if ratio < self.config.federation.offload_threshold {
             return 0;
         }
 
@@ -486,7 +486,7 @@ impl OffloadManager {
                         blob_id: blob_id.to_string(),
                         target_relay: info.target_relay,
                         created_at_secs: info.created_at_secs,
-                        expires_at_secs: info.created_at_secs + self.config.blob_ttl_secs,
+                        expires_at_secs: info.created_at_secs + self.config.storage.blob_ttl_secs,
                     };
                     self.hint_store.store_hint(hint);
                     debug!("Offload confirmed: blob {} deleted locally", blob_id);
@@ -507,11 +507,18 @@ mod tests {
     use crate::storage::StoredBlob;
 
     fn make_test_config(max_storage: usize, threshold: f64) -> Arc<RelayConfig> {
+        use crate::config::{FederationConfig, StorageConfig};
         Arc::new(RelayConfig {
-            max_storage_bytes: max_storage,
-            federation_offload_threshold: threshold,
-            federation_offload_refuse: 0.95,
-            federation_peer_timeout_secs: 5,
+            storage: StorageConfig {
+                max_storage_bytes: max_storage,
+                ..Default::default()
+            },
+            federation: FederationConfig {
+                offload_threshold: threshold,
+                offload_refuse: 0.95,
+                peer_timeout_secs: 5,
+                ..Default::default()
+            },
             ..Default::default()
         })
     }

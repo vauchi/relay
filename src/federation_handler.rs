@@ -72,7 +72,7 @@ where
     let (mut write, mut read) = ws_stream.split();
 
     // Wait for PeerHandshake with timeout
-    let peer_timeout = std::time::Duration::from_secs(config.federation_peer_timeout_secs);
+    let peer_timeout = std::time::Duration::from_secs(config.federation.peer_timeout_secs);
     let (peer_relay_id, _peer_version) = match timeout(peer_timeout, read.next()).await {
         Ok(Some(Ok(Message::Binary(data)))) => {
             match federation_protocol::decode_federation_message(&data) {
@@ -91,7 +91,7 @@ where
                             send_federation_msg(
                                 &mut write,
                                 FederationPayload::PeerHandshakeAck {
-                                    relay_id: config.federation_relay_id.clone(),
+                                    relay_id: config.federation.relay_id.clone(),
                                     version: FEDERATION_PROTOCOL_VERSION,
                                     accepted: false,
                                     capacity_used_bytes: 0,
@@ -146,7 +146,7 @@ where
         relay_id: peer_relay_id.clone(),
         url: String::new(), // Acceptor doesn't know the URL
         capacity_used_bytes: used_bytes,
-        capacity_max_bytes: config.max_storage_bytes,
+        capacity_max_bytes: config.storage.max_storage_bytes,
         status: PeerStatus::Connected,
         sender: None,
         origin: PeerOrigin::Configured,
@@ -156,11 +156,11 @@ where
     // Send PeerHandshakeAck
     let ack =
         federation_protocol::create_federation_envelope(FederationPayload::PeerHandshakeAck {
-            relay_id: config.federation_relay_id.clone(),
+            relay_id: config.federation.relay_id.clone(),
             version: FEDERATION_PROTOCOL_VERSION,
             accepted: true,
             capacity_used_bytes: used_bytes,
-            capacity_max_bytes: config.max_storage_bytes,
+            capacity_max_bytes: config.storage.max_storage_bytes,
         });
     if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
         if write.send(Message::Binary(data)).await.is_err() {
@@ -175,7 +175,7 @@ where
     // Main message loop
     loop {
         let msg = match timeout(
-            std::time::Duration::from_secs(config.federation_peer_timeout_secs * 2),
+            std::time::Duration::from_secs(config.federation.peer_timeout_secs * 2),
             read.next(),
         )
         .await
@@ -240,8 +240,9 @@ where
 
                         // Check capacity
                         let current_usage = storage.storage_size_bytes();
-                        let usage_ratio = current_usage as f64 / config.max_storage_bytes as f64;
-                        if usage_ratio >= config.federation_offload_refuse {
+                        let usage_ratio =
+                            current_usage as f64 / config.storage.max_storage_bytes as f64;
+                        if usage_ratio >= config.federation.offload_refuse {
                             send_federation_msg(
                                 &mut write,
                                 FederationPayload::OffloadAck {
@@ -287,9 +288,9 @@ where
                         send_federation_msg(&mut write, FederationPayload::DrainAck).await;
                     }
                     FederationPayload::PeerAdvertisement { peers } => {
-                        if config.federation_gossip_enabled {
+                        if config.federation.gossip_enabled {
                             let new_count = gossip::process_peer_advertisement(
-                                &config.federation_relay_id,
+                                &config.federation.relay_id,
                                 &peer_registry,
                                 &peers,
                             );

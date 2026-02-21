@@ -43,7 +43,7 @@ use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_async, connect_async};
 
-use vauchi_relay::config::RelayConfig;
+use vauchi_relay::config::{FederationConfig, RelayConfig, StorageConfig};
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::federation_connector::OffloadManager;
@@ -188,15 +188,21 @@ struct SimulatedRelay {
 /// Creates a test RelayConfig for federation.
 fn make_fed_config(relay_id: &str, max_storage: usize, offload_threshold: f64) -> Arc<RelayConfig> {
     Arc::new(RelayConfig {
-        max_storage_bytes: max_storage,
-        federation_enabled: true,
-        federation_relay_id: relay_id.to_string(),
-        federation_offload_threshold: offload_threshold,
-        federation_offload_refuse: 0.95,
-        federation_peer_timeout_secs: 5,
-        federation_capacity_interval_secs: 1,
-        federation_gossip_interval_secs: 1,
-        federation_peer_ttl_secs: 60,
+        storage: StorageConfig {
+            max_storage_bytes: max_storage,
+            ..Default::default()
+        },
+        federation: FederationConfig {
+            enabled: true,
+            relay_id: relay_id.to_string(),
+            offload_threshold,
+            offload_refuse: 0.95,
+            peer_timeout_secs: 5,
+            capacity_interval_secs: 1,
+            gossip_interval_secs: 1,
+            peer_ttl_secs: 60,
+            ..Default::default()
+        },
         ..Default::default()
     })
 }
@@ -824,8 +830,14 @@ async fn test_federation_reconnection_after_partition() {
         hint_store: relay_a.hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry: relay_a.peer_registry.clone(),
         config: Arc::new(RelayConfig {
-            max_storage_bytes: 100, // Tiny to force offload attempt
-            federation_offload_threshold: 0.01,
+            storage: StorageConfig {
+                max_storage_bytes: 100, // Tiny to force offload attempt
+                ..Default::default()
+            },
+            federation: FederationConfig {
+                offload_threshold: 0.01,
+                ..Default::default()
+            },
             ..Default::default()
         }),
         pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),

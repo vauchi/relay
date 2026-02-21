@@ -88,9 +88,9 @@ fn load_ca_certs(path: &str) -> Result<rustls::RootCertStore, String> {
 
 /// Checks if federation mTLS is configured (all three paths are set).
 pub fn is_mtls_configured(config: &RelayConfig) -> bool {
-    config.federation_tls_cert_path.is_some()
-        && config.federation_tls_key_path.is_some()
-        && config.federation_tls_ca_path.is_some()
+    config.federation.tls_cert_path.is_some()
+        && config.federation.tls_key_path.is_some()
+        && config.federation.tls_ca_path.is_some()
 }
 
 /// Loads the federation mTLS configuration from file paths.
@@ -99,9 +99,9 @@ pub fn is_mtls_configured(config: &RelayConfig) -> bool {
 /// Returns `Err` if paths are set but files can't be loaded.
 pub fn load_federation_tls(config: &RelayConfig) -> Result<Option<FederationTlsConfig>, String> {
     let (cert_path, key_path, ca_path) = match (
-        &config.federation_tls_cert_path,
-        &config.federation_tls_key_path,
-        &config.federation_tls_ca_path,
+        &config.federation.tls_cert_path,
+        &config.federation.tls_key_path,
+        &config.federation.tls_ca_path,
     ) {
         (Some(cert), Some(key), Some(ca)) => (cert.as_str(), key.as_str(), ca.as_str()),
         _ => return Ok(None),
@@ -142,6 +142,7 @@ pub fn load_federation_tls(config: &RelayConfig) -> Result<Option<FederationTlsC
     }))
 }
 
+// INLINE_TEST_REQUIRED: Tests private helper functions (load_certs, load_private_key, load_ca_certs)
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,9 +150,12 @@ mod tests {
     #[test]
     fn test_is_mtls_configured_all_set() {
         let config = RelayConfig {
-            federation_tls_cert_path: Some("/path/to/cert.pem".to_string()),
-            federation_tls_key_path: Some("/path/to/key.pem".to_string()),
-            federation_tls_ca_path: Some("/path/to/ca.pem".to_string()),
+            federation: crate::config::FederationConfig {
+                tls_cert_path: Some("/path/to/cert.pem".to_string()),
+                tls_key_path: Some("/path/to/key.pem".to_string()),
+                tls_ca_path: Some("/path/to/ca.pem".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(is_mtls_configured(&config));
@@ -166,8 +170,11 @@ mod tests {
     #[test]
     fn test_is_mtls_configured_partial() {
         let config = RelayConfig {
-            federation_tls_cert_path: Some("/path/to/cert.pem".to_string()),
-            // key and ca not set
+            federation: crate::config::FederationConfig {
+                tls_cert_path: Some("/path/to/cert.pem".to_string()),
+                // key and ca not set
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(!is_mtls_configured(&config));
@@ -184,9 +191,12 @@ mod tests {
     #[test]
     fn test_load_federation_tls_missing_files() {
         let config = RelayConfig {
-            federation_tls_cert_path: Some("/nonexistent/cert.pem".to_string()),
-            federation_tls_key_path: Some("/nonexistent/key.pem".to_string()),
-            federation_tls_ca_path: Some("/nonexistent/ca.pem".to_string()),
+            federation: crate::config::FederationConfig {
+                tls_cert_path: Some("/nonexistent/cert.pem".to_string()),
+                tls_key_path: Some("/nonexistent/key.pem".to_string()),
+                tls_ca_path: Some("/nonexistent/ca.pem".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let result = load_federation_tls(&config);
@@ -273,9 +283,12 @@ mod tests {
         let (ca_file, cert_file, key_file) = generate_test_certs();
 
         let config = RelayConfig {
-            federation_tls_cert_path: Some(cert_file.path().to_str().unwrap().to_string()),
-            federation_tls_key_path: Some(key_file.path().to_str().unwrap().to_string()),
-            federation_tls_ca_path: Some(ca_file.path().to_str().unwrap().to_string()),
+            federation: crate::config::FederationConfig {
+                tls_cert_path: Some(cert_file.path().to_str().unwrap().to_string()),
+                tls_key_path: Some(key_file.path().to_str().unwrap().to_string()),
+                tls_ca_path: Some(ca_file.path().to_str().unwrap().to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -296,9 +309,12 @@ mod tests {
         let (ca_file, cert_file, key_file) = generate_test_certs();
 
         let config = RelayConfig {
-            federation_tls_cert_path: Some(cert_file.path().to_str().unwrap().to_string()),
-            federation_tls_key_path: Some(key_file.path().to_str().unwrap().to_string()),
-            federation_tls_ca_path: Some(ca_file.path().to_str().unwrap().to_string()),
+            federation: crate::config::FederationConfig {
+                tls_cert_path: Some(cert_file.path().to_str().unwrap().to_string()),
+                tls_key_path: Some(key_file.path().to_str().unwrap().to_string()),
+                tls_ca_path: Some(ca_file.path().to_str().unwrap().to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
