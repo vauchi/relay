@@ -568,4 +568,112 @@ mod tests {
 
         assert_eq!(id, "env-relay-id");
     }
+
+    // === Tests for nested config struct layout ===
+
+    #[test]
+    fn test_nested_network_config_defaults() {
+        let config = RelayConfig::default();
+        assert_eq!(config.network.listen_addr.port(), 8080);
+        assert_eq!(config.network.max_connections, 1000);
+        assert_eq!(config.network.max_message_size, 1_048_576);
+        assert_eq!(config.network.idle_timeout_secs, 300);
+    }
+
+    #[test]
+    fn test_nested_storage_config_defaults() {
+        let config = RelayConfig::default();
+        assert_eq!(config.storage.backend, StorageBackend::Sqlite);
+        assert_eq!(config.storage.data_dir, PathBuf::from("./data"));
+        assert_eq!(config.storage.blob_ttl_secs, 30 * 24 * 60 * 60);
+        assert_eq!(config.storage.cleanup_interval_secs, 3600);
+        assert_eq!(config.storage.max_blobs_per_user, 1000);
+        assert_eq!(config.storage.max_storage_per_user, 50_000_000);
+        assert_eq!(config.storage.max_storage_bytes, 1_073_741_824);
+    }
+
+    #[test]
+    fn test_nested_federation_config_defaults() {
+        let config = RelayConfig::default();
+        assert!(!config.federation.enabled);
+        assert!(config.federation.peers.is_empty());
+        assert!((config.federation.offload_threshold - 0.80).abs() < f64::EPSILON);
+        assert!((config.federation.offload_refuse - 0.95).abs() < f64::EPSILON);
+        assert_eq!(config.federation.drain_timeout_secs, 300);
+        assert_eq!(config.federation.peer_timeout_secs, 30);
+        assert_eq!(config.federation.capacity_interval_secs, 60);
+        assert!(!config.federation.gossip_enabled);
+        assert_eq!(config.federation.gossip_interval_secs, 120);
+        assert_eq!(config.federation.peer_ttl_secs, 3600);
+        assert!(config.federation.tls_cert_path.is_none());
+        assert!(config.federation.tls_key_path.is_none());
+        assert!(config.federation.tls_ca_path.is_none());
+        assert!(config.federation.mtls_addr.is_none());
+        assert!(config.federation.relay_id.is_empty());
+    }
+
+    #[test]
+    fn test_nested_security_config_defaults() {
+        let config = RelayConfig::default();
+        assert_eq!(config.security.rate_limit_per_min, 60);
+        assert_eq!(config.security.recovery_rate_limit_per_min, 10);
+        assert!(config.security.require_noise_encryption);
+    }
+
+    #[test]
+    fn test_nested_config_network_has_idle_timeout_method() {
+        let config = RelayConfig::default();
+        assert_eq!(config.network.idle_timeout(), Duration::from_secs(300));
+    }
+
+    #[test]
+    fn test_nested_config_storage_has_blob_ttl_method() {
+        let config = RelayConfig::default();
+        assert_eq!(
+            config.storage.blob_ttl(),
+            Duration::from_secs(30 * 24 * 60 * 60)
+        );
+    }
+
+    #[test]
+    fn test_nested_config_storage_has_cleanup_interval_method() {
+        let config = RelayConfig::default();
+        assert_eq!(config.storage.cleanup_interval(), Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn test_nested_config_construction_with_overrides() {
+        let config = RelayConfig {
+            network: NetworkConfig {
+                listen_addr: "127.0.0.1:9090".parse().unwrap(),
+                max_connections: 500,
+                ..Default::default()
+            },
+            storage: StorageConfig {
+                backend: StorageBackend::Memory,
+                max_storage_bytes: 512_000,
+                ..Default::default()
+            },
+            federation: FederationConfig {
+                enabled: true,
+                peers: vec!["ws://peer-1:8080".to_string()],
+                offload_threshold: 0.70,
+                ..Default::default()
+            },
+            security: SecurityConfig {
+                rate_limit_per_min: 120,
+                require_noise_encryption: false,
+                ..Default::default()
+            },
+        };
+        assert_eq!(config.network.listen_addr.port(), 9090);
+        assert_eq!(config.network.max_connections, 500);
+        assert_eq!(config.storage.backend, StorageBackend::Memory);
+        assert_eq!(config.storage.max_storage_bytes, 512_000);
+        assert!(config.federation.enabled);
+        assert_eq!(config.federation.peers.len(), 1);
+        assert!((config.federation.offload_threshold - 0.70).abs() < f64::EPSILON);
+        assert_eq!(config.security.rate_limit_per_min, 120);
+        assert!(!config.security.require_noise_encryption);
+    }
 }
