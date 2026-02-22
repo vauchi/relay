@@ -3,21 +3,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # Planner stage: generate recipe.json for dependency caching
-FROM rust:1.84-bookworm AS planner
+FROM rust:1.93-bookworm AS planner
 RUN cargo install cargo-chef
 WORKDIR /app
 COPY . ./relay
 RUN cd relay && cargo chef prepare --recipe-path /app/recipe.json
 
 # Cook stage: build dependencies only (cached layer)
-FROM rust:1.84-bookworm AS cook
+FROM rust:1.93-bookworm AS cook
 RUN cargo install cargo-chef
 WORKDIR /app
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build stage: compile the actual source (deps already cached)
-FROM rust:1.84-bookworm AS builder
+FROM rust:1.93-bookworm AS builder
 WORKDIR /app
 COPY --from=cook /app/target target
 COPY --from=cook /usr/local/cargo /usr/local/cargo
