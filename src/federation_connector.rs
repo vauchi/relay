@@ -22,6 +22,7 @@ use crate::config::RelayConfig;
 use crate::federation_protocol::{self, FederationPayload, FEDERATION_PROTOCOL_VERSION};
 use crate::forwarding_hints::{ForwardingHint, ForwardingHintStore};
 use crate::integrity;
+use crate::padding;
 use crate::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
 use crate::storage::BlobStore;
 
@@ -422,13 +423,15 @@ impl OffloadManager {
 
         let mut sent = 0;
         for (routing_id, blob) in candidates {
-            let hash = integrity::compute_integrity_hash(&blob.data);
+            // Pad blob data to fixed bucket size to prevent traffic analysis
+            let padded_data = padding::pad(&blob.data);
+            let hash = integrity::compute_integrity_hash(&padded_data);
 
             let offload_msg =
                 federation_protocol::create_federation_envelope(FederationPayload::OffloadBlob {
                     blob_id: blob.id.clone(),
                     routing_id: routing_id.clone(),
-                    data: blob.data.clone(),
+                    data: padded_data,
                     created_at_secs: blob.created_at_secs,
                     integrity_hash: hash,
                     hop_count: blob.hop_count,

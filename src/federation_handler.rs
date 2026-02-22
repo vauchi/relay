@@ -26,6 +26,7 @@ use crate::federation_protocol::{
 };
 use crate::forwarding_hints::ForwardingHintStore;
 use crate::integrity;
+use crate::padding;
 use crate::peer_registry::gossip;
 use crate::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
 use crate::storage::{BlobStore, StoredBlob};
@@ -224,7 +225,7 @@ where
                             continue;
                         }
 
-                        // Verify integrity
+                        // Verify integrity (on padded data, as sent)
                         if !integrity::verify_integrity_hash(&blob_data, &integrity_hash) {
                             send_federation_msg(
                                 &mut write,
@@ -237,6 +238,16 @@ where
                             .await;
                             continue;
                         }
+
+                        // Unpad blob data (remove federation padding)
+                        let unpadded_data = match padding::unpad(&blob_data) {
+                            Some(data) => data,
+                            None => {
+                                // Accept unpadded blobs for backwards compatibility
+                                warn!("[fed-{}] Received unpadded blob, storing as-is", session);
+                                blob_data
+                            }
+                        };
 
                         // Check capacity
                         let current_usage = storage.storage_size_bytes();
@@ -256,8 +267,11 @@ where
                         }
 
                         // Store blob with incremented hop_count
-                        let blob =
-                            StoredBlob::with_metadata(blob_data, created_at_secs, hop_count + 1);
+                        let blob = StoredBlob::with_metadata(
+                            unpadded_data,
+                            created_at_secs,
+                            hop_count + 1,
+                        );
                         storage.store(&blob_routing_id, blob);
                         offload_count += 1;
 
