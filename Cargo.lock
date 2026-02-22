@@ -1852,6 +1852,7 @@ dependencies = [
  "serde",
  "serde_json",
  "snow",
+ "subtle",
  "tempfile",
  "tokio",
  "tokio-rustls",

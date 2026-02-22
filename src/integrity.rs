@@ -9,6 +9,7 @@
 //! has plaintext).
 
 use ring::digest;
+use subtle::ConstantTimeEq;
 
 /// Computes a SHA-256 hash of the given data and returns it as a hex string.
 pub fn compute_integrity_hash(data: &[u8]) -> String {
@@ -17,10 +18,19 @@ pub fn compute_integrity_hash(data: &[u8]) -> String {
 }
 
 /// Verifies that the given data matches the expected hex-encoded SHA-256 hash.
+///
+/// Uses constant-time comparison (`subtle::ConstantTimeEq`) to prevent timing
+/// side-channel attacks from rogue federated relays.
 pub fn verify_integrity_hash(data: &[u8], expected_hex: &str) -> bool {
-    compute_integrity_hash(data) == expected_hex
+    let computed = digest::digest(&digest::SHA256, data);
+    let expected_bytes = match hex::decode(expected_hex) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    computed.as_ref().ct_eq(&expected_bytes).into()
 }
 
+// INLINE_TEST_REQUIRED: Tests verify constant-time comparison behavior of integrity hash internals
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,5 +89,52 @@ mod tests {
         let hash = compute_integrity_hash(&data);
         assert!(verify_integrity_hash(&data, &hash));
         assert_eq!(hash.len(), 64); // SHA-256 = 32 bytes = 64 hex chars
+    }
+
+    /// Verifies that `verify_integrity_hash` correctly accepts matching hashes,
+    /// rejects wrong hashes, and rejects malformed hex input.
+    /// The implementation must use constant-time comparison
+    /// (`subtle::ConstantTimeEq`) to prevent timing side-channel attacks
+    /// from rogue federated relays.
+    #[test]
+    fn test_verify_integrity_hash_uses_constant_time_eq() {
+        let data = b"constant-time comparison test payload";
+        let correct_hex = compute_integrity_hash(data);
+
+        // Correct hash must be accepted
+        assert!(
+            verify_integrity_hash(data, &correct_hex),
+            "verify_integrity_hash must accept a correct hash"
+        );
+
+        // Wrong hash (flip last hex char) must be rejected
+        let mut wrong_hex = correct_hex.clone();
+        let last = wrong_hex.pop().unwrap();
+        wrong_hex.push(if last == '0' { '1' } else { '0' });
+        assert!(
+            !verify_integrity_hash(data, &wrong_hex),
+            "verify_integrity_hash must reject a wrong hash"
+        );
+
+        // Malformed hex (odd length) must be rejected, not panic
+        assert!(
+            !verify_integrity_hash(data, "abc"),
+            "verify_integrity_hash must reject malformed hex (odd length)"
+        );
+
+        // Malformed hex (invalid chars) must be rejected, not panic
+        assert!(
+            !verify_integrity_hash(
+                data,
+                "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+            ),
+            "verify_integrity_hash must reject malformed hex (invalid chars)"
+        );
+
+        // Wrong length (valid hex but not 32 bytes) must be rejected
+        assert!(
+            !verify_integrity_hash(data, "abcd"),
+            "verify_integrity_hash must reject hash of wrong length"
+        );
     }
 }

@@ -46,6 +46,9 @@ prometheus = "0.14"
 # SHA-256 integrity hashing for federation blob transfer
 ring = "0.17"
 
+# Constant-time comparison for integrity hash verification (prevents timing attacks)
+subtle = "2"
+
 # Noise protocol for inner transport encryption (defense-in-depth inside TLS)
 snow = "0.9"
 
