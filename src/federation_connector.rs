@@ -104,6 +104,22 @@ async fn try_connect_to_peer(
         )
         .await
     } else {
+        // Non-TLS path: still need SSRF validation after DNS resolution.
+        // Extract host/port and validate resolved IPs before connecting.
+        let stripped = federation_url
+            .strip_prefix("ws://")
+            .ok_or_else(|| "Non-TLS federation requires ws:// scheme".to_string())?;
+        let authority = stripped.split('/').next().unwrap_or(stripped);
+        let (host, port) = if let Some((h, p)) = authority.rsplit_once(':') {
+            let port: u16 = p.parse().map_err(|_| "Invalid port in URL".to_string())?;
+            (h.to_string(), port)
+        } else {
+            (authority.to_string(), 80u16)
+        };
+        crate::url_validation::resolve_and_validate(&host, port)
+            .await
+            .map_err(|e| format!("SSRF: {}", e))?;
+
         let (ws_stream, _) = tokio_tungstenite::connect_async(&federation_url)
             .await
             .map_err(|e| format!("WebSocket connect failed: {}", e))?;
@@ -139,13 +155,15 @@ async fn connect_with_tls(
         (authority.to_string(), 443u16)
     };
 
-    // Validate resolved host against SSRF blocklist (Tracker #133)
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        crate::url_validation::validate_resolved_ip(ip).map_err(|e| format!("SSRF: {}", e))?;
-    }
+    // Explicit DNS resolution + SSRF validation (prevents DNS rebinding)
+    // Validates ALL resolved IPs before TCP connect — hostnames that resolve
+    // to private IPs are blocked, not just IP literal URLs.
+    let validated_addr = crate::url_validation::resolve_and_validate(&host, port)
+        .await
+        .map_err(|e| format!("SSRF: {}", e))?;
 
-    // TCP connect
-    let tcp_stream = tokio::net::TcpStream::connect(format!("{}:{}", host, port))
+    // TCP connect to validated address
+    let tcp_stream = tokio::net::TcpStream::connect(validated_addr)
         .await
         .map_err(|e| format!("TCP connect failed: {}", e))?;
 

@@ -148,6 +148,41 @@ pub fn validate_resolved_ip(ip: IpAddr) -> Result<(), SsrfError> {
     check_blocked_ip(ip)
 }
 
+/// Resolves a host:port pair and validates all resolved IPs against the SSRF blocklist.
+///
+/// Returns the first valid `SocketAddr` or an error if:
+/// - DNS resolution fails
+/// - All resolved addresses are in blocked ranges
+///
+/// This prevents DNS rebinding attacks where a hostname initially resolves
+/// to a public IP (passing URL validation) but later resolves to a private IP.
+pub async fn resolve_and_validate(
+    host: &str,
+    port: u16,
+) -> Result<std::net::SocketAddr, SsrfError> {
+    let addr_str = format!("{}:{}", host, port);
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(&addr_str)
+        .await
+        .map_err(|e| SsrfError::InvalidUrl(format!("DNS resolution failed for {}: {}", host, e)))?
+        .collect();
+
+    if addrs.is_empty() {
+        return Err(SsrfError::InvalidUrl(format!(
+            "DNS resolution returned no addresses for {}",
+            host
+        )));
+    }
+
+    // Validate ALL resolved addresses — reject if any resolve to blocked ranges
+    for addr in &addrs {
+        check_blocked_ip(addr.ip())?;
+    }
+
+    // Return first address (all are validated)
+    Ok(addrs[0])
+}
+
+// INLINE_TEST_REQUIRED: SSRF validation tests must access private functions (check_blocked_ip, extract_host)
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,5 +397,68 @@ mod tests {
         let err = SsrfError::LoopbackIp("127.0.0.1".parse().unwrap());
         assert!(err.to_string().contains("loopback"));
         assert!(err.to_string().contains("127.0.0.1"));
+    }
+
+    // === resolve_and_validate ===
+
+    #[tokio::test]
+    async fn test_resolve_and_validate_blocks_loopback_ip_literal() {
+        let result = resolve_and_validate("127.0.0.1", 8080).await;
+        assert!(
+            matches!(result, Err(SsrfError::LoopbackIp(_))),
+            "Expected loopback block, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_and_validate_blocks_private_ip_literal() {
+        let result = resolve_and_validate("10.0.0.1", 8080).await;
+        assert!(
+            matches!(result, Err(SsrfError::PrivateIp(_))),
+            "Expected private block, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_and_validate_blocks_192_168_ip_literal() {
+        let result = resolve_and_validate("192.168.1.1", 8080).await;
+        assert!(
+            matches!(result, Err(SsrfError::PrivateIp(_))),
+            "Expected private block, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_and_validate_blocks_link_local() {
+        let result = resolve_and_validate("169.254.1.1", 8080).await;
+        assert!(
+            matches!(result, Err(SsrfError::LinkLocalIp(_))),
+            "Expected link-local block, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_and_validate_invalid_host() {
+        let result = resolve_and_validate("", 8080).await;
+        assert!(
+            matches!(result, Err(SsrfError::InvalidUrl(_))),
+            "Expected DNS error, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_and_validate_localhost_hostname() {
+        // "localhost" resolves to 127.0.0.1 — should be blocked
+        let result = resolve_and_validate("localhost", 8080).await;
+        assert!(
+            matches!(result, Err(SsrfError::LoopbackIp(_))),
+            "Expected loopback block for localhost, got: {:?}",
+            result
+        );
     }
 }
