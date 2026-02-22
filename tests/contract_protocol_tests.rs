@@ -73,6 +73,7 @@ fn contract_all_payload_variants_exist() {
             MessagePayload::PurgeResponse(_) => "PurgeResponse",
             MessagePayload::AccountRevoked(_) => "AccountRevoked",
             MessagePayload::ForwardingHints(_) => "ForwardingHints",
+            MessagePayload::DeviceLinkRelay(_) => "DeviceLinkRelay",
             MessagePayload::Unknown => "Unknown",
         }
     }

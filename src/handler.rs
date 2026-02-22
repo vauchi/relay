@@ -866,6 +866,10 @@ fn handle_message(ctx: &MessageContext<'_>, envelope: &protocol::MessageEnvelope
             debug!("[{}] Unexpected ForwardingHints", ctx.session);
             HandleResult::empty()
         }
+        protocol::MessagePayload::DeviceLinkRelay(_) => {
+            debug!("[{}] Unexpected DeviceLinkRelay", ctx.session);
+            HandleResult::empty()
+        }
         protocol::MessagePayload::Unknown => {
             debug!("[{}] Unknown message type", ctx.session);
             HandleResult::empty()
