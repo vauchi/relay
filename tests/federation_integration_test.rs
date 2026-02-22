@@ -208,13 +208,19 @@ fn make_client_purge() -> serde_json::Value {
 /// Creates a test RelayConfig for federation.
 fn make_fed_config(max_storage: usize, offload_threshold: f64) -> Arc<RelayConfig> {
     Arc::new(RelayConfig {
-        max_storage_bytes: max_storage,
-        federation_enabled: true,
-        federation_relay_id: "test-relay".to_string(),
-        federation_offload_threshold: offload_threshold,
-        federation_offload_refuse: 0.95,
-        federation_peer_timeout_secs: 5,
-        federation_capacity_interval_secs: 1,
+        storage: vauchi_relay::config::StorageConfig {
+            max_storage_bytes: max_storage,
+            ..Default::default()
+        },
+        federation: vauchi_relay::config::FederationConfig {
+            enabled: true,
+            relay_id: "test-relay".to_string(),
+            offload_threshold,
+            offload_refuse: 0.95,
+            peer_timeout_secs: 5,
+            capacity_interval_secs: 1,
+            ..Default::default()
+        },
         ..Default::default()
     })
 }
