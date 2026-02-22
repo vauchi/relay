@@ -231,6 +231,8 @@ fn make_client_deps(
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     }
 }
 
@@ -299,6 +301,8 @@ async fn start_client_server(deps: ConnectionDeps) -> String {
                 noise_static_key: None,
                 require_noise_encryption: false,
                 nonce_tracker: Arc::new(handler::NonceTracker::new()),
+                delivery_jitter_min_ms: 0,
+                delivery_jitter_max_ms: 0,
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {

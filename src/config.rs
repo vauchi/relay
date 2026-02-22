@@ -147,7 +147,7 @@ impl Default for FederationConfig {
     }
 }
 
-/// Security-related configuration (rate limiting, encryption).
+/// Security-related configuration (rate limiting, encryption, jitter).
 #[derive(Debug, Clone)]
 pub struct SecurityConfig {
     /// Rate limit (messages per minute per client).
@@ -158,6 +158,10 @@ pub struct SecurityConfig {
     /// Whether to require Noise NK inner encryption for all connections.
     /// When true, plaintext (v1) connections are rejected.
     pub require_noise_encryption: bool,
+    /// Minimum delivery jitter delay in milliseconds (traffic analysis resistance).
+    pub delivery_jitter_min_ms: u64,
+    /// Maximum delivery jitter delay in milliseconds (traffic analysis resistance).
+    pub delivery_jitter_max_ms: u64,
 }
 
 impl Default for SecurityConfig {
@@ -166,6 +170,8 @@ impl Default for SecurityConfig {
             rate_limit_per_min: 60,
             recovery_rate_limit_per_min: 10, // 10 recovery queries per minute (anti-enumeration)
             require_noise_encryption: true,
+            delivery_jitter_min_ms: crate::jitter::DEFAULT_JITTER_MIN_MS,
+            delivery_jitter_max_ms: crate::jitter::DEFAULT_JITTER_MAX_MS,
         }
     }
 }
@@ -270,6 +276,18 @@ impl RelayConfig {
 
         if let Ok(val) = std::env::var("RELAY_REQUIRE_NOISE_ENCRYPTION") {
             config.security.require_noise_encryption = val == "true" || val == "1";
+        }
+
+        if let Ok(val) = std::env::var("RELAY_DELIVERY_JITTER_MIN_MS") {
+            if let Ok(parsed) = val.parse() {
+                config.security.delivery_jitter_min_ms = parsed;
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_DELIVERY_JITTER_MAX_MS") {
+            if let Ok(parsed) = val.parse() {
+                config.security.delivery_jitter_max_ms = parsed;
+            }
         }
 
         // Federation configuration
@@ -704,6 +722,8 @@ mod tests {
         assert_eq!(config.security.rate_limit_per_min, 60);
         assert_eq!(config.security.recovery_rate_limit_per_min, 10);
         assert!(config.security.require_noise_encryption);
+        assert_eq!(config.security.delivery_jitter_min_ms, 50);
+        assert_eq!(config.security.delivery_jitter_max_ms, 500);
     }
 
     #[test]

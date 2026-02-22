@@ -242,6 +242,8 @@ fn test_deps() -> (
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     };
     (deps, storage, registry)
 }
@@ -567,6 +569,8 @@ async fn test_quota_blob_count_exceeded() {
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     };
 
     let url = start_test_server(deps).await;
@@ -615,6 +619,8 @@ async fn test_quota_byte_limit_exceeded() {
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     };
 
     let url = start_test_server(deps).await;
@@ -825,6 +831,8 @@ async fn test_delivered_ack_to_sender() {
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -844,6 +852,8 @@ async fn test_delivered_ack_to_sender() {
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     };
 
     // Spawn both servers
@@ -951,6 +961,8 @@ async fn test_suppress_presence_no_delivered_ack() {
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -970,6 +982,8 @@ async fn test_suppress_presence_no_delivered_ack() {
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     };
 
     tokio::spawn(async move {
@@ -1172,6 +1186,8 @@ fn test_deps_custom(
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     };
     (deps, storage, registry, device_sync_storage)
 }
@@ -1226,6 +1242,8 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 noise_static_key: None,
                 require_noise_encryption: false,
                 nonce_tracker: Arc::new(handler::NonceTracker::new()),
+                delivery_jitter_min_ms: 0,
+                delivery_jitter_max_ms: 0,
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -2085,6 +2103,8 @@ async fn test_concurrent_store_and_receive() {
             noise_static_key: None,
             require_noise_encryption: false,
             nonce_tracker: Arc::new(handler::NonceTracker::new()),
+            delivery_jitter_min_ms: 0,
+            delivery_jitter_max_ms: 0,
         }
     };
 
@@ -2153,6 +2173,8 @@ async fn test_received_by_recipient_after_delivered_not_forwarded() {
             noise_static_key: None,
             require_noise_encryption: false,
             nonce_tracker: Arc::new(handler::NonceTracker::new()),
+            delivery_jitter_min_ms: 0,
+            delivery_jitter_max_ms: 0,
         }
     };
 
@@ -2254,6 +2276,8 @@ async fn test_suppress_presence_blocks_received_by_recipient() {
             noise_static_key: None,
             require_noise_encryption: false,
             nonce_tracker: Arc::new(handler::NonceTracker::new()),
+            delivery_jitter_min_ms: 0,
+            delivery_jitter_max_ms: 0,
         }
     };
 
@@ -2591,6 +2615,8 @@ async fn test_nonce_replay_rejected() {
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: nonce_tracker.clone(),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     };
 
     let url1 = start_test_server(deps1).await;
@@ -2623,6 +2649,8 @@ async fn test_nonce_replay_rejected() {
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: nonce_tracker.clone(),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     };
 
     let url2 = start_test_server(deps2).await;

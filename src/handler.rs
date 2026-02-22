@@ -432,6 +432,10 @@ pub struct ConnectionDeps {
     pub require_noise_encryption: bool,
     /// Nonce tracker for handshake replay prevention. Shared across all connections.
     pub nonce_tracker: Arc<NonceTracker>,
+    /// Minimum delivery jitter delay in milliseconds (traffic analysis resistance).
+    pub delivery_jitter_min_ms: u64,
+    /// Maximum delivery jitter delay in milliseconds (traffic analysis resistance).
+    pub delivery_jitter_max_ms: u64,
 }
 
 // =========================================================================
@@ -1109,6 +1113,13 @@ async fn deliver_pending(
     let pending = deps.storage.peek(&ctx.routing_id);
     let pending_blob_ids: Vec<String> = pending.iter().map(|b| b.id.clone()).collect();
     for blob in pending {
+        // Apply per-blob delivery jitter for traffic analysis resistance (T2.2, T7.4)
+        let jitter = crate::jitter::generate_jitter(
+            deps.delivery_jitter_min_ms,
+            deps.delivery_jitter_max_ms,
+        );
+        tokio::time::sleep(jitter).await;
+
         let envelope = protocol::create_update_delivery(&blob.id, &ctx.routing_id, &blob.data);
         match protocol::encode_message(&envelope) {
             Ok(data) => {
@@ -1938,6 +1949,8 @@ mod tests {
                 noise_static_key: None,
                 require_noise_encryption: false,
                 nonce_tracker: Arc::new(NonceTracker::new()),
+                delivery_jitter_min_ms: 0,
+                delivery_jitter_max_ms: 0,
             }
         }
 
@@ -2012,6 +2025,8 @@ mod tests {
                 noise_static_key: None,
                 require_noise_encryption: false,
                 nonce_tracker: Arc::new(NonceTracker::new()),
+                delivery_jitter_min_ms: 0,
+                delivery_jitter_max_ms: 0,
             };
             let ctx = make_test_context(&deps);
             let recipient_id = "c".repeat(64);

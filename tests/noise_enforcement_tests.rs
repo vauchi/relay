@@ -68,6 +68,8 @@ fn make_deps(require_noise: bool) -> ConnectionDeps {
         noise_static_key: None,
         require_noise_encryption: require_noise,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     }
 }
 

@@ -609,6 +609,8 @@ async fn main() {
                                 noise_static_key,
                                 require_noise_encryption: config.security.require_noise_encryption,
                                 nonce_tracker,
+                                delivery_jitter_min_ms: config.security.delivery_jitter_min_ms,
+                                delivery_jitter_max_ms: config.security.delivery_jitter_max_ms,
                             },
                         )
                         .await;

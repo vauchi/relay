@@ -358,6 +358,8 @@ fn make_client_deps(
         noise_static_key: None,
         require_noise_encryption: false,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
     }
 }
 
