@@ -64,6 +64,7 @@ async fn metrics_auth_middleware(
 pub fn create_router(state: HttpState) -> Router {
     Router::new()
         .route("/metrics", get(metrics_handler))
+        .route("/health", get(health_handler))
         .route("/pubkey", get(pubkey_handler))
         .route("/", get(root_handler))
         .layer(middleware::from_fn_with_state(
@@ -78,7 +79,15 @@ async fn root_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "service": "vauchi-relay-metrics",
         "version": env!("CARGO_PKG_VERSION"),
-        "endpoints": ["/metrics", "/pubkey"]
+        "endpoints": ["/health", "/metrics", "/pubkey"]
+    }))
+}
+
+/// Health check endpoint - returns 200 with JSON status if the server is running.
+async fn health_handler() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
     }))
 }
 
@@ -132,5 +141,39 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_health_endpoint_returns_ok_status() {
+        let app = create_router(create_test_state());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .expect("Failed to read response body");
+        let body: serde_json::Value =
+            serde_json::from_slice(&body_bytes).expect("Response body is not valid JSON");
+
+        assert_eq!(
+            body["status"], "ok",
+            "Expected status field to be \"ok\", got: {:?}",
+            body["status"]
+        );
+        assert_eq!(
+            body["version"],
+            env!("CARGO_PKG_VERSION"),
+            "Expected version field to match CARGO_PKG_VERSION"
+        );
     }
 }

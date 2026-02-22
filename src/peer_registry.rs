@@ -254,6 +254,7 @@ impl PeerRegistry {
     }
 }
 
+// INLINE_TEST_REQUIRED: Tests internal PeerRegistry state (RwLock-wrapped HashMap) not accessible externally
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,12 +509,12 @@ pub mod gossip {
         peer_registry: Arc<PeerRegistry>,
         config: Arc<RelayConfig>,
     ) {
-        let interval = Duration::from_secs(config.federation_gossip_interval_secs);
-        let peer_ttl = config.federation_peer_ttl_secs;
+        let interval = Duration::from_secs(config.federation.gossip_interval_secs);
+        let peer_ttl = config.federation.peer_ttl_secs;
 
         info!(
             "Gossip task started: interval={}s, peer_ttl={}s",
-            config.federation_gossip_interval_secs, peer_ttl
+            config.federation.gossip_interval_secs, peer_ttl
         );
 
         loop {
@@ -627,6 +628,7 @@ pub mod gossip {
         new_count
     }
 
+    // INLINE_TEST_REQUIRED: Tests gossip processing logic using internal PeerRegistry methods
     #[cfg(test)]
     mod tests {
         use super::*;

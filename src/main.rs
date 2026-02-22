@@ -51,7 +51,7 @@ async fn main() {
     let config = RelayConfig::from_env();
 
     // TLS enforcement: refuse to start if not localhost and TLS not confirmed
-    let is_localhost = config.listen_addr.ip().is_loopback();
+    let is_localhost = config.network.listen_addr.ip().is_loopback();
     let tls_verified = std::env::var("RELAY_TLS_VERIFIED")
         .map(|v| v == "true" || v == "1")
         .unwrap_or(false);
@@ -64,7 +64,7 @@ async fn main() {
         error!("The relay server is configured to listen on a non-localhost address");
         error!(
             "({}) but TLS verification has not been confirmed.",
-            config.listen_addr
+            config.network.listen_addr
         );
         error!("");
         error!("To fix this, either:");
@@ -79,9 +79,11 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let rate_limiter = Arc::new(RateLimiter::new(config.rate_limit_per_min));
-    let recovery_rate_limiter = Arc::new(RateLimiter::new(config.recovery_rate_limit_per_min));
-    let connection_limiter = ConnectionLimiter::new(config.max_connections);
+    let rate_limiter = Arc::new(RateLimiter::new(config.security.rate_limit_per_min));
+    let recovery_rate_limiter = Arc::new(RateLimiter::new(
+        config.security.recovery_rate_limit_per_min,
+    ));
+    let connection_limiter = ConnectionLimiter::new(config.network.max_connections);
     let start_time = Instant::now();
 
     // Parse HTTP listen address for health/metrics endpoints
@@ -94,23 +96,23 @@ async fn main() {
         "Starting Vauchi Relay Server v{}",
         env!("CARGO_PKG_VERSION")
     );
-    info!("WebSocket: {}", config.listen_addr);
+    info!("WebSocket: {}", config.network.listen_addr);
     if tls_verified {
         info!("TLS: Verified (handled by external proxy)");
     } else {
         info!("TLS: Local development mode (localhost only)");
     }
-    info!("Health check (main port): {}", config.listen_addr);
+    info!("Health check (main port): {}", config.network.listen_addr);
     info!("Metrics endpoint: {}", http_addr);
-    info!("Storage backend: {:?}", config.storage_backend);
-    info!("Idle timeout: {}s", config.idle_timeout_secs);
+    info!("Storage backend: {:?}", config.storage.backend);
+    info!("Idle timeout: {}s", config.network.idle_timeout_secs);
 
     // Load or generate Noise keypair for inner transport encryption
-    let noise_keypair = noise_key::load_or_generate_keypair(&config.data_dir);
+    let noise_keypair = noise_key::load_or_generate_keypair(&config.storage.data_dir);
     let noise_static_key = Some(noise_keypair.private);
     let noise_pubkey_b64 = noise_key::public_key_base64url(&noise_keypair.public);
     info!("Noise public key: {}", noise_pubkey_b64);
-    if config.require_noise_encryption {
+    if config.security.require_noise_encryption {
         info!("Noise encryption: REQUIRED (v1 connections will be rejected)");
     } else {
         info!("Noise encryption: Available (v1 connections accepted)");
@@ -121,18 +123,18 @@ async fn main() {
 
     // Initialize shared state
     let storage: Arc<dyn BlobStore> = Arc::from(create_blob_store(
-        config.storage_backend,
-        Some(&config.data_dir),
+        config.storage.backend,
+        Some(&config.storage.data_dir),
     ));
 
     // Initialize recovery proof storage
     // Always use SQLite - in-memory for Memory backend, file-based for Sqlite backend
-    let recovery_storage: Arc<dyn RecoveryProofStore> = match config.storage_backend {
+    let recovery_storage: Arc<dyn RecoveryProofStore> = match config.storage.backend {
         StorageBackend::Memory => Arc::new(
             SqliteRecoveryProofStore::in_memory().expect("Failed to create in-memory recovery db"),
         ),
         StorageBackend::Sqlite => {
-            let path = config.data_dir.join("recovery_proofs.db");
+            let path = config.storage.data_dir.join("recovery_proofs.db");
             Arc::new(
                 SqliteRecoveryProofStore::open(&path)
                     .expect("Failed to open recovery proof database"),
@@ -142,9 +144,11 @@ async fn main() {
 
     // Initialize device sync storage
     // Always use SQLite - in-memory for Memory backend, file-based for Sqlite backend
-    let device_sync_storage: Arc<dyn DeviceSyncStore> = match config.storage_backend {
+    let device_sync_storage: Arc<dyn DeviceSyncStore> = match config.storage.backend {
         StorageBackend::Memory => Arc::from(create_device_sync_store(None)),
-        StorageBackend::Sqlite => Arc::from(create_device_sync_store(Some(&config.data_dir))),
+        StorageBackend::Sqlite => {
+            Arc::from(create_device_sync_store(Some(&config.storage.data_dir)))
+        }
     };
 
     // Initialize connection registry for delivery notifications
@@ -154,21 +158,21 @@ async fn main() {
 
     // Initialize federation state
     let config = Arc::new(config);
-    let peer_registry = Arc::new(PeerRegistry::new(config.federation_offload_refuse));
+    let peer_registry = Arc::new(PeerRegistry::new(config.federation.offload_refuse));
 
     let hint_store: Arc<dyn ForwardingHintStore> = {
-        let path = config.data_dir.join("federation.db");
+        let path = config.storage.data_dir.join("federation.db");
         Arc::new(
             SqliteForwardingHintStore::open(&path)
                 .expect("Failed to open federation hint database"),
         )
     };
 
-    if config.federation_enabled {
+    if config.federation.enabled {
         info!(
             "Federation enabled: relay_id={}, peers={}",
-            config.federation_relay_id,
-            config.federation_peers.len()
+            config.federation.relay_id,
+            config.federation.peers.len()
         );
 
         // Load mTLS configuration for federation connections
@@ -205,9 +209,9 @@ async fn main() {
         });
 
         // Spawn per-peer connector tasks (with optional mTLS)
-        for peer_url in &config.federation_peers {
+        for peer_url in &config.federation.peers {
             let peer_url = peer_url.clone();
-            let own_relay_id = config.federation_relay_id.clone();
+            let own_relay_id = config.federation.relay_id.clone();
             let peer_registry = peer_registry.clone();
             let config = config.clone();
             let tls_config = tls_client_config.clone();
@@ -227,8 +231,8 @@ async fn main() {
 
         // Spawn mTLS federation listener when configured
         if let Some(ref tls_config) = federation_tls_config {
-            let mtls_addr = config.federation_mtls_addr.unwrap_or_else(|| {
-                let mut addr = config.listen_addr;
+            let mtls_addr = config.federation.mtls_addr.unwrap_or_else(|| {
+                let mut addr = config.network.listen_addr;
                 addr.set_port(addr.port() + 1);
                 addr
             });
@@ -294,7 +298,7 @@ async fn main() {
         }
 
         // Spawn capacity monitor / offload task
-        let capacity_interval = config.federation_capacity_interval_secs;
+        let capacity_interval = config.federation.capacity_interval_secs;
         let offload_mgr_task = offload_manager.clone();
         tokio::spawn(async move {
             loop {
@@ -317,12 +321,12 @@ async fn main() {
         });
 
         // Spawn gossip task if enabled
-        if config.federation_gossip_enabled {
+        if config.federation.gossip_enabled {
             info!(
                 "Gossip discovery enabled: interval={}s, peer_ttl={}s",
-                config.federation_gossip_interval_secs, config.federation_peer_ttl_secs
+                config.federation.gossip_interval_secs, config.federation.peer_ttl_secs
             );
-            let gossip_relay_id = config.federation_relay_id.clone();
+            let gossip_relay_id = config.federation.relay_id.clone();
             let gossip_registry = peer_registry.clone();
             let gossip_config = config.clone();
             tokio::spawn(async move {
@@ -421,11 +425,14 @@ async fn main() {
     });
 
     // Start TCP listener for WebSocket
-    let listener = TcpListener::bind(&config.listen_addr)
+    let listener = TcpListener::bind(&config.network.listen_addr)
         .await
         .expect("Failed to bind WebSocket listener");
 
-    info!("WebSocket server listening on {}", config.listen_addr);
+    info!(
+        "WebSocket server listening on {}",
+        config.network.listen_addr
+    );
 
     // Accept connections
     while let Ok((stream, _addr)) = listener.accept().await {
@@ -436,7 +443,7 @@ async fn main() {
                 tracing::warn!(
                     "Connection rejected: at max capacity ({}/{})",
                     connection_limiter.active_count(),
-                    config.max_connections
+                    config.network.max_connections
                 );
                 metrics.connection_errors.inc();
                 // Drop the stream to close the connection
@@ -457,11 +464,11 @@ async fn main() {
         let hint_store = hint_store.clone();
         let peer_registry = peer_registry.clone();
         let config = config.clone();
-        let max_message_size = config.max_message_size;
+        let max_message_size = config.network.max_message_size;
         let idle_timeout = config.idle_timeout();
         let quota = handler::QuotaLimits {
-            max_blobs: config.max_blobs_per_user,
-            max_bytes: config.max_storage_per_user,
+            max_blobs: config.storage.max_blobs_per_user,
+            max_bytes: config.storage.max_storage_per_user,
         };
 
         tokio::spawn(async move {
@@ -561,9 +568,9 @@ async fn main() {
                     metrics.connections_total.inc();
                     metrics.connections_active.inc();
 
-                    // Path-based routing: /federation → federation handler
+                    // Path-based routing: /federation -> federation handler
                     if ws_path == "/federation" {
-                        if config.federation_enabled {
+                        if config.federation.enabled {
                             info!("New federation connection");
                             federation_handler::handle_federation_connection(
                                 ws_stream,
@@ -594,13 +601,13 @@ async fn main() {
                                 max_message_size,
                                 idle_timeout,
                                 quota,
-                                hint_store: if config.federation_enabled {
+                                hint_store: if config.federation.enabled {
                                     Some(hint_store)
                                 } else {
                                     None
                                 },
                                 noise_static_key,
-                                require_noise_encryption: config.require_noise_encryption,
+                                require_noise_encryption: config.security.require_noise_encryption,
                                 nonce_tracker,
                             },
                         )
