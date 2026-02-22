@@ -128,16 +128,21 @@ mod tests {
 
     #[test]
     fn test_connection_limiter_thread_safe() {
+        use std::sync::{Arc as StdArc, Barrier};
+
         let limiter = ConnectionLimiter::new(10);
+        let barrier = StdArc::new(Barrier::new(21)); // 20 threads + main
         let mut handles = vec![];
 
         // Spawn 20 threads, each trying to acquire
         for _ in 0..20 {
             let limiter = limiter.clone();
+            let barrier = barrier.clone();
             handles.push(thread::spawn(move || {
+                barrier.wait(); // Synchronize all threads to start together (CC-06)
                 if let Some(guard) = limiter.try_acquire() {
-                    // Hold the connection briefly
-                    thread::sleep(std::time::Duration::from_millis(10));
+                    // Hold guard briefly via yield, not sleep
+                    thread::yield_now();
                     drop(guard);
                     true
                 } else {
@@ -146,6 +151,7 @@ mod tests {
             }));
         }
 
+        barrier.wait(); // Release all threads simultaneously
         let results: Vec<bool> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
         // At least 10 should have succeeded (the first batch)

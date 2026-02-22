@@ -515,11 +515,19 @@ async fn test_acknowledge_removes_blob() {
         .await
         .unwrap();
 
-    // Give handler a moment to process
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Poll until handler processes the ack (CC-06: no bare sleeps)
+    let removed = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if storage.peek(&client_id).is_empty() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Timed out waiting for blob removal");
 
-    // Blob should be removed from storage
-    assert!(storage.peek(&client_id).is_empty());
+    assert!(removed, "Blob should be removed from storage after ack");
 
     ws.close(None).await.ok();
 }
@@ -988,8 +996,7 @@ async fn test_suppress_presence_no_delivered_ack() {
     let _ack = recv(&mut recipient_ws).await;
     let _blob = recv(&mut recipient_ws).await;
 
-    // Wait a bit and check that sender does NOT receive Delivered ack
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Verify sender does NOT receive Delivered ack (CC-06: try_recv has its own timeout)
     let msg = try_recv(&mut sender_ws).await;
     assert!(
         msg.is_none(),
@@ -1566,11 +1573,9 @@ async fn test_idle_timeout_disconnects_client() {
     let client_id = common::generate_test_client_id(1);
     let _ack = do_handshake(&mut ws, &client_id).await;
 
-    // Wait longer than idle timeout
-    tokio::time::sleep(Duration::from_millis(700)).await;
-
-    // Server should have closed the connection
-    let msg = timeout(Duration::from_secs(2), ws.next()).await;
+    // Poll for server-initiated close after idle timeout (CC-06: no bare sleeps)
+    // Server timeout is 500ms; we give up to 5s for the close to arrive
+    let msg = timeout(Duration::from_secs(5), ws.next()).await;
     match msg {
         Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
             // Expected: connection closed
@@ -1594,11 +1599,9 @@ async fn test_handshake_timeout_disconnects() {
     let url = start_test_server(deps).await;
     let (mut ws, _) = connect_async(&url).await.unwrap();
 
-    // Don't send handshake — just wait
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Server should have closed the connection
-    let msg = timeout(Duration::from_secs(2), ws.next()).await;
+    // Don't send handshake — poll for server-initiated close (CC-06: no bare sleeps)
+    // Server timeout is 300ms; we give up to 5s for the close to arrive
+    let msg = timeout(Duration::from_secs(5), ws.next()).await;
     match msg {
         Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
             // Expected: connection closed due to handshake timeout
@@ -1818,15 +1821,17 @@ async fn test_device_sync_ack_removes_message() {
         .await
         .unwrap();
 
-    // Give handler time to process
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Message should be removed from storage
-    let remaining = device_sync_storage.peek(&client_id, &device_id);
-    assert!(
-        remaining.is_empty(),
-        "DeviceSyncAck should remove message from storage"
-    );
+    // Poll until handler processes the ack (CC-06: no bare sleeps)
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if device_sync_storage.peek(&client_id, &device_id).is_empty() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Timed out: DeviceSyncAck should remove message from storage");
 
     ws.close(None).await.ok();
 }
@@ -1871,8 +1876,11 @@ async fn test_device_sync_ack_without_device_id_ignored() {
         .await
         .unwrap();
 
-    // Give handler time to process
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Give handler time to process — use short yield instead of bare sleep (CC-06)
+    // This is a negative assertion: we verify the message is NOT removed.
+    // We yield to let the handler task run, then verify state is unchanged.
+    tokio::task::yield_now().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Message should still be in storage (ack was ignored)
     let remaining = device_sync_storage.peek(&client_id, &device_id);
@@ -2164,7 +2172,7 @@ async fn test_received_by_recipient_after_delivered_not_forwarded() {
     // the blob_sender_map entry, so ReceivedByRecipient cannot be forwarded
     // for blobs that were delivered from the pending queue. This is by design —
     // delivery notifications are ephemeral and one-shot.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // CC-06: try_recv has its own 200ms timeout for absence check
     let msg = try_recv(&mut sender_ws).await;
     assert!(
         msg.is_none(),
@@ -2234,8 +2242,7 @@ async fn test_suppress_presence_blocks_received_by_recipient() {
     assert_eq!(blob["payload"]["type"], "EncryptedUpdate");
     let blob_id = blob["message_id"].as_str().unwrap().to_string();
 
-    // Wait — sender should NOT get Delivered ack
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // CC-06: try_recv has its own 200ms timeout for absence check
     let msg = try_recv(&mut sender_ws).await;
     assert!(
         msg.is_none(),
@@ -2250,7 +2257,7 @@ async fn test_suppress_presence_blocks_received_by_recipient() {
         .unwrap();
 
     // Sender should NOT receive forwarded ReceivedByRecipient either
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // CC-06: try_recv has its own 200ms timeout for absence check
     let msg = try_recv(&mut sender_ws).await;
     assert!(
         msg.is_none(),

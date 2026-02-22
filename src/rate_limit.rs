@@ -169,11 +169,21 @@ mod tests {
         // Should be blocked
         assert!(!limiter.consume("client-1"));
 
-        // Wait a bit for refill
-        thread::sleep(Duration::from_millis(100));
+        // Poll until a token refills (CC-06: no bare sleeps for synchronization)
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if limiter.check("client-1") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Timed out waiting for token refill"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
 
-        // Should have some tokens now (at least partial)
-        // Note: This is timing-sensitive, so we just check it doesn't panic
+        // Token should be available after refill
+        assert!(limiter.consume("client-1"));
     }
 
     #[test]
@@ -216,16 +226,22 @@ mod tests {
 
         assert_eq!(limiter.client_count(), 3);
 
-        // Wait a tiny bit then access client-1 to keep it active
-        thread::sleep(Duration::from_millis(10));
-        limiter.consume("client-1");
+        // Poll: refresh client-1 then cleanup until stale clients are removed (CC-06)
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let idle_threshold = Duration::from_millis(5);
+        loop {
+            limiter.consume("client-1");
+            let removed = limiter.cleanup_inactive(idle_threshold);
+            if removed >= 2 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Timed out waiting for stale bucket cleanup"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
 
-        // Cleanup with a very short idle time (5ms)
-        // client-2 and client-3 should be removed, client-1 should remain
-        let removed = limiter.cleanup_inactive(Duration::from_millis(5));
-
-        // At least client-2 and client-3 should be removed (idle > 5ms)
-        assert!(removed >= 2, "Expected at least 2 removed, got {}", removed);
         assert_eq!(limiter.client_count(), 1);
 
         // client-1 should still be there
