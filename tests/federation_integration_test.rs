@@ -21,7 +21,7 @@ use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_async, connect_async};
 
-use vauchi_relay::config::{FederationConfig, RelayConfig, StorageConfig};
+use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::federation_connector::OffloadManager;
@@ -208,19 +208,13 @@ fn make_client_purge() -> serde_json::Value {
 /// Creates a test RelayConfig for federation.
 fn make_fed_config(max_storage: usize, offload_threshold: f64) -> Arc<RelayConfig> {
     Arc::new(RelayConfig {
-        storage: StorageConfig {
-            max_storage_bytes: max_storage,
-            ..Default::default()
-        },
-        federation: FederationConfig {
-            enabled: true,
-            relay_id: "test-relay".to_string(),
-            offload_threshold,
-            offload_refuse: 0.95,
-            peer_timeout_secs: 5,
-            capacity_interval_secs: 1,
-            ..Default::default()
-        },
+        max_storage_bytes: max_storage,
+        federation_enabled: true,
+        federation_relay_id: "test-relay".to_string(),
+        federation_offload_threshold: offload_threshold,
+        federation_offload_refuse: 0.95,
+        federation_peer_timeout_secs: 5,
+        federation_capacity_interval_secs: 1,
         ..Default::default()
     })
 }
@@ -365,7 +359,7 @@ fn make_client_deps(
 // Tests: Federation Handshake
 // ============================================================================
 
-// @scenario: relay_network:Relays establish federation connections
+// @scenario: relay_network:Federation peer connects with valid handshake
 #[tokio::test]
 async fn test_federation_handshake_accepted() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -404,7 +398,7 @@ async fn test_federation_handshake_accepted() {
     ws.close(None).await.ok();
 }
 
-// @scenario: relay_network:Relays reject incompatible federation protocol versions
+// @scenario: relay_network:Federation rejects version mismatch
 #[tokio::test]
 async fn test_federation_handshake_version_mismatch_rejected() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -456,7 +450,7 @@ async fn test_federation_handshake_version_mismatch_rejected() {
 // Tests: OffloadBlob Acceptance & Rejection
 // ============================================================================
 
-// @scenario: relay_network:Relay offloads blobs to federated peers under capacity
+// @scenario: relay_network:Federation offloads blobs under capacity
 #[tokio::test]
 async fn test_offload_blob_accepted_under_capacity() {
     let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -502,7 +496,7 @@ async fn test_offload_blob_accepted_under_capacity() {
     ws.close(None).await.ok();
 }
 
-// @scenario: relay_network:Relay rejects blobs with integrity mismatch
+// @scenario: relay_network:Federation rejects integrity mismatch
 #[tokio::test]
 async fn test_offload_blob_rejected_integrity_mismatch() {
     let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -541,7 +535,7 @@ async fn test_offload_blob_rejected_integrity_mismatch() {
     ws.close(None).await.ok();
 }
 
-// @scenario: relay_network:Relay rejects blobs exceeding max hop count
+// @scenario: relay_network:Federation rejects excessive hop count
 #[tokio::test]
 async fn test_offload_blob_rejected_hop_count_too_high() {
     let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -580,7 +574,7 @@ async fn test_offload_blob_rejected_hop_count_too_high() {
     ws.close(None).await.ok();
 }
 
-// @scenario: relay_network:Relay rejects offload when at capacity
+// @scenario: relay_network:Federation rejects offload at capacity
 #[tokio::test]
 async fn test_offload_blob_rejected_at_capacity() {
     let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
@@ -624,7 +618,7 @@ async fn test_offload_blob_rejected_at_capacity() {
 // Tests: TTL Preservation
 // ============================================================================
 
-// @scenario: relay_network:Relay offloads blobs to federated peers under capacity
+// @scenario: relay_network:Federation preserves blob creation timestamp
 #[tokio::test]
 async fn test_offload_preserves_created_at_secs() {
     let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -668,7 +662,7 @@ async fn test_offload_preserves_created_at_secs() {
 // Tests: hop_count Enforcement
 // ============================================================================
 
-// @scenario: relay_network:Relay offloads blobs to federated peers under capacity
+// @scenario: relay_network:Federation increments hop count on offload
 #[tokio::test]
 async fn test_offload_increments_hop_count() {
     let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -712,7 +706,7 @@ async fn test_offload_increments_hop_count() {
 // Tests: CapacityReport & DrainNotice
 // ============================================================================
 
-// @scenario: relay_network:Relays share capacity information
+// @scenario: relay_network:Federation updates peer capacity
 #[tokio::test]
 async fn test_capacity_report_updates_peer_registry() {
     let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -735,19 +729,10 @@ async fn test_capacity_report_updates_peer_registry() {
     let report = make_capacity_report(500_000, 1_000_000, 42);
     ws.send(Message::Binary(encode_fed(&report))).await.unwrap();
 
-    // Poll until peer_registry is updated (CC-06: no bare sleeps)
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let peers = peer_registry.connected_peers();
-            if !peers.is_empty() && peers[0].capacity_used_bytes == 500_000 {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("Timed out waiting for peer_registry update");
+    // Give the server a moment to process
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
+    // Verify peer_registry was updated
     let peers = peer_registry.connected_peers();
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].capacity_used_bytes, 500_000);
@@ -756,7 +741,7 @@ async fn test_capacity_report_updates_peer_registry() {
     ws.close(None).await.ok();
 }
 
-// @scenario: relay_network:Relay signals drain status to federation peers
+// @scenario: relay_network:Federation marks peer as draining
 #[tokio::test]
 async fn test_drain_notice_marks_peer_as_draining() {
     let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -796,7 +781,7 @@ async fn test_drain_notice_marks_peer_as_draining() {
 // Tests: OffloadManager
 // ============================================================================
 
-// @scenario: relay_network:Relay offloads blobs to federated peers under capacity
+// @scenario: relay_network:Federation offload skipped below threshold
 #[tokio::test]
 async fn test_offload_manager_below_threshold_does_nothing() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -820,7 +805,7 @@ async fn test_offload_manager_below_threshold_does_nothing() {
     assert_eq!(hint_store.hint_count(), 0);
 }
 
-// @scenario: relay_network:Relay offloads blobs to federated peers under capacity
+// @scenario: relay_network:Federation offload skipped without peers
 #[tokio::test]
 async fn test_offload_manager_no_peers_available() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -845,7 +830,7 @@ async fn test_offload_manager_no_peers_available() {
     assert_eq!(storage.blob_count(), 1);
 }
 
-// @scenario: relay_network:Relay offloads blobs to federated peers under capacity
+// @scenario: relay_network:Federation offload with forwarding hints
 #[tokio::test]
 async fn test_offload_manager_successful_offload_with_hints() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -919,7 +904,7 @@ async fn test_offload_manager_successful_offload_with_hints() {
 // Tests: Client-Facing Forwarding Hints Delivery
 // ============================================================================
 
-// @scenario: relay_network:Client receives forwarding hints for federated blobs
+// @scenario: relay_network:Client receives forwarding hints on connect
 #[tokio::test]
 async fn test_client_receives_forwarding_hints_on_connect() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -970,7 +955,7 @@ async fn test_client_receives_forwarding_hints_on_connect() {
     ws.close(None).await.ok();
 }
 
-// @scenario: relay_network:Client receives forwarding hints for federated blobs
+// @scenario: relay_network:No forwarding hints when none stored
 #[tokio::test]
 async fn test_client_no_hints_no_forwarding_message() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -1008,7 +993,7 @@ async fn test_client_no_hints_no_forwarding_message() {
     ws.close(None).await.ok();
 }
 
-// @scenario: relay_network:Client receives forwarding hints for federated blobs
+// @scenario: relay_network:No hints sent when hint store disabled
 #[tokio::test]
 async fn test_hint_store_none_no_hints_sent() {
     // With hint_store=None (federation disabled), no hints are sent
@@ -1038,7 +1023,7 @@ async fn test_hint_store_none_no_hints_sent() {
 // Tests: Purge Cleans Forwarding Hints
 // ============================================================================
 
-// @scenario: relay_network:Purge removes forwarding hints
+// @scenario: relay_network:Purge request removes forwarding hints
 #[tokio::test]
 async fn test_purge_request_deletes_forwarding_hints() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -1094,18 +1079,10 @@ async fn test_purge_request_deletes_forwarding_hints() {
     let purge_resp = recv_client(&mut ws).await;
     assert_eq!(purge_resp["payload"]["type"], "PurgeResponse");
 
-    // Poll until hints are deleted (CC-06: no bare sleeps)
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            if hint_store.hint_count() == 0 {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("Timed out waiting for forwarding hints deletion");
+    // Wait for processing
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
+    // Forwarding hints should be deleted
     assert_eq!(hint_store.hint_count(), 0);
     assert!(hint_store.get_hints(routing_id).is_empty());
 
@@ -1116,7 +1093,7 @@ async fn test_purge_request_deletes_forwarding_hints() {
 // Tests: End-to-End Offload Flow (OffloadManager + Federation Handler)
 // ============================================================================
 
-// @scenario: relay_network:Relay offloads blobs to federated peers under capacity
+// @scenario: relay_network:End-to-end federation offload and retrieval
 #[tokio::test]
 async fn test_end_to_end_offload_and_retrieval() {
     // This test simulates:
@@ -1200,7 +1177,7 @@ async fn test_end_to_end_offload_and_retrieval() {
     client_ws.close(None).await.ok();
 }
 
-// @scenario: relay_network:Client receives forwarding hints for federated blobs
+// @scenario: relay_network:End-to-end offload with forwarding hints
 #[tokio::test]
 async fn test_end_to_end_offload_with_forwarding_hints() {
     // This test simulates the complete flow:
@@ -1286,7 +1263,7 @@ async fn test_end_to_end_offload_with_forwarding_hints() {
 // Tests: Multiple Blobs Offload
 // ============================================================================
 
-// @scenario: relay_network:Relay offloads blobs to federated peers under capacity
+// @scenario: relay_network:Multiple blobs offloaded to federation peer
 #[tokio::test]
 async fn test_multiple_blobs_offloaded_to_peer() {
     let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -1329,7 +1306,7 @@ async fn test_multiple_blobs_offloaded_to_peer() {
 // Tests: Peer Disconnect Handling
 // ============================================================================
 
-// @scenario: relay_network:Relays establish federation connections
+// @scenario: relay_network:Disconnected peer marked in registry
 #[tokio::test]
 async fn test_peer_disconnect_marks_disconnected() {
     let storage: Arc<dyn BlobStore> = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -1354,17 +1331,9 @@ async fn test_peer_disconnect_marks_disconnected() {
     // Close the connection
     ws.close(None).await.ok();
 
-    // Poll until server detects disconnection (CC-06: no bare sleeps)
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            if peer_registry.connected_peers().is_empty() {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("Peer should be disconnected after close");
+    // Give the server time to detect disconnection
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
+    // Peer should be disconnected (no longer in connected_peers)
     assert!(peer_registry.connected_peers().is_empty());
 }
