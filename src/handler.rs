@@ -434,50 +434,477 @@ pub struct ConnectionDeps {
     pub nonce_tracker: Arc<NonceTracker>,
 }
 
-/// Handles a WebSocket connection.
-#[allow(clippy::too_many_lines)]
-pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: ConnectionDeps) {
-    let ConnectionDeps {
-        storage,
-        recovery_storage,
-        device_sync_storage,
-        rate_limiter,
-        recovery_rate_limiter,
-        registry,
-        blob_sender_map,
-        max_message_size,
-        idle_timeout,
-        quota,
-        hint_store,
-        noise_static_key,
-        require_noise_encryption,
-        nonce_tracker,
-    } = deps;
-    // Generate a random session label for logging.
-    // The relay must never log client_id (identity fingerprint) to prevent
-    // relay operators from identifying users in logs.
-    let session = &uuid::Uuid::new_v4().to_string()[..8];
+// =========================================================================
+// Extracted handler types and functions
+// =========================================================================
 
-    let (mut write, mut read) = ws_stream.split();
+/// Per-connection context shared across all message handlers.
+///
+/// Holds references to session state and shared dependencies so that
+/// individual handlers can be tested independently of the WebSocket loop.
+pub struct MessageContext<'a> {
+    pub routing_id: String,
+    pub client_id: String,
+    pub device_id: Option<String>,
+    pub suppress_presence: bool,
+    pub session: &'a str,
+    pub deps: &'a ConnectionDeps,
+}
 
+/// A single action the message loop should take after a handler returns.
+#[derive(Debug)]
+pub enum HandlerResponse {
+    /// Send an Acknowledgment to the caller.
+    SendAck {
+        message_id: String,
+        status: protocol::AckStatus,
+    },
+    /// Send an arbitrary encoded envelope to the caller.
+    SendEnvelope(protocol::MessageEnvelope),
+    /// Forward an encoded message to another client via the registry.
+    ForwardToRegistry { target_id: String, data: Vec<u8> },
+    /// Remove a blob_id from the sender map.
+    RemoveFromSenderMap(String),
+    /// No action needed (e.g., identity mismatch — skip silently).
+    Skip,
+}
+
+/// Result of processing a single message. Contains zero or more responses
+/// to send back to the client or forward to other connections.
+#[derive(Debug)]
+pub struct HandleResult {
+    pub responses: Vec<HandlerResponse>,
+}
+
+impl HandleResult {
+    fn empty() -> Self {
+        Self {
+            responses: Vec::new(),
+        }
+    }
+
+    fn single(response: HandlerResponse) -> Self {
+        Self {
+            responses: vec![response],
+        }
+    }
+}
+
+/// Handles an `EncryptedUpdate` message: quota check, store, and ack.
+fn handle_encrypted_update(
+    ctx: &MessageContext<'_>,
+    update: &protocol::EncryptedUpdate,
+    message_id: &str,
+) -> HandleResult {
+    let deps = ctx.deps;
+
+    // Check per-recipient quota before storing
+    if (deps.quota.max_blobs > 0
+        && deps.storage.blob_count_for(&update.recipient_id) >= deps.quota.max_blobs)
+        || (deps.quota.max_bytes > 0
+            && deps.storage.storage_size_for(&update.recipient_id) + update.ciphertext.len()
+                > deps.quota.max_bytes)
+    {
+        debug!("[{}] Quota exceeded for recipient", ctx.session);
+        return HandleResult::single(HandlerResponse::SendAck {
+            message_id: message_id.to_string(),
+            status: protocol::AckStatus::Failed,
+        });
+    }
+
+    // Store blob for recipient
+    let blob = StoredBlob::new(update.ciphertext.clone());
+    let blob_id = blob.id.clone();
+    deps.storage.store(&update.recipient_id, blob);
+
+    // Track sender for delivery notification (ephemeral, in-memory only)
+    deps.blob_sender_map
+        .write()
+        .unwrap()
+        .insert(blob_id, ctx.routing_id.clone());
+
+    debug!("[{}] Stored blob", ctx.session);
+    HandleResult::single(HandlerResponse::SendAck {
+        message_id: message_id.to_string(),
+        status: protocol::AckStatus::Stored,
+    })
+}
+
+/// Handles an `Acknowledgment` message: acknowledge blob, optionally forward to sender.
+fn handle_acknowledgment(ctx: &MessageContext<'_>, ack: &protocol::Acknowledgment) -> HandleResult {
+    let deps = ctx.deps;
+
+    if deps.storage.acknowledge(&ctx.routing_id, &ack.message_id) {
+        debug!("[{}] Blob acknowledged", ctx.session);
+
+        // If ReceivedByRecipient, forward to the original sender.
+        // Suppressed when recipient requested suppress_presence.
+        if !ctx.suppress_presence && ack.status == protocol::AckStatus::ReceivedByRecipient {
+            let sender_client_id = {
+                deps.blob_sender_map
+                    .read()
+                    .unwrap()
+                    .get(&ack.message_id)
+                    .cloned()
+            };
+            if let Some(sender_id) = sender_client_id {
+                let fwd_ack =
+                    protocol::create_ack(&ack.message_id, protocol::AckStatus::ReceivedByRecipient);
+                let mut responses = Vec::new();
+                if let Ok(ack_data) = protocol::encode_message(&fwd_ack) {
+                    responses.push(HandlerResponse::ForwardToRegistry {
+                        target_id: sender_id,
+                        data: ack_data,
+                    });
+                }
+                responses.push(HandlerResponse::RemoveFromSenderMap(ack.message_id.clone()));
+                return HandleResult { responses };
+            }
+        }
+    }
+
+    HandleResult::empty()
+}
+
+/// Handles a `RecoveryProofStore` message: validate hash, store, ack.
+fn handle_recovery_proof_store(
+    ctx: &MessageContext<'_>,
+    store_msg: &protocol::RecoveryProofStore,
+    message_id: &str,
+) -> HandleResult {
+    if let Ok(key_hash) = hex_to_hash(&store_msg.key_hash) {
+        let proof = StoredRecoveryProof::new(key_hash, store_msg.proof_data.clone());
+        ctx.deps.recovery_storage.store(proof);
+
+        debug!("[{}] Stored recovery proof", ctx.session);
+        HandleResult::single(HandlerResponse::SendAck {
+            message_id: message_id.to_string(),
+            status: protocol::AckStatus::Stored,
+        })
+    } else {
+        warn!("[{}] Invalid key hash format", ctx.session);
+        HandleResult::empty()
+    }
+}
+
+/// Handles a `RecoveryProofQuery` message: batch query, return results.
+fn handle_recovery_proof_query(
+    ctx: &MessageContext<'_>,
+    query: &protocol::RecoveryProofQuery,
+) -> HandleResult {
+    let key_hashes: Vec<[u8; 32]> = query
+        .key_hashes
+        .iter()
+        .filter_map(|h| hex_to_hash(h).ok())
+        .collect();
+
+    let results = ctx.deps.recovery_storage.batch_get(&key_hashes);
+
+    let entries: Vec<protocol::RecoveryProofEntry> = results
+        .into_iter()
+        .map(|(hash, proof)| protocol::RecoveryProofEntry {
+            key_hash: hash_to_hex(&hash),
+            proof_data: proof.proof_data,
+        })
+        .collect();
+
+    debug!(
+        "Processed recovery query with {} hashes",
+        query.key_hashes.len()
+    );
+
+    let response = protocol::create_recovery_response(entries);
+    HandleResult::single(HandlerResponse::SendEnvelope(response))
+}
+
+/// Handles a `DeviceSyncMessage`: validate identity, store, ack.
+fn handle_device_sync_message(
+    ctx: &MessageContext<'_>,
+    sync_msg: &protocol::DeviceSyncMessage,
+    message_id: &str,
+) -> HandleResult {
+    // Validate that sender is the connected client
+    if sync_msg.identity_id != ctx.client_id {
+        warn!("[{}] DeviceSyncMessage identity mismatch", ctx.session);
+        return HandleResult::single(HandlerResponse::Skip);
+    }
+
+    // Store the device sync message for the target device
+    let stored = StoredDeviceSyncMessage::new(
+        sync_msg.identity_id.clone(),
+        sync_msg.target_device_id.clone(),
+        sync_msg.sender_device_id.clone(),
+        sync_msg.encrypted_payload.clone(),
+        sync_msg.version,
+    );
+    ctx.deps.device_sync_storage.store(stored);
+
+    debug!(
+        "[{}] Stored device sync (version {})",
+        ctx.session, sync_msg.version
+    );
+    HandleResult::single(HandlerResponse::SendAck {
+        message_id: message_id.to_string(),
+        status: protocol::AckStatus::Stored,
+    })
+}
+
+/// Handles a `DeviceSyncAck`: acknowledge receipt of device sync message.
+fn handle_device_sync_ack(ctx: &MessageContext<'_>, ack: &protocol::DeviceSyncAck) -> HandleResult {
+    if let Some(ref did) = ctx.device_id {
+        if ctx
+            .deps
+            .device_sync_storage
+            .acknowledge(&ctx.client_id, did, &ack.message_id)
+        {
+            debug!(
+                "[{}] Device sync acknowledged (version {})",
+                ctx.session, ack.synced_version
+            );
+        }
+    } else {
+        debug!(
+            "[{}] DeviceSyncAck received but no device_id in handshake",
+            ctx.session
+        );
+    }
+    HandleResult::empty()
+}
+
+/// Handles a `PurgeRequest`: verify signature, delete data, respond.
+fn handle_purge_request(
+    ctx: &MessageContext<'_>,
+    purge: &protocol::PurgeRequest,
+    message_id: &str,
+) -> HandleResult {
+    let deps = ctx.deps;
+
+    // Require authenticated purge requests (v2 signature)
+    if purge.is_authenticated() {
+        if let Err(e) = purge.verify_signature() {
+            warn!(
+                "[{}] Rejecting purge with invalid signature: {}",
+                ctx.session, e
+            );
+            return HandleResult::single(HandlerResponse::SendAck {
+                message_id: message_id.to_string(),
+                status: protocol::AckStatus::Failed,
+            });
+        }
+    } else {
+        warn!(
+            "[{}] Rejecting unsigned purge request (v2 signature required)",
+            ctx.session
+        );
+        return HandleResult::single(HandlerResponse::SendAck {
+            message_id: message_id.to_string(),
+            status: protocol::AckStatus::Failed,
+        });
+    }
+
+    // Delete all stored blobs for this client's routing ID
+    let blobs_deleted = deps.storage.delete_all_for(&ctx.routing_id);
+
+    // Optionally delete device sync messages (identity-based)
+    let device_sync_deleted = if purge.include_device_sync {
+        deps.device_sync_storage.delete_all_for(&ctx.client_id)
+    } else {
+        0
+    };
+
+    // Optionally delete recovery proofs
+    let recovery_proofs_deleted = if purge.include_recovery_proofs {
+        if let Some(ref key_hash_hex) = purge.recovery_key_hash {
+            if let Ok(decoded) = hex::decode(key_hash_hex) {
+                if decoded.len() == 32 {
+                    let mut hash = [0u8; 32];
+                    hash.copy_from_slice(&decoded);
+                    if deps.recovery_storage.remove(&hash) {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    // Delete forwarding hints for this routing_id (federation cleanup)
+    if let Some(ref hint_store) = deps.hint_store {
+        let hints_deleted = hint_store.delete_all_for(&ctx.routing_id);
+        if hints_deleted > 0 {
+            debug!(
+                "[{}] Purged {} forwarding hints",
+                ctx.session, hints_deleted
+            );
+        }
+    }
+
+    debug!(
+        "[{}] Purged {} blobs, {} device sync, {} recovery proofs",
+        ctx.session, blobs_deleted, device_sync_deleted, recovery_proofs_deleted
+    );
+
+    // Send purge response
+    let response = protocol::create_purge_response(
+        message_id,
+        blobs_deleted,
+        device_sync_deleted,
+        recovery_proofs_deleted,
+    );
+    HandleResult::single(HandlerResponse::SendEnvelope(response))
+}
+
+/// Handles an `AccountRevoked` message: validate, store as blob, ack.
+fn handle_account_revoked(
+    ctx: &MessageContext<'_>,
+    revoked: &protocol::AccountRevoked,
+    envelope: &protocol::MessageEnvelope,
+) -> HandleResult {
+    let deps = ctx.deps;
+
+    // Validate recipient_id format (hex-encoded, 64 chars)
+    if revoked.recipient_id.len() != 64
+        || !revoked.recipient_id.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        debug!("[{}] AccountRevoked: invalid recipient_id", ctx.session);
+        return HandleResult::single(HandlerResponse::SendAck {
+            message_id: envelope.message_id.clone(),
+            status: protocol::AckStatus::Failed,
+        });
+    }
+
+    // Check per-recipient quota
+    if deps.quota.max_blobs > 0
+        && deps.storage.blob_count_for(&revoked.recipient_id) >= deps.quota.max_blobs
+    {
+        debug!(
+            "[{}] AccountRevoked: quota exceeded for recipient",
+            ctx.session
+        );
+        return HandleResult::single(HandlerResponse::SendAck {
+            message_id: envelope.message_id.clone(),
+            status: protocol::AckStatus::Failed,
+        });
+    }
+
+    // Re-encode the entire envelope as a blob for the recipient
+    if let Ok(blob_data) = protocol::encode_message(envelope) {
+        let blob = StoredBlob::new(blob_data);
+        deps.storage.store(&revoked.recipient_id, blob);
+
+        debug!("[{}] Stored AccountRevoked for recipient", ctx.session);
+        HandleResult::single(HandlerResponse::SendAck {
+            message_id: envelope.message_id.clone(),
+            status: protocol::AckStatus::Stored,
+        })
+    } else {
+        HandleResult::empty()
+    }
+}
+
+/// Handles a single decoded message by dispatching to the appropriate handler.
+///
+/// Returns a `HandleResult` describing the actions the message loop should take.
+fn handle_message(ctx: &MessageContext<'_>, envelope: &protocol::MessageEnvelope) -> HandleResult {
+    match &envelope.payload {
+        protocol::MessagePayload::EncryptedUpdate(update) => {
+            handle_encrypted_update(ctx, update, &envelope.message_id)
+        }
+        protocol::MessagePayload::Acknowledgment(ack) => handle_acknowledgment(ctx, ack),
+        protocol::MessagePayload::Handshake(_) => {
+            // Ignore duplicate handshakes
+            HandleResult::empty()
+        }
+        protocol::MessagePayload::RecoveryProofStore(store_msg) => {
+            // Recovery operations have a stricter rate limit (anti-enumeration)
+            if !ctx.deps.recovery_rate_limiter.consume(&ctx.routing_id) {
+                warn!("[{}] Recovery rate limited", ctx.session);
+                return HandleResult::single(HandlerResponse::Skip);
+            }
+            handle_recovery_proof_store(ctx, store_msg, &envelope.message_id)
+        }
+        protocol::MessagePayload::RecoveryProofQuery(query) => {
+            // Recovery operations have a stricter rate limit (anti-enumeration)
+            if !ctx.deps.recovery_rate_limiter.consume(&ctx.routing_id) {
+                warn!("[{}] Recovery rate limited", ctx.session);
+                return HandleResult::single(HandlerResponse::Skip);
+            }
+            handle_recovery_proof_query(ctx, query)
+        }
+        protocol::MessagePayload::RecoveryProofResponse(_) => {
+            debug!("[{}] Unexpected RecoveryProofResponse", ctx.session);
+            HandleResult::empty()
+        }
+        protocol::MessagePayload::HandshakeAck(_) => {
+            debug!("[{}] Unexpected HandshakeAck", ctx.session);
+            HandleResult::empty()
+        }
+        protocol::MessagePayload::DeviceSyncMessage(sync_msg) => {
+            handle_device_sync_message(ctx, sync_msg, &envelope.message_id)
+        }
+        protocol::MessagePayload::DeviceSyncAck(ack) => handle_device_sync_ack(ctx, ack),
+        protocol::MessagePayload::PurgeRequest(purge) => {
+            handle_purge_request(ctx, purge, &envelope.message_id)
+        }
+        protocol::MessagePayload::AccountRevoked(ref revoked) => {
+            handle_account_revoked(ctx, revoked, envelope)
+        }
+        protocol::MessagePayload::PurgeResponse(_) => {
+            debug!("[{}] Unexpected PurgeResponse", ctx.session);
+            HandleResult::empty()
+        }
+        protocol::MessagePayload::ForwardingHints(_) => {
+            debug!("[{}] Unexpected ForwardingHints", ctx.session);
+            HandleResult::empty()
+        }
+        protocol::MessagePayload::Unknown => {
+            debug!("[{}] Unknown message type", ctx.session);
+            HandleResult::empty()
+        }
+    }
+}
+
+/// Performs the WebSocket + Noise handshake, returning the parsed handshake data.
+///
+/// Reads the first WebSocket message, negotiates Noise NK if requested,
+/// decodes and validates the protocol-level Handshake, and sends the HandshakeAck.
+///
+/// Returns `(client_id, device_id, routing_id, suppress_presence, noise_session)` on success,
+/// or `None` if the handshake failed (connection is dropped).
+#[allow(clippy::type_complexity)]
+async fn perform_handshake(
+    write: &mut futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
+    read: &mut futures_util::stream::SplitStream<WebSocketStream<TcpStream>>,
+    deps: &ConnectionDeps,
+    session: &str,
+) -> Option<(String, Option<String>, String, bool, Option<NoiseTransport>)> {
     // Read the first WebSocket message — could be v1 Handshake or v2 Noise handshake
-    let first_msg = match timeout(idle_timeout, read.next()).await {
+    let first_msg = match timeout(deps.idle_timeout, read.next()).await {
         Ok(Some(Ok(Message::Binary(data)))) => data,
         Ok(Some(Ok(_))) => {
             warn!("[{}] Expected binary message for handshake", session);
-            return;
+            return None;
         }
         Ok(Some(Err(e))) => {
             warn!("[{}] Error reading handshake: {}", session, e);
-            return;
+            return None;
         }
         Ok(None) => {
             debug!("[{}] Connection closed before handshake", session);
-            return;
+            return None;
         }
         Err(_) => {
             warn!("[{}] Handshake timeout (slowloris protection)", session);
-            return;
+            return None;
         }
     };
 
@@ -486,14 +913,14 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
 
     let handshake_data = if noise_transport::is_noise_v2_handshake(&first_msg) {
         // --- v2 Noise NK handshake ---
-        let noise_key = match noise_static_key {
+        let noise_key = match deps.noise_static_key {
             Some(key) => key,
             None => {
                 warn!(
                     "[{}] v2 handshake received but Noise is not configured",
                     session
                 );
-                return;
+                return None;
             }
         };
 
@@ -505,7 +932,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
             Ok(r) => r,
             Err(e) => {
                 warn!("[{}] Failed to create Noise responder: {}", session, e);
-                return;
+                return None;
             }
         };
 
@@ -513,7 +940,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
             Ok(r) => r,
             Err(e) => {
                 warn!("[{}] Noise handshake failed: {}", session, e);
-                return;
+                return None;
             }
         };
 
@@ -523,7 +950,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
         response_msg.extend_from_slice(&response);
         if write.send(Message::Binary(response_msg)).await.is_err() {
             warn!("[{}] Failed to send Noise handshake response", session);
-            return;
+            return None;
         }
 
         noise_session = Some(transport);
@@ -531,13 +958,13 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
         debug!("[{}] Noise NK handshake completed", session);
 
         // Read the next message — the encrypted Handshake
-        match timeout(idle_timeout, read.next()).await {
+        match timeout(deps.idle_timeout, read.next()).await {
             Ok(Some(Ok(Message::Binary(encrypted_data)))) => {
                 match noise_session.as_mut().unwrap().decrypt(&encrypted_data) {
                     Ok(decrypted) => decrypted,
                     Err(e) => {
                         warn!("[{}] Failed to decrypt Handshake: {}", session, e);
-                        return;
+                        return None;
                     }
                 }
             }
@@ -546,17 +973,17 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     "[{}] Expected encrypted Handshake after Noise setup",
                     session
                 );
-                return;
+                return None;
             }
         }
     } else {
         // --- v1 plaintext connection ---
-        if require_noise_encryption {
+        if deps.require_noise_encryption {
             warn!(
                 "[{}] Plaintext connection rejected (require_noise_encryption=true)",
                 session
             );
-            return;
+            return None;
         }
         first_msg
     };
@@ -569,42 +996,39 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     // Validate client_id format
                     if !validate_client_id(&hs.client_id) {
                         warn!("[{}] Invalid client_id format", session);
-                        return;
+                        return None;
                     }
                     // Validate device_id format if present
                     if let Some(ref did) = hs.device_id {
                         if !validate_client_id(did) {
                             warn!("[{}] Invalid device_id format", session);
-                            return;
+                            return None;
                         }
                     }
                     // Validate routing_token format if present
                     if let Some(ref rt) = hs.routing_token {
                         if !validate_client_id(rt) {
                             warn!("[{}] Invalid routing_token format", session);
-                            return;
+                            return None;
                         }
                     }
                     // Verify signed handshake if auth fields are present.
-                    // When all four auth fields are provided, the relay verifies the
-                    // Ed25519 signature and checks that the derived client_id matches.
-                    // Legacy clients (no auth fields) are accepted without verification.
                     if let (Some(ref pk), Some(ref nonce), Some(ref sig), Some(ts)) = (
                         &hs.identity_public_key,
                         &hs.nonce,
                         &hs.signature,
                         hs.timestamp,
                     ) {
-                        match verify_signed_handshake(pk, nonce, sig, ts, &nonce_tracker) {
+                        match verify_signed_handshake(pk, nonce, sig, ts, &deps.nonce_tracker) {
                             Ok(derived_id) => {
                                 if derived_id != hs.client_id {
                                     warn!("[{}] Authenticated client_id mismatch", session);
-                                    return;
+                                    return None;
                                 }
                             }
                             Err(reason) => {
                                 warn!("[{}] Handshake auth failed: {}", session, reason);
-                                return;
+                                return None;
                             }
                         }
                     }
@@ -619,17 +1043,16 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         "[{}] Expected Handshake, got {:?}",
                         session, envelope.payload
                     );
-                    return;
+                    return None;
                 }
             }
             Err(e) => {
                 warn!("[{}] Failed to decode handshake: {}", session, e);
-                return;
+                return None;
             }
         };
 
     // Compute the routing ID: use routing_token if provided, otherwise client_id.
-    // routing_token allows clients to route blobs without revealing their identity fingerprint.
     let routing_id = routing_token.unwrap_or_else(|| client_id.clone());
 
     debug!(
@@ -648,7 +1071,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                 Ok(encrypted) => encrypted,
                 Err(e) => {
                     warn!("[{}] Failed to encrypt HandshakeAck: {}", session, e);
-                    return;
+                    return None;
                 }
             }
         } else {
@@ -656,44 +1079,40 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
         };
         if write.send(Message::Binary(send_data)).await.is_err() {
             warn!("[{}] Failed to send HandshakeAck", session);
-            return;
+            return None;
         }
     }
 
-    // Register in connection registry for delivery notifications
-    let mut registry_rx = registry.register(&routing_id);
+    Some((
+        client_id,
+        device_id,
+        routing_id,
+        suppress_presence,
+        noise_session,
+    ))
+}
 
-    // Helper: optionally encrypt data before sending over WebSocket.
-    // If Noise is active, encrypts the frame; otherwise passes through.
-    macro_rules! noise_send {
-        ($write:expr, $data:expr, $noise:expr, $session:expr) => {{
-            let send_data = if let Some(ref mut ns) = $noise {
-                match ns.encrypt(&$data) {
-                    Ok(encrypted) => encrypted,
-                    Err(e) => {
-                        warn!("[{}] Failed to encrypt outgoing message: {}", $session, e);
-                        continue;
-                    }
-                }
-            } else {
-                $data
-            };
-            $write.send(Message::Binary(send_data)).await
-        }};
-    }
+/// Delivers pending blobs, forwarding hints, and device sync messages
+/// to a newly connected client.
+async fn deliver_pending(
+    write: &mut futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
+    noise_session: &mut Option<NoiseTransport>,
+    ctx: &MessageContext<'_>,
+) -> bool {
+    let deps = ctx.deps;
 
     // Send any pending blobs for this client and notify senders
-    let pending = storage.peek(&routing_id);
+    let pending = deps.storage.peek(&ctx.routing_id);
     let pending_blob_ids: Vec<String> = pending.iter().map(|b| b.id.clone()).collect();
     for blob in pending {
-        let envelope = protocol::create_update_delivery(&blob.id, &routing_id, &blob.data);
+        let envelope = protocol::create_update_delivery(&blob.id, &ctx.routing_id, &blob.data);
         match protocol::encode_message(&envelope) {
             Ok(data) => {
                 let send_data = if let Some(ref mut ns) = noise_session {
                     match ns.encrypt(&data) {
                         Ok(encrypted) => encrypted,
                         Err(e) => {
-                            error!("[{}] Failed to encrypt pending blob: {}", session, e);
+                            error!("[{}] Failed to encrypt pending blob: {}", ctx.session, e);
                             continue;
                         }
                     }
@@ -701,36 +1120,35 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     data
                 };
                 if write.send(Message::Binary(send_data)).await.is_err() {
-                    warn!("[{}] Failed to send pending blob", session);
-                    registry.unregister(&routing_id);
-                    return;
+                    warn!("[{}] Failed to send pending blob", ctx.session);
+                    return false;
                 }
             }
             Err(e) => {
-                error!("[{}] Failed to encode blob delivery: {}", session, e);
+                error!("[{}] Failed to encode blob delivery: {}", ctx.session, e);
             }
         }
     }
 
     // Send Delivered acks to senders for blobs we just delivered.
-    // Suppressed when recipient requested suppress_presence to prevent online status inference.
-    if !suppress_presence {
+    // Suppressed when recipient requested suppress_presence.
+    if !ctx.suppress_presence {
         for blob_id in &pending_blob_ids {
-            let sender_client_id = { blob_sender_map.read().unwrap().get(blob_id).cloned() };
+            let sender_client_id = { deps.blob_sender_map.read().unwrap().get(blob_id).cloned() };
             if let Some(sender_id) = sender_client_id {
                 let ack = protocol::create_ack(blob_id, protocol::AckStatus::Delivered);
                 if let Ok(ack_data) = protocol::encode_message(&ack) {
-                    registry.try_send(&sender_id, RegistryMessage { data: ack_data });
+                    deps.registry
+                        .try_send(&sender_id, RegistryMessage { data: ack_data });
                 }
-                // Remove from sender map after delivery notification
-                blob_sender_map.write().unwrap().remove(blob_id);
+                deps.blob_sender_map.write().unwrap().remove(blob_id);
             }
         }
     }
 
     // Send forwarding hints if federation is enabled and hints exist
-    if let Some(ref hint_store) = hint_store {
-        let hints = hint_store.get_hints(&routing_id);
+    if let Some(ref hint_store) = deps.hint_store {
+        let hints = hint_store.get_hints(&ctx.routing_id);
         if !hints.is_empty() {
             let hint_infos: Vec<protocol::ForwardingHintInfo> = hints
                 .iter()
@@ -758,27 +1176,28 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     match ns.encrypt(&data) {
                         Ok(encrypted) => encrypted,
                         Err(e) => {
-                            error!("[{}] Failed to encrypt forwarding hints: {}", session, e);
-                            registry.unregister(&routing_id);
-                            return;
+                            error!(
+                                "[{}] Failed to encrypt forwarding hints: {}",
+                                ctx.session, e
+                            );
+                            return false;
                         }
                     }
                 } else {
                     data
                 };
                 if write.send(Message::Binary(send_data)).await.is_err() {
-                    warn!("[{}] Failed to send forwarding hints", session);
-                    registry.unregister(&routing_id);
-                    return;
+                    warn!("[{}] Failed to send forwarding hints", ctx.session);
+                    return false;
                 }
             }
-            debug!("[{}] Sent {} forwarding hints", session, hints.len());
+            debug!("[{}] Sent {} forwarding hints", ctx.session, hints.len());
         }
     }
 
     // Send any pending device sync messages if device_id is present
-    if let Some(ref did) = device_id {
-        let pending_sync = device_sync_storage.peek(&client_id, did);
+    if let Some(ref did) = ctx.device_id {
+        let pending_sync = deps.device_sync_storage.peek(&ctx.client_id, did);
         let pending_count = pending_sync.len();
         for msg in pending_sync {
             let envelope = protocol::create_device_sync_delivery(
@@ -795,7 +1214,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         match ns.encrypt(&data) {
                             Ok(encrypted) => encrypted,
                             Err(e) => {
-                                error!("[{}] Failed to encrypt device sync: {}", session, e);
+                                error!("[{}] Failed to encrypt device sync: {}", ctx.session, e);
                                 continue;
                             }
                         }
@@ -803,21 +1222,122 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         data
                     };
                     if write.send(Message::Binary(send_data)).await.is_err() {
-                        warn!("[{}] Failed to send pending device sync", session);
-                        return;
+                        warn!("[{}] Failed to send pending device sync", ctx.session);
+                        return false;
                     }
                 }
                 Err(e) => {
-                    error!("[{}] Failed to encode device sync delivery: {}", session, e);
+                    error!(
+                        "[{}] Failed to encode device sync delivery: {}",
+                        ctx.session, e
+                    );
                 }
             }
         }
         if pending_count > 0 {
             debug!(
                 "[{}] Sent {} pending device sync messages",
-                session, pending_count
+                ctx.session, pending_count
             );
         }
+    }
+
+    true
+}
+
+/// Optionally encrypts data via the Noise session, then sends it over WebSocket.
+/// Returns `Err` if encryption or sending fails.
+async fn noise_encrypt_and_send(
+    write: &mut futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
+    data: Vec<u8>,
+    noise_session: &mut Option<NoiseTransport>,
+    session: &str,
+) -> Result<(), ()> {
+    let send_data = if let Some(ref mut ns) = noise_session {
+        match ns.encrypt(&data) {
+            Ok(encrypted) => encrypted,
+            Err(e) => {
+                warn!("[{}] Failed to encrypt outgoing message: {}", session, e);
+                return Err(());
+            }
+        }
+    } else {
+        data
+    };
+    write.send(Message::Binary(send_data)).await.map_err(|_| ())
+}
+
+/// Processes the responses from a `HandleResult`, sending messages over the
+/// WebSocket and forwarding to the registry as needed.
+async fn process_handle_result(
+    result: HandleResult,
+    write: &mut futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
+    noise_session: &mut Option<NoiseTransport>,
+    ctx: &MessageContext<'_>,
+) {
+    for response in result.responses {
+        match response {
+            HandlerResponse::SendAck { message_id, status } => {
+                let ack = protocol::create_ack(&message_id, status);
+                if let Ok(ack_data) = protocol::encode_message(&ack) {
+                    let _ =
+                        noise_encrypt_and_send(write, ack_data, noise_session, ctx.session).await;
+                }
+            }
+            HandlerResponse::SendEnvelope(envelope) => {
+                if let Ok(data) = protocol::encode_message(&envelope) {
+                    let _ = noise_encrypt_and_send(write, data, noise_session, ctx.session).await;
+                }
+            }
+            HandlerResponse::ForwardToRegistry { target_id, data } => {
+                ctx.deps
+                    .registry
+                    .try_send(&target_id, RegistryMessage { data });
+            }
+            HandlerResponse::RemoveFromSenderMap(blob_id) => {
+                ctx.deps.blob_sender_map.write().unwrap().remove(&blob_id);
+            }
+            HandlerResponse::Skip => {
+                // No action needed
+            }
+        }
+    }
+}
+
+/// Handles a WebSocket connection.
+pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: ConnectionDeps) {
+    // Generate a random session label for logging.
+    // The relay must never log client_id (identity fingerprint) to prevent
+    // relay operators from identifying users in logs.
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let session = &session_id[..8];
+
+    let (mut write, mut read) = ws_stream.split();
+
+    // Perform handshake (Noise NK negotiation + protocol Handshake + validation)
+    let (client_id, device_id, routing_id, suppress_presence, mut noise_session) =
+        match perform_handshake(&mut write, &mut read, &deps, session).await {
+            Some(result) => result,
+            None => return,
+        };
+
+    // Register in connection registry for delivery notifications
+    let mut registry_rx = deps.registry.register(&routing_id);
+
+    // Build the message context shared by all handlers
+    let ctx = MessageContext {
+        routing_id: routing_id.clone(),
+        client_id,
+        device_id,
+        suppress_presence,
+        session,
+        deps: &deps,
+    };
+
+    // Deliver pending blobs, forwarding hints, and device sync messages
+    if !deliver_pending(&mut write, &mut noise_session, &ctx).await {
+        deps.registry.unregister(&routing_id);
+        return;
     }
 
     // Process incoming messages with idle timeout.
@@ -826,7 +1346,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
     loop {
         let msg = tokio::select! {
             // WebSocket message from client
-            ws_msg = timeout(idle_timeout, read.next()) => {
+            ws_msg = timeout(deps.idle_timeout, read.next()) => {
                 match ws_msg {
                     Ok(Some(msg)) => msg,
                     Ok(None) => {
@@ -872,7 +1392,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                 };
 
                 // Check message size (after decryption)
-                if plaintext_data.len() > max_message_size {
+                if plaintext_data.len() > deps.max_message_size {
                     warn!(
                         "[{}] Message too large: {} bytes",
                         session,
@@ -882,7 +1402,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                 }
 
                 // Rate limit check
-                if !rate_limiter.consume(&routing_id) {
+                if !deps.rate_limiter.consume(&routing_id) {
                     warn!("[{}] Rate limited", session);
                     continue;
                 }
@@ -896,346 +1416,9 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     }
                 };
 
-                match envelope.payload {
-                    protocol::MessagePayload::EncryptedUpdate(update) => {
-                        // Check per-recipient quota before storing
-                        if (quota.max_blobs > 0
-                            && storage.blob_count_for(&update.recipient_id) >= quota.max_blobs)
-                            || (quota.max_bytes > 0
-                                && storage.storage_size_for(&update.recipient_id)
-                                    + update.ciphertext.len()
-                                    > quota.max_bytes)
-                        {
-                            let ack = protocol::create_ack(
-                                &envelope.message_id,
-                                protocol::AckStatus::Failed,
-                            );
-                            if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                let _ = noise_send!(write, ack_data, noise_session, session);
-                            }
-                            debug!("[{}] Quota exceeded for recipient", session);
-                            continue;
-                        }
-
-                        // Store blob for recipient
-                        let blob = StoredBlob::new(update.ciphertext);
-                        let blob_id = blob.id.clone();
-                        storage.store(&update.recipient_id, blob);
-
-                        // Track sender for delivery notification (ephemeral, in-memory only)
-                        blob_sender_map
-                            .write()
-                            .unwrap()
-                            .insert(blob_id, routing_id.clone());
-
-                        // Send acknowledgment - Stored means relay has persisted the message
-                        let ack =
-                            protocol::create_ack(&envelope.message_id, protocol::AckStatus::Stored);
-                        if let Ok(ack_data) = protocol::encode_message(&ack) {
-                            let _ = noise_send!(write, ack_data, noise_session, session);
-                        }
-
-                        debug!("[{}] Stored blob", session);
-                    }
-                    protocol::MessagePayload::Acknowledgment(ack) => {
-                        // Client acknowledging receipt of a blob
-                        if storage.acknowledge(&routing_id, &ack.message_id) {
-                            debug!("[{}] Blob acknowledged", session);
-
-                            // If this is ReceivedByRecipient, forward to the original sender.
-                            // Suppressed when recipient requested suppress_presence.
-                            if !suppress_presence
-                                && ack.status == protocol::AckStatus::ReceivedByRecipient
-                            {
-                                let sender_client_id = {
-                                    blob_sender_map
-                                        .read()
-                                        .unwrap()
-                                        .get(&ack.message_id)
-                                        .cloned()
-                                };
-                                if let Some(sender_id) = sender_client_id {
-                                    let fwd_ack = protocol::create_ack(
-                                        &ack.message_id,
-                                        protocol::AckStatus::ReceivedByRecipient,
-                                    );
-                                    if let Ok(ack_data) = protocol::encode_message(&fwd_ack) {
-                                        registry.try_send(
-                                            &sender_id,
-                                            RegistryMessage { data: ack_data },
-                                        );
-                                    }
-                                    blob_sender_map.write().unwrap().remove(&ack.message_id);
-                                }
-                            }
-                        }
-                    }
-                    protocol::MessagePayload::Handshake(_) => {
-                        // Ignore duplicate handshakes
-                    }
-                    protocol::MessagePayload::RecoveryProofStore(store_msg) => {
-                        // Recovery operations have a stricter rate limit (anti-enumeration)
-                        if !recovery_rate_limiter.consume(&routing_id) {
-                            warn!("[{}] Recovery rate limited", session);
-                            continue;
-                        }
-                        // Store a recovery proof
-                        if let Ok(key_hash) = hex_to_hash(&store_msg.key_hash) {
-                            let proof = StoredRecoveryProof::new(key_hash, store_msg.proof_data);
-                            recovery_storage.store(proof);
-
-                            // Send acknowledgment - Stored means relay has persisted the proof
-                            let ack = protocol::create_ack(
-                                &envelope.message_id,
-                                protocol::AckStatus::Stored,
-                            );
-                            if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                let _ = noise_send!(write, ack_data, noise_session, session);
-                            }
-
-                            debug!("[{}] Stored recovery proof", session);
-                        } else {
-                            warn!("[{}] Invalid key hash format", session);
-                        }
-                    }
-                    protocol::MessagePayload::RecoveryProofQuery(query) => {
-                        // Recovery operations have a stricter rate limit (anti-enumeration)
-                        if !recovery_rate_limiter.consume(&routing_id) {
-                            warn!("[{}] Recovery rate limited", session);
-                            continue;
-                        }
-                        // Batch query for recovery proofs
-                        let key_hashes: Vec<[u8; 32]> = query
-                            .key_hashes
-                            .iter()
-                            .filter_map(|h| hex_to_hash(h).ok())
-                            .collect();
-
-                        let results = recovery_storage.batch_get(&key_hashes);
-
-                        let entries: Vec<protocol::RecoveryProofEntry> = results
-                            .into_iter()
-                            .map(|(hash, proof)| protocol::RecoveryProofEntry {
-                                key_hash: hash_to_hex(&hash),
-                                proof_data: proof.proof_data,
-                            })
-                            .collect();
-
-                        let response = protocol::create_recovery_response(entries);
-                        if let Ok(data) = protocol::encode_message(&response) {
-                            let _ = noise_send!(write, data, noise_session, session);
-                        }
-
-                        debug!(
-                            "Processed recovery query with {} hashes",
-                            query.key_hashes.len()
-                        );
-                    }
-                    protocol::MessagePayload::RecoveryProofResponse(_) => {
-                        // Clients shouldn't send responses, ignore
-                        debug!("[{}] Unexpected RecoveryProofResponse", session);
-                    }
-                    protocol::MessagePayload::HandshakeAck(_) => {
-                        // Server-only message, clients shouldn't send this
-                        debug!("[{}] Unexpected HandshakeAck", session);
-                    }
-                    protocol::MessagePayload::DeviceSyncMessage(sync_msg) => {
-                        // Validate that sender is the connected client
-                        if sync_msg.identity_id != client_id {
-                            warn!("[{}] DeviceSyncMessage identity mismatch", session);
-                            continue;
-                        }
-
-                        // Store the device sync message for the target device
-                        let stored = StoredDeviceSyncMessage::new(
-                            sync_msg.identity_id.clone(),
-                            sync_msg.target_device_id.clone(),
-                            sync_msg.sender_device_id,
-                            sync_msg.encrypted_payload,
-                            sync_msg.version,
-                        );
-                        device_sync_storage.store(stored);
-
-                        // Send acknowledgment - Stored means relay has persisted the sync message
-                        let ack =
-                            protocol::create_ack(&envelope.message_id, protocol::AckStatus::Stored);
-                        if let Ok(ack_data) = protocol::encode_message(&ack) {
-                            let _ = noise_send!(write, ack_data, noise_session, session);
-                        }
-
-                        debug!(
-                            "[{}] Stored device sync (version {})",
-                            session, sync_msg.version
-                        );
-                    }
-                    protocol::MessagePayload::DeviceSyncAck(ack) => {
-                        // Client acknowledging receipt of a device sync message
-                        if let Some(ref did) = device_id {
-                            if device_sync_storage.acknowledge(&client_id, did, &ack.message_id) {
-                                debug!(
-                                    "[{}] Device sync acknowledged (version {})",
-                                    session, ack.synced_version
-                                );
-                            }
-                        } else {
-                            debug!(
-                                "[{}] DeviceSyncAck received but no device_id in handshake",
-                                session
-                            );
-                        }
-                    }
-                    protocol::MessagePayload::PurgeRequest(purge) => {
-                        // Require authenticated purge requests (v2 signature)
-                        if purge.is_authenticated() {
-                            if let Err(e) = purge.verify_signature() {
-                                warn!(
-                                    "[{}] Rejecting purge with invalid signature: {}",
-                                    session, e
-                                );
-                                let ack = protocol::create_ack(
-                                    &envelope.message_id,
-                                    protocol::AckStatus::Failed,
-                                );
-                                if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                    let _ = noise_send!(write, ack_data, noise_session, session);
-                                }
-                                continue;
-                            }
-                        } else {
-                            warn!(
-                                "[{}] Rejecting unsigned purge request (v2 signature required)",
-                                session
-                            );
-                            let ack = protocol::create_ack(
-                                &envelope.message_id,
-                                protocol::AckStatus::Failed,
-                            );
-                            if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                let _ = noise_send!(write, ack_data, noise_session, session);
-                            }
-                            continue;
-                        }
-
-                        // Delete all stored blobs for this client's routing ID
-                        let blobs_deleted = storage.delete_all_for(&routing_id);
-
-                        // Optionally delete device sync messages (identity-based)
-                        let device_sync_deleted = if purge.include_device_sync {
-                            device_sync_storage.delete_all_for(&client_id)
-                        } else {
-                            0
-                        };
-
-                        // Optionally delete recovery proofs
-                        let recovery_proofs_deleted = if purge.include_recovery_proofs {
-                            if let Some(ref key_hash_hex) = purge.recovery_key_hash {
-                                if let Ok(decoded) = hex::decode(key_hash_hex) {
-                                    if decoded.len() == 32 {
-                                        let mut hash = [0u8; 32];
-                                        hash.copy_from_slice(&decoded);
-                                        if recovery_storage.remove(&hash) {
-                                            1
-                                        } else {
-                                            0
-                                        }
-                                    } else {
-                                        0
-                                    }
-                                } else {
-                                    0
-                                }
-                            } else {
-                                0
-                            }
-                        } else {
-                            0
-                        };
-
-                        // Delete forwarding hints for this routing_id (federation cleanup)
-                        if let Some(ref hint_store) = hint_store {
-                            let hints_deleted = hint_store.delete_all_for(&routing_id);
-                            if hints_deleted > 0 {
-                                debug!("[{}] Purged {} forwarding hints", session, hints_deleted);
-                            }
-                        }
-
-                        // Send purge response
-                        let response = protocol::create_purge_response(
-                            &envelope.message_id,
-                            blobs_deleted,
-                            device_sync_deleted,
-                            recovery_proofs_deleted,
-                        );
-                        if let Ok(data) = protocol::encode_message(&response) {
-                            let _ = noise_send!(write, data, noise_session, session);
-                        }
-
-                        debug!(
-                            "[{}] Purged {} blobs, {} device sync, {} recovery proofs",
-                            session, blobs_deleted, device_sync_deleted, recovery_proofs_deleted
-                        );
-                    }
-                    protocol::MessagePayload::AccountRevoked(ref revoked) => {
-                        // Route like EncryptedUpdate: store as blob for recipient
-
-                        // Validate recipient_id format (hex-encoded, 64 chars)
-                        if revoked.recipient_id.len() != 64
-                            || !revoked.recipient_id.chars().all(|c| c.is_ascii_hexdigit())
-                        {
-                            let ack = protocol::create_ack(
-                                &envelope.message_id,
-                                protocol::AckStatus::Failed,
-                            );
-                            if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                let _ = noise_send!(write, ack_data, noise_session, session);
-                            }
-                            debug!("[{}] AccountRevoked: invalid recipient_id", session);
-                            continue;
-                        }
-
-                        // Check per-recipient quota
-                        if quota.max_blobs > 0
-                            && storage.blob_count_for(&revoked.recipient_id) >= quota.max_blobs
-                        {
-                            let ack = protocol::create_ack(
-                                &envelope.message_id,
-                                protocol::AckStatus::Failed,
-                            );
-                            if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                let _ = noise_send!(write, ack_data, noise_session, session);
-                            }
-                            debug!("[{}] AccountRevoked: quota exceeded for recipient", session);
-                            continue;
-                        }
-
-                        // Re-encode the entire envelope as a blob for the recipient
-                        if let Ok(blob_data) = protocol::encode_message(&envelope) {
-                            let blob = StoredBlob::new(blob_data);
-                            storage.store(&revoked.recipient_id, blob);
-
-                            let ack = protocol::create_ack(
-                                &envelope.message_id,
-                                protocol::AckStatus::Stored,
-                            );
-                            if let Ok(ack_data) = protocol::encode_message(&ack) {
-                                let _ = noise_send!(write, ack_data, noise_session, session);
-                            }
-
-                            debug!("[{}] Stored AccountRevoked for recipient", session);
-                        }
-                    }
-                    protocol::MessagePayload::PurgeResponse(_) => {
-                        // Clients shouldn't send responses, ignore
-                        debug!("[{}] Unexpected PurgeResponse", session);
-                    }
-                    protocol::MessagePayload::ForwardingHints(_) => {
-                        // Server-only message, clients shouldn't send this
-                        debug!("[{}] Unexpected ForwardingHints", session);
-                    }
-                    protocol::MessagePayload::Unknown => {
-                        debug!("[{}] Unknown message type", session);
-                    }
-                }
+                // Dispatch to the appropriate handler and process responses
+                let result = handle_message(&ctx, &envelope);
+                process_handle_result(result, &mut write, &mut noise_session, &ctx).await;
             }
             Ok(Message::Ping(data)) => {
                 let _ = write.send(Message::Pong(data)).await;
@@ -1255,7 +1438,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
     }
 
     // Unregister from connection registry on disconnect
-    registry.unregister(&routing_id);
+    deps.registry.unregister(&routing_id);
 }
 
 // INLINE_TEST_REQUIRED: Binary crate without lib.rs - tests cannot be external
@@ -2071,9 +2254,10 @@ mod tests {
             let ctx = make_test_context(&deps);
 
             let revoked = protocol::AccountRevoked {
+                sender_id: "a".repeat(64),
                 recipient_id: "e".repeat(64),
-                revocation_proof: vec![1, 2, 3],
-                new_identity_public_key: None,
+                timestamp: 1000,
+                signature: vec![1, 2, 3],
             };
             let envelope = protocol::MessageEnvelope {
                 version: protocol::PROTOCOL_VERSION,
@@ -2103,9 +2287,10 @@ mod tests {
             let ctx = make_test_context(&deps);
 
             let revoked = protocol::AccountRevoked {
+                sender_id: "a".repeat(64),
                 recipient_id: "too-short".to_string(),
-                revocation_proof: vec![1, 2, 3],
-                new_identity_public_key: None,
+                timestamp: 1000,
+                signature: vec![1, 2, 3],
             };
             let envelope = protocol::MessageEnvelope {
                 version: protocol::PROTOCOL_VERSION,
