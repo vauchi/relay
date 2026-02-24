@@ -16,3 +16,7 @@ Thumbs.db
 *.db
 *.db-journal
 data/
+
+# Mutation testing output (cargo-mutants)
+mutants.out/
+mutants.out.old/
