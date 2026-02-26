@@ -17,10 +17,11 @@ WebSocket relay server for message forwarding between clients.
 
 ```bash
 cargo run -p vauchi-relay                    # Start server
-cargo test -p vauchi-relay                   # Run tests
+just test relay                              # Run tests
+just check relay                             # Format + lint + test
 RUST_LOG=debug cargo run -p vauchi-relay    # With debug logging
 ```
 
 ## Testing
 
-Integration tests should use test relay instances. Run with `cargo test -p vauchi-relay`.
+Integration tests should use test relay instances. Run with `just test relay`.
