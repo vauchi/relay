@@ -20,3 +20,7 @@ data/
 # Mutation testing output (cargo-mutants)
 mutants.out/
 mutants.out.old/
+
+# CI local testing
+.gitlab-ci-local/
+.gitlab-ci-local/
