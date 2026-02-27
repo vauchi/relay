@@ -97,6 +97,7 @@ fn contract_handshake_has_client_id_field() {
         nonce: None,
         signature: None,
         timestamp: None,
+        supported_versions: None,
     };
     assert_eq!(h.client_id, "aa".repeat(32));
 }
@@ -120,6 +121,7 @@ fn contract_handshake_ack_has_expected_fields() {
         protocol_version: 1,
         server_version: "1.0.0".to_string(),
         features: vec!["noise".to_string()],
+        supported_versions: None,
     };
     assert_eq!(ack.protocol_version, 1);
     assert_eq!(ack.server_version, "1.0.0");

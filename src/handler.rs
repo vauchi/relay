@@ -207,7 +207,9 @@ mod protocol {
     // =========================================================================
 
     /// Creates a handshake acknowledgment envelope.
-    pub fn create_handshake_ack(is_noise_session: bool) -> MessageEnvelope {
+    ///
+    /// `negotiated_version` is the result of version negotiation with the client.
+    pub fn create_handshake_ack(is_noise_session: bool, negotiated_version: u8) -> MessageEnvelope {
         let mut features = vec![
             "routing_token".to_string(),
             "suppress_presence".to_string(),
@@ -229,9 +231,10 @@ mod protocol {
                 .unwrap()
                 .as_secs(),
             payload: MessagePayload::HandshakeAck(HandshakeAck {
-                protocol_version: PROTOCOL_VERSION,
+                protocol_version: negotiated_version,
                 server_version: env!("CARGO_PKG_VERSION").to_string(),
                 features,
+                supported_versions: Some(vec![PROTOCOL_VERSION]),
             }),
         }
     }
@@ -999,7 +1002,7 @@ async fn perform_handshake(
     };
 
     // Parse the Handshake message (same for v1 and v2)
-    let (client_id, device_id, routing_token, suppress_presence) =
+    let (client_id, device_id, routing_token, suppress_presence, client_supported_versions) =
         match protocol::decode_message(&handshake_data) {
             Ok(envelope) => {
                 if let protocol::MessagePayload::Handshake(hs) = envelope.payload {
@@ -1047,6 +1050,7 @@ async fn perform_handshake(
                         hs.device_id,
                         hs.routing_token,
                         hs.suppress_presence,
+                        hs.supported_versions,
                     )
                 } else {
                     warn!(
@@ -1073,8 +1077,24 @@ async fn perform_handshake(
         noise_session.is_some()
     );
 
+    // Version negotiation: pick the highest version both sides support.
+    // Server currently supports [PROTOCOL_VERSION] only.
+    let server_versions = [protocol::PROTOCOL_VERSION];
+    let negotiated =
+        protocol::negotiate_version(client_supported_versions.as_deref(), &server_versions);
+    let negotiated_version = match negotiated {
+        Some(v) => v,
+        None => {
+            warn!(
+                "[{}] Version negotiation failed (client: {:?}, server: {:?})",
+                session, client_supported_versions, server_versions
+            );
+            return None;
+        }
+    };
+
     // Send HandshakeAck with server version and supported features
-    let hs_ack = protocol::create_handshake_ack(noise_session.is_some());
+    let hs_ack = protocol::create_handshake_ack(noise_session.is_some(), negotiated_version);
     if let Ok(ack_data) = protocol::encode_message(&hs_ack) {
         let send_data = if let Some(ref mut ns) = noise_session {
             match ns.encrypt(&ack_data) {
@@ -1494,6 +1514,7 @@ mod tests {
             nonce: None,
             signature: None,
             timestamp: None,
+            supported_versions: None,
         };
         let json = serde_json::to_string(&hs).unwrap();
         let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
@@ -1513,6 +1534,7 @@ mod tests {
             nonce: None,
             signature: None,
             timestamp: None,
+            supported_versions: None,
         };
         let json = serde_json::to_string(&hs).unwrap();
         let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
@@ -1530,6 +1552,7 @@ mod tests {
             nonce: None,
             signature: None,
             timestamp: None,
+            supported_versions: None,
         };
         let json = serde_json::to_string(&hs).unwrap();
         let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
@@ -1599,7 +1622,7 @@ mod tests {
 
     #[test]
     fn test_handshake_ack_creation() {
-        let ack = protocol::create_handshake_ack(false);
+        let ack = protocol::create_handshake_ack(false, protocol::PROTOCOL_VERSION);
         if let protocol::MessagePayload::HandshakeAck(hs_ack) = ack.payload {
             assert_eq!(hs_ack.protocol_version, protocol::PROTOCOL_VERSION);
             assert!(!hs_ack.server_version.is_empty());
@@ -1618,13 +1641,27 @@ mod tests {
 
     #[test]
     fn test_handshake_ack_roundtrip() {
-        let ack = protocol::create_handshake_ack(false);
+        let ack = protocol::create_handshake_ack(false, protocol::PROTOCOL_VERSION);
         let encoded = protocol::encode_message(&ack).unwrap();
         let decoded = protocol::decode_message(&encoded).unwrap();
         if let protocol::MessagePayload::HandshakeAck(hs_ack) = decoded.payload {
             assert_eq!(hs_ack.protocol_version, protocol::PROTOCOL_VERSION);
         } else {
             panic!("Expected HandshakeAck payload after roundtrip");
+        }
+    }
+
+    #[test]
+    fn test_handshake_ack_includes_supported_versions() {
+        let ack = protocol::create_handshake_ack(false, 1);
+        if let protocol::MessagePayload::HandshakeAck(hs_ack) = ack.payload {
+            assert_eq!(
+                hs_ack.supported_versions,
+                Some(vec![protocol::PROTOCOL_VERSION])
+            );
+            assert_eq!(hs_ack.protocol_version, 1);
+        } else {
+            panic!("Expected HandshakeAck payload");
         }
     }
 
