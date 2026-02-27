@@ -1927,8 +1927,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vauchi-protocol"
-version = "0.1.21"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#f429275f517b0e09d01e6ec8c7a384eaf26649f6"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2398,7 +2397,3 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
-
-[[patch.unused]]
-name = "vauchi-protocol"
-version = "0.2.0"
