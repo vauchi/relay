@@ -109,6 +109,9 @@ pub trait BlobStore: Send + Sync {
 
     /// Removes a specific blob by its primary key. Returns true if found and removed.
     fn remove_blob(&self, blob_id: &str) -> bool;
+
+    /// Performs shutdown cleanup (WAL checkpoint for SQLite backends).
+    fn shutdown(&self) {}
 }
 
 // ============================================================================
@@ -332,6 +335,11 @@ impl BlobStore for SqliteBlobStore {
             .execute("DELETE FROM blobs WHERE id = ?1", params![blob_id])
             .unwrap_or(0);
         changes > 0
+    }
+
+    fn shutdown(&self) {
+        let conn = self.conn.lock().unwrap();
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     }
 }
 

@@ -12,7 +12,7 @@
 //! - Recovery proof storage for contact recovery
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -434,8 +434,34 @@ async fn main() {
         config.network.listen_addr
     );
 
-    // Accept connections
-    while let Ok((stream, _addr)) = listener.accept().await {
+    // T1-3: Graceful shutdown — stop accepting on SIGTERM/SIGINT, drain, checkpoint
+    let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+    let shutdown_for_signal = shutdown_notify.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install signal handler");
+        info!("Shutdown signal received, draining connections...");
+        shutdown_for_signal.notify_waiters();
+    });
+
+    // Accept connections (races against shutdown signal)
+    loop {
+        let stream = tokio::select! {
+            result = listener.accept() => {
+                match result {
+                    Ok((stream, _addr)) => stream,
+                    Err(e) => {
+                        error!("Accept error: {}", e);
+                        continue;
+                    }
+                }
+            }
+            _ = shutdown_notify.notified() => {
+                break;
+            }
+        };
+        let _addr = stream.peer_addr().ok();
         // Enforce connection limit
         let connection_guard = match connection_limiter.try_acquire() {
             Some(guard) => guard,
@@ -631,4 +657,38 @@ async fn main() {
             // _guard dropped here, releasing the connection slot
         });
     }
+
+    // === Graceful shutdown: drain existing connections ===
+    let drain_timeout = Duration::from_secs(30);
+    let active = connection_limiter.active_count();
+    if active > 0 {
+        info!(
+            "Draining {} active connections ({}s timeout)...",
+            active,
+            drain_timeout.as_secs()
+        );
+        let deadline = tokio::time::sleep(drain_timeout);
+        tokio::pin!(deadline);
+        loop {
+            let current = connection_limiter.active_count();
+            if current == 0 {
+                info!("All connections drained");
+                break;
+            }
+            tokio::select! {
+                _ = &mut deadline => {
+                    tracing::warn!("{} connections still active after drain timeout", current);
+                    break;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                    // Poll again
+                }
+            }
+        }
+    }
+
+    // === WAL checkpoint on all SQLite databases ===
+    info!("Running WAL checkpoint on databases...");
+    storage.shutdown();
+    info!("Shutdown complete");
 }
