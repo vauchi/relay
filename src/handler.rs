@@ -6,6 +6,7 @@
 //!
 //! Handles individual client connections.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -67,10 +68,11 @@ fn hash_to_hex(hash: &[u8; 32]) -> String {
 
 /// Tracks recently seen nonces to prevent replay attacks.
 ///
-/// Nonces older than `TTL` are evicted on each insert. Shared via `Arc`
-/// across all connections handled by a single relay instance.
+/// Uses a HashMap for O(1) membership checks instead of O(n) linear scan.
+/// Nonces older than `TTL` are evicted amortized on each insert. Shared via
+/// `Arc` across all connections handled by a single relay instance.
 pub struct NonceTracker {
-    nonces: Mutex<Vec<(Vec<u8>, Instant)>>,
+    nonces: Mutex<HashMap<Vec<u8>, Instant>>,
 }
 
 /// Nonces expire after 120 seconds (2× the ±60s timestamp window).
@@ -88,7 +90,7 @@ impl NonceTracker {
     /// Creates a new empty nonce tracker.
     pub fn new() -> Self {
         NonceTracker {
-            nonces: Mutex::new(Vec::new()),
+            nonces: Mutex::new(HashMap::new()),
         }
     }
 
@@ -97,17 +99,17 @@ impl NonceTracker {
     pub fn check_and_insert(&self, nonce: &[u8]) -> bool {
         let mut nonces = self.nonces.lock().unwrap();
 
-        // Evict expired nonces
+        // Evict expired nonces (amortized O(n) on eviction, O(1) per lookup)
         let cutoff = Instant::now() - NONCE_TTL;
-        nonces.retain(|(_, ts)| *ts > cutoff);
+        nonces.retain(|_, ts| *ts > cutoff);
 
-        // Check for replay
-        if nonces.iter().any(|(n, _)| n == nonce) {
+        // Check for replay (O(1) lookup)
+        if nonces.contains_key(nonce) {
             return false;
         }
 
-        // Insert new nonce
-        nonces.push((nonce.to_vec(), Instant::now()));
+        // Insert new nonce (O(1) amortized)
+        nonces.insert(nonce.to_vec(), Instant::now());
         true
     }
 }
