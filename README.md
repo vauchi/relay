@@ -16,7 +16,7 @@ The relay server is a zero-knowledge message broker. It:
 - Accepts WebSocket connections from Vauchi clients
 - Stores encrypted messages for offline recipients
 - Forwards messages when recipients connect
-- Automatically expires old messages (24 hours default)
+- Automatically expires old messages (30 days default)
 - Rate limits clients to prevent abuse
 
 **Privacy**: The server only sees encrypted blobs. It cannot read message contents, identify contacts, or access any user data.
@@ -49,7 +49,7 @@ Environment variables:
 |----------|---------|-------------|
 | `RELAY_LISTEN_ADDR` | `0.0.0.0:8080` | Address to listen on |
 | `RELAY_MAX_MESSAGE_SIZE` | `1048576` | Maximum message size in bytes (1 MB) |
-| `RELAY_BLOB_TTL_SECS` | `7776000` | Blob expiration time in seconds (90 days) |
+| `RELAY_BLOB_TTL_SECS` | `2592000` | Blob expiration time in seconds (30 days) |
 | `RELAY_RATE_LIMIT` | `60` | Messages per minute per client |
 | `RELAY_CLEANUP_INTERVAL` | `3600` | Cleanup interval in seconds (1 hour) |
 | `RELAY_STORAGE_BACKEND` | `sqlite` | Storage backend: `sqlite` (persistent) or `memory` |
@@ -70,7 +70,7 @@ Environment variables:
 | `RELAY_FEDERATION_PEER_TIMEOUT` | `30` | Peer handshake timeout in seconds |
 | `RELAY_FEDERATION_CAPACITY_INTERVAL` | `60` | Capacity check interval in seconds |
 
-**Note:** The 90-day TTL allows users who sync infrequently to still receive updates.
+**Note:** The 30-day TTL balances storage efficiency with allowing infrequent sync.
 SQLite storage (default) persists messages across server restarts.
 
 ## Protocol

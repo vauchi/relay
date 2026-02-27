@@ -21,8 +21,8 @@ services:
       # Storage configuration
       - RELAY_STORAGE_BACKEND=sqlite
       - RELAY_DATA_DIR=/data
-      # Blob retention (90 days in seconds)
-      - RELAY_BLOB_TTL_SECS=7776000
+      # Blob retention (30 days in seconds, matches code default)
+      - RELAY_BLOB_TTL_SECS=2592000
       # Rate limiting (messages per minute per client)
       - RELAY_RATE_LIMIT=60
       # Cleanup interval (1 hour in seconds)
