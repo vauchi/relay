@@ -7,21 +7,7 @@
 
 WebSocket relay server for message forwarding between clients.
 
-## Component-Specific Rules
+## Rules
 
-- **Stateless design**: Relay should not persist sensitive data
-- **No decryption**: Relay forwards encrypted blobs, never decrypts
-- **Protocol types**: Uses `vauchi-protocol` crate (from `core/` repo) for shared message types; does **not** depend on `vauchi-core`
-
-## Commands
-
-```bash
-cargo run -p vauchi-relay                    # Start server
-just test relay                              # Run tests
-just check relay                             # Format + lint + test
-RUST_LOG=debug cargo run -p vauchi-relay    # With debug logging
-```
-
-## Testing
-
-Integration tests should use test relay instances. Run with `just test relay`.
+- **Stateless**: No persistent sensitive data. Forwards encrypted blobs, never decrypts.
+- Uses `vauchi-protocol` (from `core/`) for shared message types. Does **not** depend on `vauchi-core`.
