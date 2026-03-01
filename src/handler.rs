@@ -1359,7 +1359,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
         };
 
     // Register in connection registry for delivery notifications
-    let mut registry_rx = deps.registry.register(&routing_id);
+    let (conn_id, mut registry_rx) = deps.registry.register(&routing_id);
 
     // Build the message context shared by all handlers
     let ctx = MessageContext {
@@ -1373,7 +1373,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
 
     // Deliver pending blobs, forwarding hints, and device sync messages
     if !deliver_pending(&mut write, &mut noise_session, &ctx).await {
-        deps.registry.unregister(&routing_id);
+        deps.registry.unregister(&routing_id, conn_id);
         return;
     }
 
@@ -1475,7 +1475,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
     }
 
     // Unregister from connection registry on disconnect
-    deps.registry.unregister(&routing_id);
+    deps.registry.unregister(&routing_id, conn_id);
 }
 
 // INLINE_TEST_REQUIRED: Binary crate without lib.rs - tests cannot be external
