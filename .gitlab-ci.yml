@@ -299,7 +299,7 @@ mutation:incremental:
     - git diff "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"...HEAD > mr.diff
     - |
       MUTANTS_OUT="mutants.out"
-      cargo mutants --in-diff mr.diff --timeout 120 --mutant-limit 50 --baseline skip &
+      cargo mutants --in-diff mr.diff --timeout 120 --baseline skip &
       MUTANTS_PID=$!
       trap 'kill $MUTANTS_PID 2>/dev/null; wait $MUTANTS_PID 2>/dev/null' EXIT
 
