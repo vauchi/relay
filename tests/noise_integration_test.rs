@@ -289,6 +289,7 @@ fn test_message_replay_detection() {
 /// Traces to: noise_protocol.feature @transport
 ///   Scenario: Corrupted ciphertext is detected
 // @scenario: noise_protocol:Corrupted ciphertext detected
+// @scenario: noise_protocol.feature:Corrupted ciphertext is detected
 #[test]
 fn test_corrupted_ciphertext() {
     let relay_kp = generate_relay_keypair();
@@ -338,6 +339,7 @@ fn test_corrupted_ciphertext() {
 /// Traces to: noise_protocol.feature @transport
 ///   Scenario: Sequential messages use advancing nonces
 // @scenario: noise_protocol:Sequential nonce ordering verified
+// @scenario: noise_protocol.feature:Sequential messages use advancing nonces
 #[test]
 fn test_sequential_nonce_verification() {
     let relay_kp = generate_relay_keypair();

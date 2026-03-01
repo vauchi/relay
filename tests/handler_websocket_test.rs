@@ -442,6 +442,7 @@ async fn test_store_multiple_blobs() {
 // ============================================================================
 
 // @scenario: sync_updates:Pending updates delivered on connect
+// @scenario: sync_updates.feature:Relay stores updates for offline contacts
 #[tokio::test]
 async fn test_pending_blobs_delivered_on_connect() {
     let (deps, storage, _) = test_deps();
@@ -1465,6 +1466,7 @@ async fn test_empty_binary_message() {
 // ============================================================================
 
 // @scenario: relay_network:Relay enforces rate limits
+// @scenario: relay_network.feature:Rate limiting on relay nodes
 #[tokio::test]
 async fn test_rate_limit_silently_drops_excess_messages() {
     let (deps, storage, _, _) = test_deps_custom(

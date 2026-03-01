@@ -96,6 +96,7 @@ async fn start_test_server(deps: ConnectionDeps) -> String {
 /// When `require_noise_encryption = true`, a plaintext (v1) handshake should
 /// be rejected: the server closes the connection without sending a HandshakeAck.
 // @scenario: noise_protocol:Plaintext rejected when noise encryption required
+// @scenario: noise_protocol.feature:Relay optionally requires Noise for v2+ clients
 #[tokio::test]
 async fn test_plaintext_rejected_when_noise_required() {
     let deps = make_deps(true);
@@ -151,6 +152,7 @@ async fn test_plaintext_rejected_when_noise_required() {
 /// When `require_noise_encryption = false`, a plaintext (v1) handshake should
 /// succeed normally with a HandshakeAck response.
 // @scenario: noise_protocol:Plaintext accepted when noise not required
+// @scenario: noise_protocol.feature:Client connects to relay without Noise support
 #[tokio::test]
 async fn test_plaintext_accepted_when_noise_not_required() {
     let deps = make_deps(false);

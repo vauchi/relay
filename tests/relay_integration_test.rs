@@ -51,6 +51,7 @@ fn test_multiple_blobs_for_recipient() {
 /// Test: Blobs are separate per recipient
 /// Based on: Scenario: Updates are routed to correct recipient
 // @scenario: relay_network:Updates routed to correct recipient
+// @scenario: sync_updates.feature:Relay routes by recipient ID
 #[test]
 fn test_blobs_separate_per_recipient() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -135,6 +136,7 @@ fn test_take_removes_all() {
 /// Test: Cleanup removes expired blobs
 /// Based on: Scenario: Stale updates are cleaned up
 // @scenario: relay_network:Stale updates cleaned up
+// @scenario: relay_network.feature:Relay blob expiration
 #[test]
 fn test_cleanup_expired() {
     let store = SqliteBlobStore::in_memory().unwrap();

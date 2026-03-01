@@ -126,6 +126,7 @@ mod tests {
         }
     }
 
+    // @scenario: relay_network.feature:Relay node monitoring
     #[tokio::test]
     async fn test_metrics_endpoint() {
         let app = create_router(create_test_state());
