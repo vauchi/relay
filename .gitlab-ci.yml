@@ -129,8 +129,6 @@ test:
   needs:
     - job: lint:format
       optional: true
-    - job: lint:clippy
-      optional: true
   script:
     - cargo nextest run --all-targets
 
@@ -144,6 +142,9 @@ coverage:
     - job: lint:clippy
       optional: true
   rules:
+    # Skip on triggered pipelines (downstream verification doesn't need coverage)
+    - if: $CI_PIPELINE_SOURCE == "pipeline"
+      when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   before_script:
     - !reference [.self-hosted, before_script]
