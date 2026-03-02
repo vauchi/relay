@@ -129,6 +129,12 @@ async fn main() {
     let noise_static_key = Some(noise_keypair.private);
     let noise_pubkey_b64 = noise_key::public_key_base64url(&noise_keypair.public);
     info!("Noise public key: {}", noise_pubkey_b64);
+
+    // R-M4: Derive signing key from Noise keypair for authenticating forwarding hints
+    let relay_signing_key = Arc::new(noise_key::RelaySigningKey::from_noise_key(
+        &noise_keypair.private,
+    ));
+    info!("Relay signing key: {}", relay_signing_key.public_key_hex());
     if config.security.require_noise_encryption {
         info!("Noise encryption: REQUIRED (v1 connections will be rejected)");
     } else {
@@ -527,6 +533,7 @@ async fn main() {
         let registry = registry.clone();
         let blob_sender_map = blob_sender_map.clone();
         let nonce_tracker = nonce_tracker.clone();
+        let relay_signing_key = relay_signing_key.clone();
         let metrics = metrics.clone();
         let hint_store = hint_store.clone();
         let peer_registry = peer_registry.clone();
@@ -691,6 +698,7 @@ async fn main() {
                                 nonce_tracker,
                                 delivery_jitter_min_ms: config.security.delivery_jitter_min_ms,
                                 delivery_jitter_max_ms: config.security.delivery_jitter_max_ms,
+                                relay_signing_key: Some(relay_signing_key),
                             },
                         )
                         .await;

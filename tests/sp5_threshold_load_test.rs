@@ -132,6 +132,7 @@ fn test_deps() -> (
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     };
     (deps, storage, registry)
 }
@@ -172,6 +173,7 @@ async fn start_server(deps: ConnectionDeps) -> String {
                 nonce_tracker: Arc::new(handler::NonceTracker::new()),
                 delivery_jitter_min_ms: 0,
                 delivery_jitter_max_ms: 0,
+                relay_signing_key: None,
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {

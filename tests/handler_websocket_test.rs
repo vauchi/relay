@@ -244,6 +244,7 @@ fn test_deps() -> (
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     };
     (deps, storage, registry)
 }
@@ -572,6 +573,7 @@ async fn test_quota_blob_count_exceeded() {
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     };
 
     let url = start_test_server(deps).await;
@@ -622,6 +624,7 @@ async fn test_quota_byte_limit_exceeded() {
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     };
 
     let url = start_test_server(deps).await;
@@ -834,6 +837,7 @@ async fn test_delivered_ack_to_sender() {
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -855,6 +859,7 @@ async fn test_delivered_ack_to_sender() {
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     };
 
     // Spawn both servers
@@ -964,6 +969,7 @@ async fn test_suppress_presence_no_delivered_ack() {
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -985,6 +991,7 @@ async fn test_suppress_presence_no_delivered_ack() {
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     };
 
     tokio::spawn(async move {
@@ -1189,6 +1196,7 @@ fn test_deps_custom(
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     };
     (deps, storage, registry, device_sync_storage)
 }
@@ -1245,6 +1253,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 nonce_tracker: Arc::new(handler::NonceTracker::new()),
                 delivery_jitter_min_ms: 0,
                 delivery_jitter_max_ms: 0,
+                relay_signing_key: None,
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -2107,6 +2116,7 @@ async fn test_concurrent_store_and_receive() {
             nonce_tracker: Arc::new(handler::NonceTracker::new()),
             delivery_jitter_min_ms: 0,
             delivery_jitter_max_ms: 0,
+            relay_signing_key: None,
         }
     };
 
@@ -2177,6 +2187,7 @@ async fn test_received_by_recipient_after_delivered_not_forwarded() {
             nonce_tracker: Arc::new(handler::NonceTracker::new()),
             delivery_jitter_min_ms: 0,
             delivery_jitter_max_ms: 0,
+            relay_signing_key: None,
         }
     };
 
@@ -2280,6 +2291,7 @@ async fn test_suppress_presence_blocks_received_by_recipient() {
             nonce_tracker: Arc::new(handler::NonceTracker::new()),
             delivery_jitter_min_ms: 0,
             delivery_jitter_max_ms: 0,
+            relay_signing_key: None,
         }
     };
 
@@ -2619,6 +2631,7 @@ async fn test_nonce_replay_rejected() {
         nonce_tracker: nonce_tracker.clone(),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     };
 
     let url1 = start_test_server(deps1).await;
@@ -2653,6 +2666,7 @@ async fn test_nonce_replay_rejected() {
         nonce_tracker: nonce_tracker.clone(),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     };
 
     let url2 = start_test_server(deps2).await;
