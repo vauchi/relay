@@ -184,4 +184,148 @@ mod tests {
             "Expected version field to match CARGO_PKG_VERSION"
         );
     }
+
+    // @scenario: relay_network.feature:Relay node monitoring
+    #[tokio::test]
+    async fn test_metrics_auth_missing_token_rejected() {
+        let state = HttpState {
+            metrics: RelayMetrics::new(),
+            metrics_token: Some("secret-token-123".to_string()),
+            noise_pubkey: None,
+        };
+        let app = create_router(state);
+
+        // No Authorization header
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // @scenario: relay_network.feature:Relay node monitoring
+    #[tokio::test]
+    async fn test_metrics_auth_invalid_token_rejected() {
+        let state = HttpState {
+            metrics: RelayMetrics::new(),
+            metrics_token: Some("secret-token-123".to_string()),
+            noise_pubkey: None,
+        };
+        let app = create_router(state);
+
+        // Wrong bearer token
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .header("Authorization", "Bearer wrong-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // @scenario: relay_network.feature:Relay node monitoring
+    #[tokio::test]
+    async fn test_metrics_auth_valid_token_accepted() {
+        let state = HttpState {
+            metrics: RelayMetrics::new(),
+            metrics_token: Some("secret-token-123".to_string()),
+            noise_pubkey: None,
+        };
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .header("Authorization", "Bearer secret-token-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // @scenario: relay_network.feature:Relay node monitoring
+    #[tokio::test]
+    async fn test_pubkey_handler_none() {
+        let state = HttpState {
+            metrics: RelayMetrics::new(),
+            metrics_token: None,
+            noise_pubkey: None,
+        };
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/pubkey")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // @scenario: relay_network.feature:Relay node monitoring
+    #[tokio::test]
+    async fn test_pubkey_handler_some() {
+        let state = HttpState {
+            metrics: RelayMetrics::new(),
+            metrics_token: None,
+            noise_pubkey: Some("dGVzdC1wdWJrZXk".to_string()),
+        };
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/pubkey")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(body_bytes, "dGVzdC1wdWJrZXk");
+    }
+
+    #[tokio::test]
+    async fn test_root_handler() {
+        let app = create_router(create_test_state());
+
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert_eq!(body["service"], "vauchi-relay-metrics");
+        assert!(body["endpoints"].is_array());
+    }
 }
