@@ -20,6 +20,7 @@ use tracing::{debug, error, warn};
 use crate::connection_registry::{ConnectionRegistry, RegistryMessage};
 use crate::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
 use crate::forwarding_hints::ForwardingHintStore;
+use crate::noise_key::RelaySigningKey;
 use crate::noise_transport::{self, NoiseResponder, NoiseTransport};
 use crate::rate_limit::RateLimiter;
 use crate::recovery_storage::{RecoveryProofStore, StoredRecoveryProof};
@@ -467,6 +468,9 @@ pub struct ConnectionDeps {
     pub delivery_jitter_min_ms: u64,
     /// Maximum delivery jitter delay in milliseconds (traffic analysis resistance).
     pub delivery_jitter_max_ms: u64,
+    /// R-M4: Signing key for authenticating forwarding hints.
+    /// Derived from the relay's Noise static key. None if Noise key is absent.
+    pub relay_signing_key: Option<Arc<RelaySigningKey>>,
 }
 
 // =========================================================================
@@ -1253,10 +1257,17 @@ async fn deliver_pending(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
-                payload: protocol::MessagePayload::ForwardingHints(protocol::ForwardingHints {
-                    hints: hint_infos,
-                    relay_signing_key: None,
-                    signature: None,
+                payload: protocol::MessagePayload::ForwardingHints({
+                    let unsigned = protocol::ForwardingHints {
+                        hints: hint_infos,
+                        relay_signing_key: None,
+                        signature: None,
+                    };
+                    // R-M4: Sign forwarding hints with relay's Ed25519 key
+                    match &deps.relay_signing_key {
+                        Some(key) => key.sign_hints(&unsigned),
+                        None => unsigned,
+                    }
                 }),
             };
             if let Ok(data) = protocol::encode_message(&hint_envelope) {
@@ -2041,6 +2052,7 @@ mod tests {
                 nonce_tracker: Arc::new(NonceTracker::new()),
                 delivery_jitter_min_ms: 0,
                 delivery_jitter_max_ms: 0,
+                relay_signing_key: None,
             }
         }
 
@@ -2117,6 +2129,7 @@ mod tests {
                 nonce_tracker: Arc::new(NonceTracker::new()),
                 delivery_jitter_min_ms: 0,
                 delivery_jitter_max_ms: 0,
+                relay_signing_key: None,
             };
             let ctx = make_test_context(&deps);
             let recipient_id = "c".repeat(64);

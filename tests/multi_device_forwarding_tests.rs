@@ -130,6 +130,7 @@ fn make_deps(
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
     }
 }
 

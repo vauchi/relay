@@ -160,6 +160,7 @@ async fn start_full_server(
                             nonce_tracker: Arc::new(handler::NonceTracker::new()),
                             delivery_jitter_min_ms: 0,
                             delivery_jitter_max_ms: 0,
+                            relay_signing_key: None,
                         };
                         handler::handle_connection(ws_stream, deps).await;
                     }
