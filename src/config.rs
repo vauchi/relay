@@ -421,6 +421,29 @@ impl RelayConfig {
             });
         }
 
+        // R-M3: Detect partial mTLS configuration (cert without key or vice versa).
+        let has_cert = self.federation.tls_cert_path.is_some();
+        let has_key = self.federation.tls_key_path.is_some();
+        if has_cert != has_key {
+            let present = if has_cert {
+                "tls_cert_path"
+            } else {
+                "tls_key_path"
+            };
+            let missing = if has_cert {
+                "tls_key_path"
+            } else {
+                "tls_cert_path"
+            };
+            warnings.push(ConfigWarning {
+                level: ConfigWarningLevel::Error,
+                message: format!(
+                    "Partial mTLS configuration: {present} is set but {missing} is missing. \
+                    Both RELAY_FEDERATION_TLS_CERT and RELAY_FEDERATION_TLS_KEY must be set together."
+                ),
+            });
+        }
+
         // Offload threshold sanity
         if self.federation.offload_threshold >= self.federation.offload_refuse {
             warnings.push(ConfigWarning {
@@ -563,6 +586,7 @@ mod tests {
             federation: FederationConfig {
                 gossip_enabled: true,
                 tls_cert_path: Some("/path/to/cert.pem".to_string()),
+                tls_key_path: Some("/path/to/key.pem".to_string()),
                 ..Default::default()
             },
             ..Default::default()
@@ -599,6 +623,64 @@ mod tests {
         assert!(config.federation.tls_cert_path.is_none());
         assert!(config.federation.tls_key_path.is_none());
         assert!(config.federation.tls_ca_path.is_none());
+    }
+
+    /// R-M3: Cert without key is a partial mTLS config — must produce error.
+    #[test]
+    fn test_validate_partial_mtls_cert_without_key() {
+        let config = RelayConfig {
+            federation: FederationConfig {
+                tls_cert_path: Some("/path/to/cert.pem".to_string()),
+                tls_key_path: None,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let warnings = config.validate();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.level == ConfigWarningLevel::Error && w.message.contains("Partial mTLS")),
+            "R-M3: Cert without key should produce an error about partial mTLS config"
+        );
+    }
+
+    /// R-M3: Key without cert is a partial mTLS config — must produce error.
+    #[test]
+    fn test_validate_partial_mtls_key_without_cert() {
+        let config = RelayConfig {
+            federation: FederationConfig {
+                tls_cert_path: None,
+                tls_key_path: Some("/path/to/key.pem".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let warnings = config.validate();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.level == ConfigWarningLevel::Error && w.message.contains("Partial mTLS")),
+            "R-M3: Key without cert should produce an error about partial mTLS config"
+        );
+    }
+
+    /// R-M3: Both cert and key present is valid — no partial mTLS error.
+    #[test]
+    fn test_validate_complete_mtls_no_error() {
+        let config = RelayConfig {
+            federation: FederationConfig {
+                tls_cert_path: Some("/path/to/cert.pem".to_string()),
+                tls_key_path: Some("/path/to/key.pem".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let warnings = config.validate();
+        assert!(
+            !warnings.iter().any(|w| w.message.contains("Partial mTLS")),
+            "Complete mTLS config should not produce partial mTLS error"
+        );
     }
 
     #[test]
