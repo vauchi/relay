@@ -782,4 +782,71 @@ mod tests {
         assert_eq!(config.security.rate_limit_per_min, 120);
         assert!(!config.security.require_noise_encryption);
     }
+
+    /// validate() returns no warnings for a valid default config.
+    #[test]
+    fn test_validate_default_config_clean() {
+        let config = RelayConfig::default();
+        let warnings = config.validate();
+        assert!(
+            warnings.is_empty(),
+            "Default config should produce no warnings, got: {:?}",
+            warnings.iter().map(|w| &w.message).collect::<Vec<_>>()
+        );
+    }
+
+    /// validate() catches equal thresholds (boundary of >= check).
+    #[test]
+    fn test_validate_offload_threshold_equal() {
+        let config = RelayConfig {
+            federation: FederationConfig {
+                offload_threshold: 0.95,
+                offload_refuse: 0.95,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let warnings = config.validate();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.level == ConfigWarningLevel::Warning),
+            "Equal threshold/refuse should produce a warning"
+        );
+    }
+
+    /// RelayConfig delegate: idle_timeout()
+    #[test]
+    fn test_relay_config_idle_timeout_delegate() {
+        let config = RelayConfig::default();
+        assert_eq!(config.idle_timeout(), Duration::from_secs(300));
+    }
+
+    /// load_relay_id: empty env var falls through to file/generate.
+    #[test]
+    fn test_relay_id_empty_env_var_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path();
+
+        std::env::set_var("RELAY_FEDERATION_RELAY_ID", "");
+        let id = load_relay_id(data_dir);
+        std::env::remove_var("RELAY_FEDERATION_RELAY_ID");
+
+        // Should have generated a UUID, not returned empty string
+        assert!(!id.is_empty(), "Empty env var should be ignored");
+        assert!(id.len() >= 32, "Should be a UUID: {}", id);
+    }
+
+    /// load_relay_id: empty file falls through to generate.
+    #[test]
+    fn test_relay_id_empty_file_regenerates() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path();
+
+        // Write an empty file
+        std::fs::write(data_dir.join("relay_id"), "").unwrap();
+
+        let id = load_relay_id(data_dir);
+        assert!(!id.is_empty(), "Empty file should trigger regeneration");
+    }
 }
