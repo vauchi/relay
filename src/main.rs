@@ -50,6 +50,22 @@ async fn main() {
     // Load configuration
     let config = RelayConfig::from_env();
 
+    // R-C1: Validate configuration and abort on critical errors
+    let warnings = config.validate();
+    for warning in &warnings {
+        match warning.level {
+            vauchi_relay::config::ConfigWarningLevel::Error => {
+                error!("=======================================================================");
+                error!("CONFIGURATION ERROR: {}", warning.message);
+                error!("=======================================================================");
+                std::process::exit(1);
+            }
+            vauchi_relay::config::ConfigWarningLevel::Warning => {
+                tracing::warn!("Configuration warning: {}", warning.message);
+            }
+        }
+    }
+
     // TLS enforcement: refuse to start if not localhost and TLS not confirmed
     let is_localhost = config.network.listen_addr.ip().is_loopback();
     let tls_verified = std::env::var("RELAY_TLS_VERIFIED")
