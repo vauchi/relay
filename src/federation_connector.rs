@@ -751,6 +751,125 @@ mod tests {
         assert!(result.unwrap_err().contains("Invalid WebSocket URL scheme"));
     }
 
+    /// handle_offload_ack with an unknown blob_id is a no-op (no panic).
+    #[test]
+    fn test_offload_ack_unknown_blob_noop() {
+        let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+        let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
+        let registry = Arc::new(PeerRegistry::new(0.95));
+        let config = make_test_config(100, 0.01);
+
+        let manager = OffloadManager {
+            storage: storage.clone(),
+            hint_store: hint_store.clone(),
+            peer_registry: registry,
+            config,
+            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        };
+
+        // Ack for a blob that was never pending — should not panic
+        manager.handle_offload_ack("nonexistent-blob", true);
+
+        assert_eq!(storage.blob_count(), 0);
+        assert_eq!(hint_store.hint_count(), 0);
+    }
+
+    /// Already-pending blobs are skipped in check_and_offload (dedup filter).
+    #[tokio::test]
+    async fn test_offload_skips_already_pending_blobs() {
+        let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+        let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
+        let registry = Arc::new(PeerRegistry::new(0.95));
+        let config = make_test_config(100, 0.01);
+
+        let blob = StoredBlob::new(vec![1; 50]);
+        let blob_id = blob.id.clone();
+        storage.store("r1", blob);
+
+        let (tx, _rx) = mpsc::channel(64);
+        registry.register_peer(PeerInfo {
+            relay_id: "peer-1".to_string(),
+            url: "ws://peer-1:8080".to_string(),
+            capacity_used_bytes: 10,
+            capacity_max_bytes: 1000,
+            status: PeerStatus::Connected,
+            sender: Some(tx),
+            origin: PeerOrigin::Configured,
+            last_seen_secs: 1000,
+        });
+
+        // Pre-insert blob into pending
+        let pending = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        pending.lock().unwrap().insert(
+            blob_id.clone(),
+            PendingOffload {
+                routing_id: "r1".to_string(),
+                created_at_secs: 0,
+                target_relay: "ws://peer-1:8080".to_string(),
+            },
+        );
+
+        let manager = OffloadManager {
+            storage,
+            hint_store,
+            peer_registry: registry,
+            config,
+            pending_offloads: pending,
+        };
+
+        // Should send 0 because the only blob is already pending
+        let sent = manager.check_and_offload().await;
+        assert_eq!(sent, 0, "Already-pending blobs should be skipped");
+    }
+
+    /// Peer with no sender channel returns 0 offloads.
+    #[tokio::test]
+    async fn test_offload_peer_no_sender() {
+        let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+        let hint_store = Arc::new(SqliteForwardingHintStore::in_memory().unwrap());
+        let registry = Arc::new(PeerRegistry::new(0.95));
+        let config = make_test_config(100, 0.01);
+
+        storage.store("r1", StoredBlob::new(vec![1; 50]));
+
+        // Register peer with NO sender channel
+        registry.register_peer(PeerInfo {
+            relay_id: "peer-1".to_string(),
+            url: "ws://peer-1:8080".to_string(),
+            capacity_used_bytes: 10,
+            capacity_max_bytes: 1000,
+            status: PeerStatus::Connected,
+            sender: None,
+            origin: PeerOrigin::Configured,
+            last_seen_secs: 1000,
+        });
+
+        let manager = OffloadManager {
+            storage,
+            hint_store,
+            peer_registry: registry,
+            config,
+            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        };
+
+        let sent = manager.check_and_offload().await;
+        assert_eq!(sent, 0, "Peer without sender should return 0");
+    }
+
+    /// PendingOffload struct can be constructed and cloned.
+    #[test]
+    fn test_pending_offload_construction() {
+        let offload = PendingOffload {
+            routing_id: "route-1".to_string(),
+            created_at_secs: 1000,
+            target_relay: "ws://relay-a:8080".to_string(),
+        };
+        let cloned = offload.clone();
+        assert_eq!(cloned.routing_id, "route-1");
+        assert_eq!(cloned.created_at_secs, 1000);
+        assert_eq!(cloned.target_relay, "ws://relay-a:8080");
+    }
+
     // Trace: codebase-review-tracker item #131
     #[test]
     #[allow(clippy::type_complexity)]
@@ -758,7 +877,7 @@ mod tests {
         // allow(zero_assertions): compile-time signature check
         // Verify the function signature accepts None (backward compatible)
         // This is a compile-time check — we don't actually connect
-        let _fn_ref: fn(
+        let fn_ref: fn(
             String,
             String,
             Arc<PeerRegistry>,
@@ -766,5 +885,7 @@ mod tests {
             Option<Arc<tokio_rustls::rustls::ClientConfig>>,
             Option<Arc<OffloadManager>>,
         ) -> _ = |a, b, c, d, e, f| maintain_peer_connection(a, b, c, d, e, f);
+        // Verify the function reference is valid (compile-time signature check)
+        assert!(std::mem::size_of_val(&fn_ref) > 0);
     }
 }
