@@ -14,6 +14,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use subtle::ConstantTimeEq;
 
 use crate::metrics::RelayMetrics;
 
@@ -40,8 +41,14 @@ async fn metrics_auth_middleware(
             let is_authorized = auth_header.is_some_and(|h| {
                 h.to_str()
                     .map(|s| {
-                        s.strip_prefix("Bearer ")
-                            .is_some_and(|token| token == expected_token)
+                        s.strip_prefix("Bearer ").is_some_and(|token| {
+                            // R-C4: Use constant-time comparison to prevent timing attacks
+                            token
+                                .as_bytes()
+                                .ct_eq(expected_token.as_bytes())
+                                .unwrap_u8()
+                                == 1
+                        })
                     })
                     .unwrap_or(false)
             });
