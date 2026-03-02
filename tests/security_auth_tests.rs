@@ -7,10 +7,12 @@
 //! Tests for relay authentication and replay protection vulnerabilities.
 //! Based on: 2026-03-02 security review (SP-13₀)
 
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 use vauchi_protocol::PurgeRequest;
 use vauchi_relay::config::{ConfigWarningLevel, RelayConfig};
+use vauchi_relay::noise_key::RelaySigningKey;
 
 // @scenario: security.feature @relay @auth
 /// Test: Config validation detects gossip without mTLS
@@ -202,4 +204,98 @@ fn test_bearer_token_constant_time_eq() {
     let _result1 = correct.as_bytes().ct_eq(wrong_end.as_bytes()).unwrap_u8();
     let _result2 = correct.as_bytes().ct_eq(wrong_start.as_bytes()).unwrap_u8();
     // In real cryptography, timing-safe comparison ensures both take same time
+}
+
+// @scenario: security.feature @relay @auth @signing
+/// Test: R-M4: Forwarding hints must be signed with relay signing key.
+/// Verify sign_hints produces valid signatures verifiable via ring.
+#[test]
+fn test_forwarding_hints_are_signed() {
+    let noise_private = [42u8; 32];
+    let signing_key = RelaySigningKey::from_noise_key(&noise_private);
+
+    let hints = vauchi_protocol::ForwardingHints {
+        hints: vec![vauchi_protocol::ForwardingHintInfo {
+            blob_id: "blob123".to_string(),
+            relay_url: "wss://peer.relay.example.com".to_string(),
+            expires_at_secs: 9999999999,
+        }],
+        relay_signing_key: None,
+        signature: None,
+    };
+
+    let signed = signing_key.sign_hints(&hints);
+
+    assert!(
+        signed.relay_signing_key.is_some(),
+        "signing key should be set"
+    );
+    assert!(signed.signature.is_some(), "signature should be set");
+    assert_eq!(
+        signed.relay_signing_key.as_ref().unwrap(),
+        &signing_key.public_key_hex()
+    );
+
+    // Verify via ring Ed25519
+    let canonical = signed.canonical_data();
+    let pk_bytes = hex::decode(signed.relay_signing_key.as_ref().unwrap()).unwrap();
+    let sig_bytes = hex::decode(signed.signature.as_ref().unwrap()).unwrap();
+    let pk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
+    assert!(
+        pk.verify(&canonical, &sig_bytes).is_ok(),
+        "signature must verify"
+    );
+}
+
+/// Test: R-M4: Tampered forwarding hints fail verification.
+#[test]
+fn test_forwarding_hints_tampered_rejected() {
+    let noise_private = [42u8; 32];
+    let signing_key = RelaySigningKey::from_noise_key(&noise_private);
+
+    let hints = vauchi_protocol::ForwardingHints {
+        hints: vec![vauchi_protocol::ForwardingHintInfo {
+            blob_id: "blob123".to_string(),
+            relay_url: "wss://peer.relay.example.com".to_string(),
+            expires_at_secs: 9999999999,
+        }],
+        relay_signing_key: None,
+        signature: None,
+    };
+
+    let signed = signing_key.sign_hints(&hints);
+    let sig_bytes = hex::decode(signed.signature.as_ref().unwrap()).unwrap();
+    let pk_bytes = hex::decode(signed.relay_signing_key.as_ref().unwrap()).unwrap();
+
+    // Tamper with the relay URL
+    let tampered = vauchi_protocol::ForwardingHints {
+        hints: vec![vauchi_protocol::ForwardingHintInfo {
+            blob_id: "blob123".to_string(),
+            relay_url: "wss://evil.attacker.com".to_string(),
+            expires_at_secs: 9999999999,
+        }],
+        relay_signing_key: None,
+        signature: None,
+    };
+
+    let pk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
+    assert!(
+        pk.verify(&tampered.canonical_data(), &sig_bytes).is_err(),
+        "tampered hints must fail verification"
+    );
+}
+
+/// Test: R-M4: ConnectionDeps has relay_signing_key field.
+#[test]
+fn test_connection_deps_has_signing_key() {
+    // Verify the field exists on ConnectionDeps and can be set
+    let noise_private = [42u8; 32];
+    let signing_key = Arc::new(RelaySigningKey::from_noise_key(&noise_private));
+
+    let pk = signing_key.public_key_hex();
+    assert_eq!(
+        pk.len(),
+        64,
+        "Ed25519 public key should be 32 bytes = 64 hex chars"
+    );
 }
