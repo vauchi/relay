@@ -81,20 +81,20 @@ pub fn create_router(state: HttpState) -> Router {
         .with_state(state)
 }
 
-/// Root handler - returns basic info.
+/// Root handler - returns basic service info.
+/// R-M2: Version info moved to authenticated /metrics endpoint.
 async fn root_handler() -> impl IntoResponse {
     Json(serde_json::json!({
-        "service": "vauchi-relay-metrics",
-        "version": env!("CARGO_PKG_VERSION"),
+        "service": "vauchi-relay",
         "endpoints": ["/health", "/metrics", "/pubkey"]
     }))
 }
 
 /// Health check endpoint - returns 200 with JSON status if the server is running.
+/// R-M2: Only returns status — no version or internal details.
 async fn health_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "status": "ok",
-        "version": env!("CARGO_PKG_VERSION"),
     }))
 }
 
@@ -178,10 +178,54 @@ mod tests {
             "Expected status field to be \"ok\", got: {:?}",
             body["status"]
         );
-        assert_eq!(
-            body["version"],
-            env!("CARGO_PKG_VERSION"),
-            "Expected version field to match CARGO_PKG_VERSION"
+    }
+
+    /// R-M2: Health endpoint must not leak version info to unauthenticated callers.
+    #[tokio::test]
+    async fn test_health_endpoint_does_not_leak_version() {
+        let app = create_router(create_test_state());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(
+            body.get("version").is_none(),
+            "R-M2: Health endpoint must not expose version info; got: {:?}",
+            body
+        );
+    }
+
+    /// R-M2: Root endpoint must not leak version info to unauthenticated callers.
+    #[tokio::test]
+    async fn test_root_endpoint_does_not_leak_version() {
+        let app = create_router(create_test_state());
+
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(
+            body.get("version").is_none(),
+            "R-M2: Root endpoint must not expose version info; got: {:?}",
+            body
         );
     }
 
@@ -325,7 +369,7 @@ mod tests {
             .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
 
-        assert_eq!(body["service"], "vauchi-relay-metrics");
+        assert_eq!(body["service"], "vauchi-relay");
         assert!(body["endpoints"].is_array());
     }
 }
