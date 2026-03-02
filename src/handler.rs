@@ -119,7 +119,7 @@ impl NonceTracker {
     /// Checks if a nonce has been seen before. If not, inserts it and returns `true`.
     /// Returns `false` if the nonce is a replay or if the tracker is at capacity.
     pub fn check_and_insert(&self, nonce: &[u8]) -> bool {
-        let mut nonces = self.nonces.lock().unwrap();
+        let mut nonces = self.nonces.lock().expect("nonce tracker lock poisoned");
 
         // Evict expired nonces (amortized O(n) on eviction, O(1) per lookup)
         let cutoff = Instant::now() - NONCE_TTL;
@@ -142,7 +142,10 @@ impl NonceTracker {
 
     /// Evicts all entries. Intended for testing; in production entries expire via TTL.
     pub fn evict_all(&self) {
-        self.nonces.lock().unwrap().clear();
+        self.nonces
+            .lock()
+            .expect("nonce tracker lock poisoned")
+            .clear();
     }
 }
 
@@ -1251,14 +1254,23 @@ async fn deliver_pending(
     // Suppressed when recipient requested suppress_presence.
     if !ctx.suppress_presence {
         for blob_id in &pending_blob_ids {
-            let sender_client_id = { deps.blob_sender_map.read().unwrap().get(blob_id).cloned() };
+            let sender_client_id = {
+                deps.blob_sender_map
+                    .read()
+                    .expect("blob sender map lock poisoned")
+                    .get(blob_id)
+                    .cloned()
+            };
             if let Some(sender_id) = sender_client_id {
                 let ack = protocol::create_ack(blob_id, protocol::AckStatus::Delivered);
                 if let Ok(ack_data) = protocol::encode_message(&ack) {
                     deps.registry
                         .try_send(&sender_id, RegistryMessage { data: ack_data });
                 }
-                deps.blob_sender_map.write().unwrap().remove(blob_id);
+                deps.blob_sender_map
+                    .write()
+                    .expect("blob sender map lock poisoned")
+                    .remove(blob_id);
             }
         }
     }
@@ -1419,7 +1431,11 @@ async fn process_handle_result(
                     .try_send(&target_id, RegistryMessage { data });
             }
             HandlerResponse::RemoveFromSenderMap(blob_id) => {
-                ctx.deps.blob_sender_map.write().unwrap().remove(&blob_id);
+                ctx.deps
+                    .blob_sender_map
+                    .write()
+                    .expect("blob sender map lock poisoned")
+                    .remove(&blob_id);
             }
             HandlerResponse::Skip => {
                 // No action needed

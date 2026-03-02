@@ -34,8 +34,14 @@ const KEY_FILE_SIZE: usize = 64;
 
 /// Generates a new relay keypair using snow's DH generation.
 pub fn generate_relay_keypair() -> RelayKeypair {
-    let builder = snow::Builder::new("Noise_NK_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
-    let keypair = builder.generate_keypair().unwrap();
+    let builder = snow::Builder::new(
+        "Noise_NK_25519_ChaChaPoly_BLAKE2s"
+            .parse()
+            .expect("hardcoded Noise pattern must be valid"),
+    );
+    let keypair = builder
+        .generate_keypair()
+        .expect("X25519 keypair generation must succeed");
 
     let mut private = [0u8; 32];
     let mut public = [0u8; 32];

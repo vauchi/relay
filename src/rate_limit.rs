@@ -86,7 +86,7 @@ impl RateLimiter {
     /// Does not consume a token.
     #[allow(dead_code)]
     pub fn check(&self, client_id: &str) -> bool {
-        let mut buckets = self.buckets.write().unwrap();
+        let mut buckets = self.buckets.write().expect("rate limiter lock poisoned");
         let bucket = buckets.entry(client_id.to_string()).or_insert_with(|| {
             TokenBucket::new(self.max_per_minute, self.max_per_minute as f64 / 60.0)
         });
@@ -97,7 +97,7 @@ impl RateLimiter {
     ///
     /// Returns true if allowed, false if rate limited.
     pub fn consume(&self, client_id: &str) -> bool {
-        let mut buckets = self.buckets.write().unwrap();
+        let mut buckets = self.buckets.write().expect("rate limiter lock poisoned");
         let bucket = buckets.entry(client_id.to_string()).or_insert_with(|| {
             TokenBucket::new(self.max_per_minute, self.max_per_minute as f64 / 60.0)
         });
@@ -109,7 +109,7 @@ impl RateLimiter {
     /// Removes buckets that haven't been accessed for the given duration.
     /// Returns the number of buckets removed.
     pub fn cleanup_inactive(&self, max_idle: std::time::Duration) -> usize {
-        let mut buckets = self.buckets.write().unwrap();
+        let mut buckets = self.buckets.write().expect("rate limiter lock poisoned");
         let now = Instant::now();
         let initial_count = buckets.len();
 
@@ -122,7 +122,7 @@ impl RateLimiter {
     /// Reserved for future metrics/monitoring.
     #[allow(dead_code)]
     pub fn client_count(&self) -> usize {
-        let buckets = self.buckets.read().unwrap();
+        let buckets = self.buckets.read().expect("rate limiter lock poisoned");
         buckets.len()
     }
 }

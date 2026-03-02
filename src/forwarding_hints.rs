@@ -93,7 +93,7 @@ impl SqliteForwardingHintStore {
 
 impl ForwardingHintStore for SqliteForwardingHintStore {
     fn store_hint(&self, hint: ForwardingHint) {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("hint store lock poisoned");
         let _ = conn.execute(
             "INSERT OR REPLACE INTO forwarding_hints (blob_id, routing_id, target_relay, created_at_secs, expires_at_secs)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -108,13 +108,13 @@ impl ForwardingHintStore for SqliteForwardingHintStore {
     }
 
     fn get_hints(&self, routing_id: &str) -> Vec<ForwardingHint> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("hint store lock poisoned");
         let mut stmt = conn
             .prepare(
                 "SELECT blob_id, routing_id, target_relay, created_at_secs, expires_at_secs
                  FROM forwarding_hints WHERE routing_id = ?1",
             )
-            .unwrap();
+            .expect("get_hints SQL must be valid");
 
         stmt.query_map(params![routing_id], |row| {
             Ok(ForwardingHint {
@@ -125,13 +125,13 @@ impl ForwardingHintStore for SqliteForwardingHintStore {
                 expires_at_secs: row.get::<_, i64>(4)? as u64,
             })
         })
-        .unwrap()
+        .expect("get_hints query must succeed")
         .filter_map(|r| r.ok())
         .collect()
     }
 
     fn remove_hint(&self, blob_id: &str) -> bool {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("hint store lock poisoned");
         let changes = conn
             .execute(
                 "DELETE FROM forwarding_hints WHERE blob_id = ?1",
@@ -142,7 +142,7 @@ impl ForwardingHintStore for SqliteForwardingHintStore {
     }
 
     fn delete_all_for(&self, routing_id: &str) -> usize {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("hint store lock poisoned");
         conn.execute(
             "DELETE FROM forwarding_hints WHERE routing_id = ?1",
             params![routing_id],
@@ -156,7 +156,7 @@ impl ForwardingHintStore for SqliteForwardingHintStore {
             .unwrap_or_default()
             .as_secs() as i64;
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("hint store lock poisoned");
         conn.execute(
             "DELETE FROM forwarding_hints WHERE expires_at_secs <= ?1",
             params![now],
@@ -165,7 +165,7 @@ impl ForwardingHintStore for SqliteForwardingHintStore {
     }
 
     fn hint_count(&self) -> usize {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("hint store lock poisoned");
         conn.query_row("SELECT COUNT(*) FROM forwarding_hints", [], |row| {
             row.get::<_, i64>(0)
         })

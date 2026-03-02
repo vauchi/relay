@@ -43,8 +43,11 @@ async fn main() {
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("vauchi_relay=info".parse().unwrap()),
+            tracing_subscriber::EnvFilter::from_default_env().add_directive(
+                "vauchi_relay=info"
+                    .parse()
+                    .expect("hardcoded log directive must be valid"),
+            ),
         )
         .init();
 
@@ -414,7 +417,9 @@ async fn main() {
             // R-H4: Prune blob_sender_map entries for blobs no longer in storage
             let live_ids: std::collections::HashSet<String> =
                 cleanup_storage.all_blob_ids().into_iter().collect();
-            let mut sender_map = cleanup_blob_sender_map.write().unwrap();
+            let mut sender_map = cleanup_blob_sender_map
+                .write()
+                .expect("blob sender map lock poisoned");
             let before = sender_map.len();
             sender_map.retain(|blob_id, _| live_ids.contains(blob_id));
             let pruned = before - sender_map.len();

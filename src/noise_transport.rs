@@ -61,7 +61,11 @@ impl std::fmt::Display for NoiseError {
 impl NoiseResponder {
     /// Creates a new NK responder with the relay's static private key.
     pub fn new(static_private_key: &[u8; 32]) -> Result<Self, NoiseError> {
-        let builder = Builder::new(NOISE_PATTERN.parse().unwrap());
+        let builder = Builder::new(
+            NOISE_PATTERN
+                .parse()
+                .expect("NOISE_PATTERN constant must be valid"),
+        );
         let state = builder
             .local_private_key(static_private_key)
             .build_responder()
@@ -134,6 +138,7 @@ pub fn is_noise_v2_handshake(data: &[u8]) -> bool {
     data.len() >= V2_HANDSHAKE_MIN_SIZE && data[..3] == V2_MAGIC
 }
 
+// INLINE_TEST_REQUIRED: test_handshake helper + tests need private access to NoiseTransport internals and constants
 /// Helper to perform a full NK handshake between initiator and responder.
 /// Used in tests across modules.
 #[cfg(test)]

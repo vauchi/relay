@@ -158,7 +158,7 @@ impl SqliteDeviceSyncStore {
 
 impl DeviceSyncStore for SqliteDeviceSyncStore {
     fn store(&self, msg: StoredDeviceSyncMessage) {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("device sync store lock poisoned");
         let _ = conn.execute(
             "INSERT INTO device_sync_messages
              (id, identity_id, target_device_id, sender_device_id, encrypted_payload, version, created_at_secs)
@@ -176,7 +176,7 @@ impl DeviceSyncStore for SqliteDeviceSyncStore {
     }
 
     fn peek(&self, identity_id: &str, target_device_id: &str) -> Vec<StoredDeviceSyncMessage> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("device sync store lock poisoned");
         let mut stmt = conn
             .prepare(
                 "SELECT id, identity_id, target_device_id, sender_device_id,
@@ -185,7 +185,7 @@ impl DeviceSyncStore for SqliteDeviceSyncStore {
                  WHERE identity_id = ?1 AND target_device_id = ?2
                  ORDER BY version ASC, created_at_secs ASC",
             )
-            .unwrap();
+            .expect("device sync peek SQL must be valid");
 
         stmt.query_map(params![identity_id, target_device_id], |row| {
             Ok(StoredDeviceSyncMessage {
@@ -198,13 +198,13 @@ impl DeviceSyncStore for SqliteDeviceSyncStore {
                 created_at_secs: row.get::<_, i64>(6)? as u64,
             })
         })
-        .unwrap()
+        .expect("device sync peek query must succeed")
         .filter_map(|r| r.ok())
         .collect()
     }
 
     fn acknowledge(&self, identity_id: &str, target_device_id: &str, message_id: &str) -> bool {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("device sync store lock poisoned");
         let changes = conn
             .execute(
                 "DELETE FROM device_sync_messages
@@ -216,7 +216,7 @@ impl DeviceSyncStore for SqliteDeviceSyncStore {
     }
 
     fn cleanup_expired(&self, ttl: Duration) -> usize {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("device sync store lock poisoned");
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -231,7 +231,7 @@ impl DeviceSyncStore for SqliteDeviceSyncStore {
     }
 
     fn message_count(&self) -> usize {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("device sync store lock poisoned");
         conn.query_row("SELECT COUNT(*) FROM device_sync_messages", [], |row| {
             row.get::<_, i64>(0)
         })
@@ -239,7 +239,7 @@ impl DeviceSyncStore for SqliteDeviceSyncStore {
     }
 
     fn storage_size_bytes(&self) -> usize {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("device sync store lock poisoned");
         let page_count: i64 = conn
             .query_row("PRAGMA page_count", [], |row| row.get(0))
             .unwrap_or(0);
@@ -250,7 +250,7 @@ impl DeviceSyncStore for SqliteDeviceSyncStore {
     }
 
     fn delete_all_for(&self, identity_id: &str) -> usize {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("device sync store lock poisoned");
         conn.execute(
             "DELETE FROM device_sync_messages WHERE identity_id = ?1",
             params![identity_id],

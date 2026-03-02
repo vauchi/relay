@@ -29,7 +29,9 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         NetworkConfig {
-            listen_addr: "0.0.0.0:8080".parse().unwrap(),
+            listen_addr: "0.0.0.0:8080"
+                .parse()
+                .expect("hardcoded default listen address must be valid"),
             max_connections: 1000,
             max_message_size: 1_048_576, // 1 MB
             idle_timeout_secs: 300,      // 5 minutes (slowloris protection)
