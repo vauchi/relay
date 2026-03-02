@@ -203,3 +203,70 @@ fn test_bearer_token_constant_time_eq() {
     let _result2 = correct.as_bytes().ct_eq(wrong_start.as_bytes()).unwrap_u8();
     // In real cryptography, timing-safe comparison ensures both take same time
 }
+
+// @scenario: security.feature @relay @dos
+/// Test: R-C3: NonceTracker rejects insertions at capacity
+/// Without a cap, an attacker can exhaust relay memory with unlimited nonces.
+#[test]
+fn test_nonce_tracker_rejects_at_capacity() {
+    use vauchi_relay::handler::NonceTracker;
+
+    let tracker = NonceTracker::with_capacity(100);
+
+    // Fill to capacity
+    for i in 0..100u32 {
+        let nonce = i.to_be_bytes().to_vec();
+        assert!(
+            tracker.check_and_insert(&nonce),
+            "Nonce {i} should be accepted (under capacity)"
+        );
+    }
+
+    // 101st nonce should be rejected
+    let overflow_nonce = 100u32.to_be_bytes().to_vec();
+    assert!(
+        !tracker.check_and_insert(&overflow_nonce),
+        "Should reject nonce at capacity"
+    );
+}
+
+// @scenario: security.feature @relay @dos
+/// Test: R-C3: NonceTracker default capacity is 200_000
+#[test]
+fn test_nonce_tracker_default_capacity() {
+    use vauchi_relay::handler::NonceTracker;
+
+    let tracker = NonceTracker::new();
+    assert_eq!(
+        tracker.capacity(),
+        200_000,
+        "Default capacity should be 200,000"
+    );
+}
+
+// @scenario: security.feature @relay @dos
+/// Test: R-C3: NonceTracker still accepts after eviction frees space
+#[test]
+fn test_nonce_tracker_accepts_after_eviction() {
+    use vauchi_relay::handler::NonceTracker;
+
+    // Use a small capacity and custom TTL for testing
+    let tracker = NonceTracker::with_capacity(5);
+
+    // Fill to capacity
+    for i in 0..5u32 {
+        assert!(tracker.check_and_insert(&i.to_be_bytes()));
+    }
+
+    // At capacity — new nonce rejected
+    assert!(!tracker.check_and_insert(&99u32.to_be_bytes()));
+
+    // Force eviction by clearing expired entries (simulate time passing)
+    tracker.evict_all();
+
+    // Now should accept again
+    assert!(
+        tracker.check_and_insert(&99u32.to_be_bytes()),
+        "Should accept after eviction frees space"
+    );
+}
