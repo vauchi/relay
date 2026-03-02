@@ -73,12 +73,16 @@ fn hash_to_hex(hash: &[u8; 32]) -> String {
 /// `Arc` across all connections handled by a single relay instance.
 pub struct NonceTracker {
     nonces: Mutex<HashMap<Vec<u8>, Instant>>,
+    /// R-C3: Maximum number of nonces to track before rejecting new ones.
+    max_capacity: usize,
 }
 
 /// Nonces expire after 120 seconds (2× the ±60s timestamp window).
 const NONCE_TTL: Duration = Duration::from_secs(120);
 /// Maximum allowed clock skew between client and relay (±60 seconds).
 const TIMESTAMP_WINDOW: u64 = 60;
+/// R-C3: Default maximum nonce entries to prevent memory exhaustion.
+const DEFAULT_NONCE_CAPACITY: usize = 200_000;
 
 /// R-H2: Maximum number of key hashes in a single RecoveryProofQuery.
 pub const MAX_RECOVERY_QUERY_HASHES: usize = 50;
@@ -93,15 +97,26 @@ impl Default for NonceTracker {
 }
 
 impl NonceTracker {
-    /// Creates a new empty nonce tracker.
+    /// Creates a new empty nonce tracker with the default capacity (200,000).
     pub fn new() -> Self {
+        Self::with_capacity(DEFAULT_NONCE_CAPACITY)
+    }
+
+    /// Creates a new empty nonce tracker with a custom capacity limit.
+    pub fn with_capacity(max_capacity: usize) -> Self {
         NonceTracker {
             nonces: Mutex::new(HashMap::new()),
+            max_capacity,
         }
     }
 
+    /// Returns the configured capacity limit.
+    pub fn capacity(&self) -> usize {
+        self.max_capacity
+    }
+
     /// Checks if a nonce has been seen before. If not, inserts it and returns `true`.
-    /// Returns `false` if the nonce is a replay.
+    /// Returns `false` if the nonce is a replay or if the tracker is at capacity.
     pub fn check_and_insert(&self, nonce: &[u8]) -> bool {
         let mut nonces = self.nonces.lock().unwrap();
 
@@ -114,9 +129,19 @@ impl NonceTracker {
             return false;
         }
 
+        // R-C3: Reject if at capacity after eviction
+        if nonces.len() >= self.max_capacity {
+            return false;
+        }
+
         // Insert new nonce (O(1) amortized)
         nonces.insert(nonce.to_vec(), Instant::now());
         true
+    }
+
+    /// Evicts all entries. Intended for testing; in production entries expire via TTL.
+    pub fn evict_all(&self) {
+        self.nonces.lock().unwrap().clear();
     }
 }
 
