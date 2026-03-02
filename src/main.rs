@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
-use tokio_tungstenite::accept_async;
+use tokio_tungstenite::accept_async_with_config;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::{error, info};
 
 use vauchi_relay::config::RelayConfig;
@@ -289,8 +290,20 @@ async fn main() {
                             }
                         };
 
+                        // R-H1: Apply max_message_size at federation WS accept time
+                        let fed_ws_config = WebSocketConfig {
+                            max_message_size: Some(config.network.max_message_size + 256),
+                            max_frame_size: Some(config.network.max_message_size + 256),
+                            ..Default::default()
+                        };
+
                         // WebSocket upgrade over TLS
-                        match tokio_tungstenite::accept_async(tls_stream).await {
+                        match tokio_tungstenite::accept_async_with_config(
+                            tls_stream,
+                            Some(fed_ws_config),
+                        )
+                        .await
+                        {
                             Ok(ws_stream) => {
                                 info!("New mTLS federation connection");
                                 federation_handler::handle_federation_connection(
@@ -377,9 +390,10 @@ async fn main() {
         axum::serve(http_listener, http_router).await.unwrap();
     });
 
-    // Start cleanup task for blobs
+    // Start cleanup task for blobs + blob_sender_map GC
     let cleanup_storage = storage.clone();
     let cleanup_metrics = metrics.clone();
+    let cleanup_blob_sender_map = blob_sender_map.clone();
     let blob_ttl = config.blob_ttl();
     let cleanup_interval = config.cleanup_interval();
     tokio::spawn(async move {
@@ -389,6 +403,17 @@ async fn main() {
             if removed > 0 {
                 info!("Cleaned up {} expired blobs", removed);
                 cleanup_metrics.blobs_expired.inc_by(removed as u64);
+            }
+
+            // R-H4: Prune blob_sender_map entries for blobs no longer in storage
+            let live_ids: std::collections::HashSet<String> =
+                cleanup_storage.all_blob_ids().into_iter().collect();
+            let mut sender_map = cleanup_blob_sender_map.write().unwrap();
+            let before = sender_map.len();
+            sender_map.retain(|blob_id, _| live_ids.contains(blob_id));
+            let pruned = before - sender_map.len();
+            if pruned > 0 {
+                info!("Pruned {} stale blob_sender_map entries", pruned);
             }
         }
     });
@@ -603,9 +628,22 @@ async fn main() {
                 _ => {}
             }
 
+            // R-H1: Apply max_message_size at WebSocket accept time
+            // This prevents 64 MB default frames from being buffered in memory
+            let ws_config = WebSocketConfig {
+                max_message_size: Some(max_message_size + 256), // headroom for Noise MAC
+                max_frame_size: Some(max_message_size + 256),
+                ..Default::default()
+            };
+
             // Proceed with WebSocket handshake with timeout
             // This prevents slowloris attacks where clients connect but never complete handshake
-            match tokio::time::timeout(idle_timeout, accept_async(stream)).await {
+            match tokio::time::timeout(
+                idle_timeout,
+                accept_async_with_config(stream, Some(ws_config)),
+            )
+            .await
+            {
                 Ok(Ok(ws_stream)) => {
                     metrics.connections_total.inc();
                     metrics.connections_active.inc();

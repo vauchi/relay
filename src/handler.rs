@@ -80,6 +80,12 @@ const NONCE_TTL: Duration = Duration::from_secs(120);
 /// Maximum allowed clock skew between client and relay (±60 seconds).
 const TIMESTAMP_WINDOW: u64 = 60;
 
+/// R-H2: Maximum number of key hashes in a single RecoveryProofQuery.
+pub const MAX_RECOVERY_QUERY_HASHES: usize = 50;
+
+/// R-H3: Maximum size of proof_data in a RecoveryProofStore message (bytes).
+pub const MAX_RECOVERY_PROOF_SIZE: usize = 4096;
+
 impl Default for NonceTracker {
     fn default() -> Self {
         Self::new()
@@ -601,6 +607,20 @@ fn handle_recovery_proof_store(
     store_msg: &protocol::RecoveryProofStore,
     message_id: &str,
 ) -> HandleResult {
+    // R-H3: Reject oversized proof data to prevent storage exhaustion
+    if store_msg.proof_data.len() > MAX_RECOVERY_PROOF_SIZE {
+        warn!(
+            "[{}] Recovery proof rejected: {} bytes exceeds limit of {}",
+            ctx.session,
+            store_msg.proof_data.len(),
+            MAX_RECOVERY_PROOF_SIZE
+        );
+        return HandleResult::single(HandlerResponse::SendAck {
+            message_id: message_id.to_string(),
+            status: protocol::AckStatus::Failed,
+        });
+    }
+
     if let Ok(key_hash) = hex_to_hash(&store_msg.key_hash) {
         let proof = StoredRecoveryProof::new(key_hash, store_msg.proof_data.clone());
         ctx.deps.recovery_storage.store(proof);
@@ -621,6 +641,17 @@ fn handle_recovery_proof_query(
     ctx: &MessageContext<'_>,
     query: &protocol::RecoveryProofQuery,
 ) -> HandleResult {
+    // R-H2: Reject queries with too many hashes to prevent DB mutex exhaustion
+    if query.key_hashes.len() > MAX_RECOVERY_QUERY_HASHES {
+        warn!(
+            "[{}] Recovery query rejected: {} hashes exceeds limit of {}",
+            ctx.session,
+            query.key_hashes.len(),
+            MAX_RECOVERY_QUERY_HASHES
+        );
+        return HandleResult::single(HandlerResponse::Skip);
+    }
+
     let key_hashes: Vec<[u8; 32]> = query
         .key_hashes
         .iter()

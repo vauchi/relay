@@ -110,6 +110,10 @@ pub trait BlobStore: Send + Sync {
     /// Removes a specific blob by its primary key. Returns true if found and removed.
     fn remove_blob(&self, blob_id: &str) -> bool;
 
+    /// Returns all blob IDs currently in storage.
+    /// Used for garbage-collecting ephemeral maps (e.g., blob_sender_map).
+    fn all_blob_ids(&self) -> Vec<String>;
+
     /// Performs shutdown cleanup (WAL checkpoint for SQLite backends).
     fn shutdown(&self) {}
 }
@@ -211,8 +215,25 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn take(&self, recipient_id: &str) -> Vec<StoredBlob> {
-        let blobs = self.peek(recipient_id);
+        // R-H5: Single lock acquisition for SELECT + DELETE (fixes TOCTOU race)
         let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, data, created_at_secs, hop_count FROM blobs WHERE recipient_id = ?1",
+            )
+            .unwrap();
+        let blobs: Vec<StoredBlob> = stmt
+            .query_map(params![recipient_id], |row| {
+                Ok(StoredBlob {
+                    id: row.get(0)?,
+                    data: row.get(1)?,
+                    created_at_secs: row.get::<_, i64>(2)? as u64,
+                    hop_count: row.get::<_, i64>(3)? as u8,
+                })
+            })
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
         let _ = conn.execute(
             "DELETE FROM blobs WHERE recipient_id = ?1",
             params![recipient_id],
@@ -335,6 +356,15 @@ impl BlobStore for SqliteBlobStore {
             .execute("DELETE FROM blobs WHERE id = ?1", params![blob_id])
             .unwrap_or(0);
         changes > 0
+    }
+
+    fn all_blob_ids(&self) -> Vec<String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id FROM blobs").unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect()
     }
 
     fn shutdown(&self) {
