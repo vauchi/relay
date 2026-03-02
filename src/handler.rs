@@ -386,6 +386,26 @@ impl PurgeVerify for protocol::PurgeRequest {
             return Err("public key must be 32 bytes".to_string());
         }
 
+        // R-M5: Validate purge token is exactly 32 bytes
+        if token_bytes.len() != 32 {
+            return Err(format!(
+                "purge token must be 32 bytes, got {}",
+                token_bytes.len()
+            ));
+        }
+
+        // R-C2: Check timestamp is within acceptable window to prevent replay
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now.abs_diff(timestamp) > TIMESTAMP_WINDOW {
+            return Err(format!(
+                "purge request timestamp outside window: now={}, timestamp={}, window={}",
+                now, timestamp, TIMESTAMP_WINDOW
+            ));
+        }
+
         let mut message = Vec::with_capacity(32 + 32 + 8);
         message.extend_from_slice(&pk_bytes);
         message.extend_from_slice(&token_bytes);
