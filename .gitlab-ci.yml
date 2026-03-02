@@ -327,6 +327,7 @@ load:k6:
 # Manual trigger, advisory (allow_failure).
 dast:zap:
   stage: load
+  tags: [docker]
   needs:
     - job: build:release
       artifacts: true
@@ -403,6 +404,7 @@ build:release:
 build:docker:
   extends: .timeout-standard
   stage: build
+  tags: [docker]
   image: docker:latest
   services:
     - docker:dind
@@ -440,6 +442,7 @@ build:docker:
 
 deploy:production:
   stage: deploy
+  tags: [docker]
   image: alpine:latest
   needs:
     - job: build:docker
