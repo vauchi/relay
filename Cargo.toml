@@ -55,6 +55,9 @@ snow = "0.9"
 # Base64url encoding for relay public key distribution
 base64 = "0.22"
 
+# Zeroize key material on drop (R-M1)
+zeroize = "1"
+
 # TLS for federation mTLS (mutual TLS between relays)
 tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }

@@ -1928,7 +1928,6 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "vauchi-protocol"
 version = "0.2.1"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#748f4e7a425136fc29870d43391b24dfcad17556"
 dependencies = [
  "serde",
  "serde_json",
@@ -1964,6 +1963,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "vauchi-protocol",
+ "zeroize",
 ]
 
 [[package]]

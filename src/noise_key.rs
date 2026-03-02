@@ -11,11 +11,20 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use std::path::Path;
 use vauchi_protocol as protocol;
+use zeroize::Zeroize;
 
 /// Relay's static X25519 keypair for Noise NK pattern.
+///
+/// R-M1: Private key material is zeroized on drop.
 pub struct RelayKeypair {
     pub private: [u8; 32],
     pub public: [u8; 32],
+}
+
+impl Drop for RelayKeypair {
+    fn drop(&mut self) {
+        self.private.zeroize();
+    }
 }
 
 const KEY_FILE_NAME: &str = "relay_noise_key.bin";
@@ -184,6 +193,7 @@ impl RelaySigningKey {
     }
 }
 
+// INLINE_TEST_REQUIRED: Tests need access to private key bytes for zeroization verification
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,6 +294,30 @@ mod tests {
         let path = dir.path().join(KEY_FILE_NAME);
         std::fs::write(&path, b"too short").unwrap();
         assert!(load_keypair(dir.path()).is_err());
+    }
+
+    /// R-M1: Private key material must be zeroized on drop.
+    #[test]
+    fn test_keypair_zeroizes_private_key_on_drop() {
+        // Use ManuallyDrop to keep the value at a stable stack location,
+        // then drop_in_place to call Drop::drop without moving.
+        let mut kp = std::mem::ManuallyDrop::new(generate_relay_keypair());
+        let private_ptr = kp.private.as_ptr();
+        assert_ne!(kp.private, [0u8; 32], "Key should be non-zero before drop");
+
+        // SAFETY: drop_in_place calls Drop::drop at the same memory location.
+        // The ManuallyDrop wrapper prevents automatic drop, so we control when.
+        unsafe {
+            std::ptr::drop_in_place(&mut *kp as *mut RelayKeypair);
+        }
+
+        // SAFETY: Memory hasn't been deallocated (stack-allocated via ManuallyDrop).
+        // Read the bytes at the private key location to verify zeroization.
+        let private_after = unsafe { std::ptr::read(private_ptr as *const [u8; 32]) };
+        assert_eq!(
+            private_after, [0u8; 32],
+            "R-M1: Private key must be zeroized after drop"
+        );
     }
 
     // === Tracker #117: Forwarding Hint Signing ===
