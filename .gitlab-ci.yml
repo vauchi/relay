@@ -134,7 +134,7 @@ test:
 
 # Main: full coverage with llvm-cov
 coverage:
-  extends: [.rust-runner, .timeout-standard]
+  extends: [.rust-runner, .timeout-long]
   stage: test
   needs:
     - job: lint:format
@@ -274,7 +274,9 @@ load:k6:
     - job: test
       optional: true
   tags: [docker]
-  image: grafana/k6:latest
+  image:
+    name: grafana/k6:latest
+    entrypoint: [""]
   before_script:
     - |
       # Use prebuilt binary from build:release if available, otherwise compile

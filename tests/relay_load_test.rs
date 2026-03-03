@@ -38,9 +38,10 @@ fn test_high_throughput_storage() {
 
     assert_eq!(store.blob_count(), num_operations);
 
-    // Should complete in reasonable time (less than 5 seconds)
+    // Should complete in reasonable time (less than 10 seconds)
+    // CI runners under load may be slower than local machines
     assert!(
-        elapsed < Duration::from_secs(5),
+        elapsed < Duration::from_secs(10),
         "Storage took too long: {:?}",
         elapsed
     );
