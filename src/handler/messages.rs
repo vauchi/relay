@@ -43,7 +43,6 @@ pub(super) fn handle_encrypted_update(
     // Track sender for delivery notification (ephemeral, in-memory only)
     deps.blob_sender_map
         .write()
-        .expect("blob sender map lock poisoned")
         .insert(blob_id, ctx.routing_id.clone());
 
     debug!("[{}] Stored blob", ctx.session);
@@ -66,13 +65,7 @@ pub(super) fn handle_acknowledgment(
         // If ReceivedByRecipient, forward to the original sender.
         // Suppressed when recipient requested suppress_presence.
         if !ctx.suppress_presence && ack.status == protocol::AckStatus::ReceivedByRecipient {
-            let sender_client_id = {
-                deps.blob_sender_map
-                    .read()
-                    .expect("blob sender map lock poisoned")
-                    .get(&ack.message_id)
-                    .cloned()
-            };
+            let sender_client_id = { deps.blob_sender_map.read().get(&ack.message_id).cloned() };
             if let Some(sender_id) = sender_client_id {
                 let fwd_ack =
                     protocol::create_ack(&ack.message_id, protocol::AckStatus::ReceivedByRecipient);

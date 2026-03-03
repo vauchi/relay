@@ -9,7 +9,8 @@
 //! messages to that peer.
 
 use std::collections::HashMap;
-use std::sync::RwLock;
+
+use parking_lot::RwLock;
 
 use tokio::sync::mpsc;
 
@@ -94,19 +95,19 @@ impl PeerRegistry {
 
     /// Registers or updates a peer.
     pub fn register_peer(&self, info: PeerInfo) {
-        let mut peers = self.peers.write().expect("peer registry lock poisoned");
+        let mut peers = self.peers.write();
         peers.insert(info.relay_id.clone(), info);
     }
 
     /// Unregisters a peer by relay_id.
     pub fn unregister_peer(&self, relay_id: &str) {
-        let mut peers = self.peers.write().expect("peer registry lock poisoned");
+        let mut peers = self.peers.write();
         peers.remove(relay_id);
     }
 
     /// Updates capacity metrics for a peer.
     pub fn update_capacity(&self, relay_id: &str, used: usize, max: usize) {
-        let mut peers = self.peers.write().expect("peer registry lock poisoned");
+        let mut peers = self.peers.write();
         if let Some(peer) = peers.get_mut(relay_id) {
             peer.capacity_used_bytes = used;
             peer.capacity_max_bytes = max;
@@ -115,7 +116,7 @@ impl PeerRegistry {
 
     /// Sets the sender channel for a peer.
     pub fn set_sender(&self, relay_id: &str, sender: mpsc::Sender<Vec<u8>>) {
-        let mut peers = self.peers.write().expect("peer registry lock poisoned");
+        let mut peers = self.peers.write();
         if let Some(peer) = peers.get_mut(relay_id) {
             peer.sender = Some(sender);
         }
@@ -123,7 +124,7 @@ impl PeerRegistry {
 
     /// Sets the status for a peer.
     pub fn set_status(&self, relay_id: &str, status: PeerStatus) {
-        let mut peers = self.peers.write().expect("peer registry lock poisoned");
+        let mut peers = self.peers.write();
         if let Some(peer) = peers.get_mut(relay_id) {
             peer.status = status;
         }
@@ -131,7 +132,7 @@ impl PeerRegistry {
 
     /// Finds a connected peer with available capacity (below refuse threshold).
     pub fn get_peer_with_capacity(&self) -> Option<PeerInfo> {
-        let peers = self.peers.read().expect("peer registry lock poisoned");
+        let peers = self.peers.read();
         peers
             .values()
             .find(|p| {
@@ -146,13 +147,13 @@ impl PeerRegistry {
 
     /// Returns the number of registered peers.
     pub fn peer_count(&self) -> usize {
-        let peers = self.peers.read().expect("peer registry lock poisoned");
+        let peers = self.peers.read();
         peers.len()
     }
 
     /// Returns all connected peers.
     pub fn connected_peers(&self) -> Vec<PeerInfo> {
-        let peers = self.peers.read().expect("peer registry lock poisoned");
+        let peers = self.peers.read();
         peers
             .values()
             .filter(|p| p.status == PeerStatus::Connected)
@@ -162,7 +163,7 @@ impl PeerRegistry {
 
     /// Returns all known peers (both configured and discovered).
     pub fn all_peers(&self) -> Vec<PeerInfo> {
-        let peers = self.peers.read().expect("peer registry lock poisoned");
+        let peers = self.peers.read();
         peers.values().cloned().collect()
     }
 
@@ -195,7 +196,7 @@ impl PeerRegistry {
             }
         }
 
-        let mut peers = self.peers.write().expect("peer registry lock poisoned");
+        let mut peers = self.peers.write();
 
         if let Some(existing) = peers.get_mut(relay_id) {
             // Update last_seen if the incoming timestamp is fresher
@@ -231,7 +232,7 @@ impl PeerRegistry {
     /// Only removes `Discovered` peers; `Configured` peers are never removed.
     /// Returns the number of peers removed.
     pub fn remove_stale_peers(&self, now_secs: u64, max_age_secs: u64) -> usize {
-        let mut peers = self.peers.write().expect("peer registry lock poisoned");
+        let mut peers = self.peers.write();
         let before = peers.len();
 
         peers.retain(|_, peer| {
@@ -247,7 +248,7 @@ impl PeerRegistry {
 
     /// Updates the last_seen timestamp for a peer.
     pub fn touch_peer(&self, relay_id: &str, now_secs: u64) {
-        let mut peers = self.peers.write().expect("peer registry lock poisoned");
+        let mut peers = self.peers.write();
         if let Some(peer) = peers.get_mut(relay_id) {
             peer.last_seen_secs = now_secs;
         }

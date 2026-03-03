@@ -5,8 +5,9 @@
 //! Nonce tracking for replay prevention and hex utility functions.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
 
 /// Nonces expire after 120 seconds (2× the ±60s timestamp window).
 pub(super) const NONCE_TTL: Duration = Duration::from_secs(120);
@@ -99,7 +100,7 @@ impl NonceTracker {
     /// Checks if a nonce has been seen before. If not, inserts it and returns `true`.
     /// Returns `false` if the nonce is a replay or if the tracker is at capacity.
     pub fn check_and_insert(&self, nonce: &[u8]) -> bool {
-        let mut nonces = self.nonces.lock().expect("nonce tracker lock poisoned");
+        let mut nonces = self.nonces.lock();
 
         // Evict expired nonces (amortized O(n) on eviction, O(1) per lookup)
         let cutoff = Instant::now() - NONCE_TTL;
@@ -122,10 +123,7 @@ impl NonceTracker {
 
     /// Evicts all entries. Intended for testing; in production entries expire via TTL.
     pub fn evict_all(&self) {
-        self.nonces
-            .lock()
-            .expect("nonce tracker lock poisoned")
-            .clear();
+        self.nonces.lock().clear();
     }
 }
 

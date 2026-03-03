@@ -29,6 +29,7 @@ use crate::integrity;
 use crate::padding;
 use crate::peer_registry::gossip;
 use crate::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
+use crate::rate_limit::RateLimiter;
 use crate::storage::{BlobStore, StoredBlob};
 
 /// Helper to send a federation message over WebSocket.
@@ -52,6 +53,9 @@ pub struct FederationDeps {
     pub hint_store: Arc<dyn ForwardingHintStore>,
     pub peer_registry: Arc<PeerRegistry>,
     pub config: Arc<RelayConfig>,
+    /// Per-peer rate limiter for incoming federation messages.
+    /// Prevents a compromised or misbehaving peer from flooding the relay.
+    pub federation_rate_limiter: Arc<RateLimiter>,
 }
 
 /// Handles an incoming federation WebSocket connection from a peer relay.
@@ -65,6 +69,7 @@ where
         hint_store: _hint_store,
         peer_registry,
         config,
+        federation_rate_limiter,
     } = deps;
 
     // Random session label for logging (never log routing_id)
@@ -194,6 +199,12 @@ where
 
         match msg {
             Ok(Message::Binary(data)) => {
+                // Per-peer rate limiting for federation messages
+                if !federation_rate_limiter.consume(&peer_relay_id) {
+                    warn!("[fed-{}] Federation peer rate limited", session);
+                    continue;
+                }
+
                 let envelope = match federation_protocol::decode_federation_message(&data) {
                     Ok(e) => e,
                     Err(e) => {

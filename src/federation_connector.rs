@@ -396,7 +396,8 @@ pub struct OffloadManager {
     pub peer_registry: Arc<PeerRegistry>,
     pub config: Arc<RelayConfig>,
     /// Blobs sent to peers awaiting acknowledgment. Keyed by blob_id.
-    pub pending_offloads: Arc<std::sync::Mutex<std::collections::HashMap<String, PendingOffload>>>,
+    pub pending_offloads:
+        Arc<parking_lot::Mutex<std::collections::HashMap<String, PendingOffload>>>,
 }
 
 impl OffloadManager {
@@ -428,10 +429,7 @@ impl OffloadManager {
 
         // Filter out blobs that are already pending ack
         let pending_ids: std::collections::HashSet<String> = {
-            let pending = self
-                .pending_offloads
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let pending = self.pending_offloads.lock();
             pending.keys().cloned().collect()
         };
         let candidates: Vec<_> = candidates
@@ -466,7 +464,8 @@ impl OffloadManager {
             }
 
             // Track as pending — only delete when ack received
-            if let Ok(mut pending) = self.pending_offloads.lock() {
+            {
+                let mut pending = self.pending_offloads.lock();
                 pending.insert(
                     blob.id.clone(),
                     PendingOffload {
@@ -492,10 +491,7 @@ impl OffloadManager {
     /// If rejected, removes from pending so it can be retried later.
     pub fn handle_offload_ack(&self, blob_id: &str, accepted: bool) {
         let pending_info = {
-            let mut pending = match self.pending_offloads.lock() {
-                Ok(p) => p,
-                Err(_) => return,
-            };
+            let mut pending = self.pending_offloads.lock();
             pending.remove(blob_id)
         };
 
@@ -559,7 +555,7 @@ mod tests {
             hint_store: hint_store.clone(),
             peer_registry: registry,
             config,
-            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 
         let offloaded = manager.check_and_offload().await;
@@ -582,7 +578,7 @@ mod tests {
             hint_store,
             peer_registry: registry,
             config,
-            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 
         let offloaded = manager.check_and_offload().await;
@@ -620,7 +616,7 @@ mod tests {
             hint_store: hint_store.clone(),
             peer_registry: registry,
             config,
-            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 
         let sent = manager.check_and_offload().await;
@@ -633,7 +629,7 @@ mod tests {
         assert_eq!(hint_store.hint_count(), 0);
 
         // Blob is in pending_offloads
-        assert_eq!(manager.pending_offloads.lock().unwrap().len(), 1);
+        assert_eq!(manager.pending_offloads.lock().len(), 1);
 
         // Message was sent via the channel
         let sent_data = rx.try_recv().unwrap();
@@ -656,7 +652,7 @@ mod tests {
         let hints = hint_store.get_hints("r1");
         assert_eq!(hints.len(), 1);
         assert_eq!(hints[0].target_relay, "ws://peer-1:8080");
-        assert!(manager.pending_offloads.lock().unwrap().is_empty());
+        assert!(manager.pending_offloads.lock().is_empty());
     }
 
     #[tokio::test]
@@ -687,11 +683,11 @@ mod tests {
             hint_store: hint_store.clone(),
             peer_registry: registry,
             config,
-            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 
         manager.check_and_offload().await;
-        assert_eq!(manager.pending_offloads.lock().unwrap().len(), 1);
+        assert_eq!(manager.pending_offloads.lock().len(), 1);
 
         // Simulate ack: blob rejected
         manager.handle_offload_ack(&blob_id, false);
@@ -701,7 +697,7 @@ mod tests {
         // No hint created
         assert_eq!(hint_store.hint_count(), 0);
         // Pending cleared
-        assert!(manager.pending_offloads.lock().unwrap().is_empty());
+        assert!(manager.pending_offloads.lock().is_empty());
     }
 
     // Trace: codebase-review-tracker item #131
@@ -764,7 +760,7 @@ mod tests {
             hint_store: hint_store.clone(),
             peer_registry: registry,
             config,
-            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 
         // Ack for a blob that was never pending — should not panic
@@ -799,8 +795,8 @@ mod tests {
         });
 
         // Pre-insert blob into pending
-        let pending = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
-        pending.lock().unwrap().insert(
+        let pending = Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new()));
+        pending.lock().insert(
             blob_id.clone(),
             PendingOffload {
                 routing_id: "r1".to_string(),
@@ -849,7 +845,7 @@ mod tests {
             hint_store,
             peer_registry: registry,
             config,
-            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 
         let sent = manager.check_and_offload().await;

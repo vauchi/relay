@@ -9,8 +9,9 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use parking_lot::Mutex;
 
 use rusqlite::{params, Connection};
 
@@ -132,7 +133,7 @@ impl SqliteRecoveryProofStore {
 
 impl RecoveryProofStore for SqliteRecoveryProofStore {
     fn store(&self, proof: StoredRecoveryProof) {
-        let conn = self.conn.lock().expect("recovery store lock poisoned");
+        let conn = self.conn.lock();
         let _ = conn.execute(
             "INSERT OR REPLACE INTO recovery_proofs (key_hash, proof_data, created_at_secs, expires_at_secs)
              VALUES (?1, ?2, ?3, ?4)",
@@ -146,7 +147,7 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
     }
 
     fn get(&self, key_hash: &[u8; 32]) -> Option<StoredRecoveryProof> {
-        let conn = self.conn.lock().expect("recovery store lock poisoned");
+        let conn = self.conn.lock();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -182,7 +183,7 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
     }
 
     fn remove(&self, key_hash: &[u8; 32]) -> bool {
-        let conn = self.conn.lock().expect("recovery store lock poisoned");
+        let conn = self.conn.lock();
         let changes = conn
             .execute(
                 "DELETE FROM recovery_proofs WHERE key_hash = ?1",
@@ -193,7 +194,7 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
     }
 
     fn cleanup_expired(&self) -> usize {
-        let conn = self.conn.lock().expect("recovery store lock poisoned");
+        let conn = self.conn.lock();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -207,7 +208,7 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
     }
 
     fn proof_count(&self) -> usize {
-        let conn = self.conn.lock().expect("recovery store lock poisoned");
+        let conn = self.conn.lock();
         conn.query_row("SELECT COUNT(*) FROM recovery_proofs", [], |row| {
             row.get::<_, i64>(0)
         })
@@ -337,7 +338,7 @@ mod tests {
         // In-memory databases use "memory" journal mode, not WAL
         // This test verifies the pragma is at least executed without error
         let store = SqliteRecoveryProofStore::in_memory().unwrap();
-        let conn = store.conn.lock().unwrap();
+        let conn = store.conn.lock();
         let journal_mode: String = conn
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .unwrap();
@@ -362,7 +363,7 @@ mod tests {
 
         {
             let store = SqliteRecoveryProofStore::open(&db_path).unwrap();
-            let conn = store.conn.lock().unwrap();
+            let conn = store.conn.lock();
             let journal_mode: String = conn
                 .query_row("PRAGMA journal_mode", [], |row| row.get(0))
                 .unwrap();

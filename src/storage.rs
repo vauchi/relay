@@ -8,8 +8,9 @@
 //! Use `SqliteBlobStore::in_memory()` for testing.
 
 use std::path::Path;
-use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use parking_lot::Mutex;
 
 use rusqlite::{params, Connection};
 
@@ -177,7 +178,7 @@ impl SqliteBlobStore {
 
 impl BlobStore for SqliteBlobStore {
     fn store(&self, recipient_id: &str, blob: StoredBlob) {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         let _ = conn.execute(
             "INSERT INTO blobs (id, recipient_id, data, created_at_secs, hop_count)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -192,7 +193,7 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn peek(&self, recipient_id: &str) -> Vec<StoredBlob> {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT id, data, created_at_secs, hop_count
@@ -216,7 +217,7 @@ impl BlobStore for SqliteBlobStore {
 
     fn take(&self, recipient_id: &str) -> Vec<StoredBlob> {
         // R-H5: Single lock acquisition for SELECT + DELETE (fixes TOCTOU race)
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT id, data, created_at_secs, hop_count FROM blobs WHERE recipient_id = ?1",
@@ -242,7 +243,7 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn acknowledge(&self, recipient_id: &str, blob_id: &str) -> bool {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         let changes = conn
             .execute(
                 "DELETE FROM blobs WHERE id = ?1 AND recipient_id = ?2",
@@ -253,7 +254,7 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn cleanup_expired(&self, ttl: Duration) -> usize {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -268,13 +269,13 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn blob_count(&self) -> usize {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         conn.query_row("SELECT COUNT(*) FROM blobs", [], |row| row.get::<_, i64>(0))
             .unwrap_or(0) as usize
     }
 
     fn recipient_count(&self) -> usize {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         conn.query_row(
             "SELECT COUNT(DISTINCT recipient_id) FROM blobs",
             [],
@@ -284,7 +285,7 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn storage_size_bytes(&self) -> usize {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         // Get page count and page size
         let page_count: i64 = conn
             .query_row("PRAGMA page_count", [], |row| row.get(0))
@@ -296,7 +297,7 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn blob_count_for(&self, recipient_id: &str) -> usize {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         conn.query_row(
             "SELECT COUNT(*) FROM blobs WHERE recipient_id = ?1",
             params![recipient_id],
@@ -306,7 +307,7 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn storage_size_for(&self, recipient_id: &str) -> usize {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         conn.query_row(
             "SELECT COALESCE(SUM(LENGTH(data) + LENGTH(id) + 8), 0) FROM blobs WHERE recipient_id = ?1",
             params![recipient_id],
@@ -316,7 +317,7 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn delete_all_for(&self, recipient_id: &str) -> usize {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         conn.execute(
             "DELETE FROM blobs WHERE recipient_id = ?1",
             params![recipient_id],
@@ -325,7 +326,7 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn get_oldest_blobs(&self, limit: usize) -> Vec<(String, StoredBlob)> {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT id, recipient_id, data, created_at_secs, hop_count
@@ -351,7 +352,7 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn remove_blob(&self, blob_id: &str) -> bool {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         let changes = conn
             .execute("DELETE FROM blobs WHERE id = ?1", params![blob_id])
             .unwrap_or(0);
@@ -359,7 +360,7 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn all_blob_ids(&self) -> Vec<String> {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT id FROM blobs")
             .expect("all_blob_ids SQL must be valid");
@@ -370,7 +371,7 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn shutdown(&self) {
-        let conn = self.conn.lock().expect("blob store lock poisoned");
+        let conn = self.conn.lock();
         let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     }
 }
@@ -605,7 +606,7 @@ mod tests {
     #[test]
     fn test_sqlite_wal_mode_enabled() {
         let store = SqliteBlobStore::in_memory().unwrap();
-        let conn = store.conn.lock().unwrap();
+        let conn = store.conn.lock();
 
         // Check WAL mode is enabled
         let journal_mode: String = conn
@@ -626,7 +627,7 @@ mod tests {
         let db_path = dir.path().join("wal_test.db");
 
         let store = SqliteBlobStore::open(&db_path).unwrap();
-        let conn = store.conn.lock().unwrap();
+        let conn = store.conn.lock();
 
         // Check WAL mode is enabled for file-based database
         let journal_mode: String = conn

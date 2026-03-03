@@ -185,6 +185,9 @@ async fn main() {
     // Initialize federation state
     let config = Arc::new(config);
     let peer_registry = Arc::new(PeerRegistry::new(config.federation.offload_refuse));
+    let federation_rate_limiter = Arc::new(RateLimiter::new(
+        config.federation.federation_rate_limit_per_min,
+    ));
 
     let hint_store: Arc<dyn ForwardingHintStore> = {
         let path = config.storage.data_dir.join("federation.db");
@@ -231,7 +234,7 @@ async fn main() {
             hint_store: hint_store.clone(),
             peer_registry: peer_registry.clone(),
             config: config.clone(),
-            pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         });
 
         // Spawn per-peer connector tasks (with optional mTLS)
@@ -267,6 +270,7 @@ async fn main() {
             let fed_hint_store = hint_store.clone();
             let fed_peer_registry = peer_registry.clone();
             let fed_config = config.clone();
+            let fed_rate_limiter = federation_rate_limiter.clone();
 
             tokio::spawn(async move {
                 let listener = match TcpListener::bind(&mtls_addr).await {
@@ -288,6 +292,7 @@ async fn main() {
                     let hint_store = fed_hint_store.clone();
                     let peer_registry = fed_peer_registry.clone();
                     let config = fed_config.clone();
+                    let federation_rate_limiter = fed_rate_limiter.clone();
 
                     tokio::spawn(async move {
                         // TLS handshake — rejects peers without valid client cert
@@ -322,6 +327,7 @@ async fn main() {
                                         hint_store,
                                         peer_registry,
                                         config,
+                                        federation_rate_limiter,
                                     },
                                 )
                                 .await;
@@ -417,9 +423,7 @@ async fn main() {
             // R-H4: Prune blob_sender_map entries for blobs no longer in storage
             let live_ids: std::collections::HashSet<String> =
                 cleanup_storage.all_blob_ids().into_iter().collect();
-            let mut sender_map = cleanup_blob_sender_map
-                .write()
-                .expect("blob sender map lock poisoned");
+            let mut sender_map = cleanup_blob_sender_map.write();
             let before = sender_map.len();
             sender_map.retain(|blob_id, _| live_ids.contains(blob_id));
             let pruned = before - sender_map.len();
@@ -458,6 +462,7 @@ async fn main() {
     // Start cleanup task for rate limiters (remove stale client buckets)
     let cleanup_rate_limiter = rate_limiter.clone();
     let cleanup_recovery_rate_limiter = recovery_rate_limiter.clone();
+    let cleanup_federation_rate_limiter = federation_rate_limiter.clone();
     tokio::spawn(async move {
         loop {
             // Clean up every 10 minutes, removing clients idle for 30 minutes
@@ -466,11 +471,13 @@ async fn main() {
                 cleanup_rate_limiter.cleanup_inactive(std::time::Duration::from_secs(1800));
             let recovery_removed = cleanup_recovery_rate_limiter
                 .cleanup_inactive(std::time::Duration::from_secs(1800));
-            if removed + recovery_removed > 0 {
+            let federation_removed = cleanup_federation_rate_limiter
+                .cleanup_inactive(std::time::Duration::from_secs(1800));
+            let total = removed + recovery_removed + federation_removed;
+            if total > 0 {
                 info!(
-                    "Cleaned up {} stale rate limiter entries ({} recovery)",
-                    removed + recovery_removed,
-                    recovery_removed
+                    "Cleaned up {} stale rate limiter entries ({} recovery, {} federation)",
+                    total, recovery_removed, federation_removed
                 );
             }
         }
@@ -541,6 +548,7 @@ async fn main() {
         let relay_signing_key = relay_signing_key.clone();
         let metrics = metrics.clone();
         let hint_store = hint_store.clone();
+        let federation_rate_limiter = federation_rate_limiter.clone();
         let peer_registry = peer_registry.clone();
         let config = config.clone();
         let max_message_size = config.network.max_message_size;
@@ -600,14 +608,11 @@ async fn main() {
                             };
 
                             if let Some(path) = path {
-                                let uptime = start_time.elapsed().as_secs();
-                                let blob_count = storage.blob_count();
-                                let health_response = format!(
-                                    r#"{{"status":"healthy","version":"{}","uptime_seconds":{},"blob_count":{}}}"#,
-                                    env!("CARGO_PKG_VERSION"),
-                                    uptime,
-                                    blob_count
-                                );
+                                // R-SA1: Main port health response omits version, uptime,
+                                // and blob_count to prevent information disclosure.
+                                // Detailed metrics are available on the operator-only
+                                // metrics endpoint (RELAY_METRICS_ADDR).
+                                let health_response = r#"{"status":"healthy"}"#;
                                 let response = format!(
                                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                                     health_response.len(),
@@ -671,6 +676,7 @@ async fn main() {
                                     hint_store,
                                     peer_registry,
                                     config,
+                                    federation_rate_limiter,
                                 },
                             )
                             .await;

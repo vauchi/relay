@@ -125,6 +125,9 @@ pub struct FederationConfig {
     /// Address for the mTLS federation listener (only used when mTLS is configured).
     /// Defaults to the same host as `listen_addr` with port + 1.
     pub mtls_addr: Option<SocketAddr>,
+    /// Rate limit for incoming federation messages (messages per minute per peer).
+    /// Prevents a compromised or misbehaving peer from flooding the relay.
+    pub federation_rate_limit_per_min: u32,
 }
 
 impl Default for FederationConfig {
@@ -145,6 +148,7 @@ impl Default for FederationConfig {
             tls_key_path: None,
             tls_ca_path: None,
             mtls_addr: None,
+            federation_rate_limit_per_min: 300, // 300 messages/min per peer (5/sec)
         }
     }
 }
@@ -374,6 +378,12 @@ impl RelayConfig {
         if let Ok(val) = std::env::var("RELAY_FEDERATION_MTLS_ADDR") {
             if let Ok(parsed) = val.parse() {
                 config.federation.mtls_addr = Some(parsed);
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_RATE_LIMIT") {
+            if let Ok(parsed) = val.parse() {
+                config.federation.federation_rate_limit_per_min = parsed;
             }
         }
 
@@ -793,6 +803,7 @@ mod tests {
         assert!(!config.federation.gossip_enabled);
         assert_eq!(config.federation.gossip_interval_secs, 120);
         assert_eq!(config.federation.peer_ttl_secs, 3600);
+        assert_eq!(config.federation.federation_rate_limit_per_min, 300);
         assert!(config.federation.tls_cert_path.is_none());
         assert!(config.federation.tls_key_path.is_none());
         assert!(config.federation.tls_ca_path.is_none());

@@ -303,23 +303,14 @@ async fn deliver_pending(
     // Suppressed when recipient requested suppress_presence.
     if !ctx.suppress_presence {
         for blob_id in &pending_blob_ids {
-            let sender_client_id = {
-                deps.blob_sender_map
-                    .read()
-                    .expect("blob sender map lock poisoned")
-                    .get(blob_id)
-                    .cloned()
-            };
+            let sender_client_id = { deps.blob_sender_map.read().get(blob_id).cloned() };
             if let Some(sender_id) = sender_client_id {
                 let ack = protocol::create_ack(blob_id, protocol::AckStatus::Delivered);
                 if let Ok(ack_data) = protocol::encode_message(&ack) {
                     deps.registry
                         .try_send(&sender_id, RegistryMessage { data: ack_data });
                 }
-                deps.blob_sender_map
-                    .write()
-                    .expect("blob sender map lock poisoned")
-                    .remove(blob_id);
+                deps.blob_sender_map.write().remove(blob_id);
             }
         }
     }
@@ -480,11 +471,7 @@ async fn process_handle_result(
                     .try_send(&target_id, RegistryMessage { data });
             }
             HandlerResponse::RemoveFromSenderMap(blob_id) => {
-                ctx.deps
-                    .blob_sender_map
-                    .write()
-                    .expect("blob sender map lock poisoned")
-                    .remove(&blob_id);
+                ctx.deps.blob_sender_map.write().remove(&blob_id);
             }
             HandlerResponse::Skip => {
                 // No action needed

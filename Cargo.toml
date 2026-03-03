@@ -58,6 +58,9 @@ base64 = "0.22"
 # Zeroize key material on drop (R-M1)
 zeroize = "1"
 
+# Non-poisoning Mutex/RwLock (prevents panic cascading from poisoned locks)
+parking_lot = "0.12"
+
 # TLS for federation mTLS (mutual TLS between relays)
 tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }

@@ -16,7 +16,8 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::RwLock;
+
+use parking_lot::RwLock;
 
 use tokio::sync::mpsc;
 
@@ -71,10 +72,7 @@ impl ConnectionRegistry {
             id: conn_id,
             sender: tx,
         };
-        let mut connections = self
-            .connections
-            .write()
-            .expect("connection registry lock poisoned");
+        let mut connections = self.connections.write();
         connections
             .entry(client_id.to_string())
             .or_default()
@@ -85,10 +83,7 @@ impl ConnectionRegistry {
     /// Unregisters a specific connection by its connection ID.
     /// Other connections for the same routing ID remain active.
     pub fn unregister(&self, client_id: &str, conn_id: ConnectionId) {
-        let mut connections = self
-            .connections
-            .write()
-            .expect("connection registry lock poisoned");
+        let mut connections = self.connections.write();
         if let Some(entries) = connections.get_mut(client_id) {
             entries.retain(|e| e.id != conn_id);
             if entries.is_empty() {
@@ -102,10 +97,7 @@ impl ConnectionRegistry {
     ///
     /// Dead connections (closed channels) are cleaned up automatically.
     pub fn try_send(&self, client_id: &str, msg: RegistryMessage) -> bool {
-        let mut connections = self
-            .connections
-            .write()
-            .expect("connection registry lock poisoned");
+        let mut connections = self.connections.write();
         if let Some(entries) = connections.get_mut(client_id) {
             let mut any_sent = false;
             entries.retain(|entry| {
@@ -130,20 +122,14 @@ impl ConnectionRegistry {
     /// Returns the number of unique client IDs with active connections.
     #[allow(dead_code)]
     pub fn connected_count(&self) -> usize {
-        let connections = self
-            .connections
-            .read()
-            .expect("connection registry lock poisoned");
+        let connections = self.connections.read();
         connections.len()
     }
 
     /// Returns the total number of active connections across all clients.
     #[allow(dead_code)]
     pub fn total_connections(&self) -> usize {
-        let connections = self
-            .connections
-            .read()
-            .expect("connection registry lock poisoned");
+        let connections = self.connections.read();
         connections.values().map(|v| v.len()).sum()
     }
 }

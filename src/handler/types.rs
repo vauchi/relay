@@ -20,11 +20,11 @@ use crate::storage::BlobStore;
 /// In-memory map of blob_id → sender_client_id for delivery notifications.
 /// This is ephemeral (not persisted) — delivery acks only work when the
 /// sender is still connected when the recipient picks up the blob.
-pub type BlobSenderMap = Arc<std::sync::RwLock<std::collections::HashMap<String, String>>>;
+pub type BlobSenderMap = Arc<parking_lot::RwLock<std::collections::HashMap<String, String>>>;
 
 /// Creates a new empty blob sender map.
 pub fn new_blob_sender_map() -> BlobSenderMap {
-    Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()))
+    Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new()))
 }
 
 /// Per-user quota limits. Zero means unlimited.

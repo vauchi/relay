@@ -112,7 +112,15 @@ pub(super) mod protocol {
                 .as_secs(),
             payload: MessagePayload::HandshakeAck(HandshakeAck {
                 protocol_version: negotiated_version,
-                server_version: env!("CARGO_PKG_VERSION").to_string(),
+                // R-SA1: Don't leak exact build version to clients — use major.minor only
+                server_version: {
+                    let full = env!("CARGO_PKG_VERSION");
+                    // Extract "major.minor" from "major.minor.patch"
+                    match full.rmatch_indices('.').nth(0) {
+                        Some((idx, _)) => full[..idx].to_string(),
+                        None => full.to_string(),
+                    }
+                },
                 features,
                 supported_versions: Some(vec![PROTOCOL_VERSION]),
             }),
