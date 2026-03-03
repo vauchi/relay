@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::padding;
 
+/// Current wire-format version for relay-to-relay federation messages.
 pub const FEDERATION_PROTOCOL_VERSION: u8 = 1;
 const FRAME_HEADER_SIZE: usize = 4;
 
@@ -148,6 +149,7 @@ pub fn create_federation_envelope(payload: FederationPayload) -> FederationEnvel
     }
 }
 
+// INLINE_TEST_REQUIRED: federation protocol serde tests need private access to internal types
 #[cfg(test)]
 mod tests {
     use super::*;

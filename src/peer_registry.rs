@@ -73,6 +73,7 @@ pub struct PeerRegistry {
 }
 
 impl PeerRegistry {
+    /// Creates a new peer registry with the given capacity refuse threshold (e.g. 0.95 = 95%).
     pub fn new(refuse_threshold: f64) -> Self {
         PeerRegistry {
             peers: RwLock::new(HashMap::new()),
