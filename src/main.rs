@@ -104,7 +104,7 @@ async fn main() {
         config.security.recovery_rate_limit_per_min,
     ));
     let connection_limiter = ConnectionLimiter::new(config.network.max_connections);
-    let start_time = Instant::now();
+    let _start_time = Instant::now();
 
     // Parse HTTP listen address for health/metrics endpoints
     // By default, bind to localhost for security (metrics contain internal info)

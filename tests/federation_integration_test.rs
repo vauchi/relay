@@ -381,6 +381,7 @@ async fn test_federation_handshake_accepted() {
         hint_store,
         peer_registry: peer_registry.clone(),
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -420,6 +421,7 @@ async fn test_federation_handshake_version_mismatch_rejected() {
         hint_store,
         peer_registry,
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -472,6 +474,7 @@ async fn test_offload_blob_accepted_under_capacity() {
         hint_store,
         peer_registry,
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -518,6 +521,7 @@ async fn test_offload_blob_rejected_integrity_mismatch() {
         hint_store,
         peer_registry,
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -557,6 +561,7 @@ async fn test_offload_blob_rejected_hop_count_too_high() {
         hint_store,
         peer_registry,
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -601,6 +606,7 @@ async fn test_offload_blob_rejected_at_capacity() {
         hint_store,
         peer_registry,
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -640,6 +646,7 @@ async fn test_offload_preserves_created_at_secs() {
         hint_store,
         peer_registry,
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -684,6 +691,7 @@ async fn test_offload_increments_hop_count() {
         hint_store,
         peer_registry,
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -728,6 +736,7 @@ async fn test_capacity_report_updates_peer_registry() {
         hint_store,
         peer_registry: peer_registry.clone(),
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -763,6 +772,7 @@ async fn test_drain_notice_marks_peer_as_draining() {
         hint_store,
         peer_registry: peer_registry.clone(),
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -806,7 +816,7 @@ async fn test_offload_manager_below_threshold_does_nothing() {
         hint_store: hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry,
         config,
-        pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
     };
 
     let offloaded = manager.check_and_offload().await;
@@ -830,7 +840,7 @@ async fn test_offload_manager_no_peers_available() {
         hint_store: hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry,
         config,
-        pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
     };
 
     let offloaded = manager.check_and_offload().await;
@@ -870,7 +880,7 @@ async fn test_offload_manager_successful_offload_with_hints() {
         hint_store: hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry,
         config,
-        pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
     };
 
     let offloaded = manager.check_and_offload().await;
@@ -1122,6 +1132,7 @@ async fn test_end_to_end_offload_and_retrieval() {
         hint_store: relay_b_hints.clone(),
         peer_registry: relay_b_registry,
         config: relay_b_config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -1228,7 +1239,7 @@ async fn test_end_to_end_offload_with_forwarding_hints() {
         hint_store: relay_a_hints.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry: relay_a_registry,
         config: relay_a_config,
-        pending_offloads: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
     };
 
     let offloaded = manager.check_and_offload().await;
@@ -1285,6 +1296,7 @@ async fn test_multiple_blobs_offloaded_to_peer() {
         hint_store,
         peer_registry,
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 
@@ -1328,6 +1340,7 @@ async fn test_peer_disconnect_marks_disconnected() {
         hint_store,
         peer_registry: peer_registry.clone(),
         config,
+        federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
     })
     .await;
 

@@ -116,7 +116,7 @@ pub(super) mod protocol {
                 server_version: {
                     let full = env!("CARGO_PKG_VERSION");
                     // Extract "major.minor" from "major.minor.patch"
-                    match full.rmatch_indices('.').nth(0) {
+                    match full.rmatch_indices('.').next() {
                         Some((idx, _)) => full[..idx].to_string(),
                         None => full.to_string(),
                     }
