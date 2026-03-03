@@ -255,7 +255,7 @@ The default 90-day TTL enables users who rarely open the app to still receive co
 
 **Structure**: `src/` = production code only. `tests/` = tests only. Siblings, not nested.
 
-See [CLAUDE.md](../../CLAUDE.md) for additional mandatory rules.
+See [CLAUDE.md](../CLAUDE.md) for additional mandatory rules.
 
 ## Support the Project
 
