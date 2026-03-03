@@ -72,6 +72,15 @@ tempfile = "3.0"
 tower = { version = "0.5", features = ["util"] }
 rcgen = "0.14.7"
 proptest = "1"
+criterion = "0.5"
 
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"
+
+[[bench]]
+name = "storage_benchmarks"
+harness = false
+
+[[bench]]
+name = "transport_benchmarks"
+harness = false
