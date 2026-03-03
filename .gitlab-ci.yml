@@ -130,7 +130,12 @@ test:
     - job: lint:format
       optional: true
   script:
-    - cargo nextest run --all-targets
+    - cargo nextest run --profile ci --all-targets
+  artifacts:
+    when: always
+    reports:
+      junit: target/nextest/ci/junit.xml
+    expire_in: 1 week
 
 # Main: full coverage with llvm-cov
 coverage:
@@ -176,14 +181,6 @@ mutation:nightly:
   allow_failure: true
   variables:
     MUTATION_TIMEOUT_NIGHTLY: "60"
-
-mutation:incremental:
-  extends: [.mutation-incremental, .rust-runner, .timeout-extended]
-  needs:
-    - job: test
-      optional: true
-  variables:
-    MUTATION_TIMEOUT_INCREMENTAL: "120"
 
 # ============================================================
 # Security Stage (change-based, gated by lint, parallel with test)
