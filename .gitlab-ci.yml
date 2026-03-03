@@ -205,6 +205,42 @@ bench:compare:
     BENCH_TARGETS: "--bench storage_benchmarks --bench transport_benchmarks"
 
 # ============================================================
+# Fuzz Stage (nightly, libfuzzer via cargo-fuzz)
+# ============================================================
+
+fuzz:nightly:
+  extends: [.rust-runner, .timeout-extended]
+  stage: mutation
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $FUZZ_ENABLED == "true"
+  allow_failure: true
+  before_script:
+    - !reference [.self-hosted, before_script]
+    - !reference [.git-credentials, before_script]
+  script:
+    - |
+      command -v cargo-fuzz >/dev/null 2>&1 || cargo install cargo-fuzz --locked
+      cd fuzz
+      FUZZ_DURATION="${FUZZ_DURATION_SECS:-300}"
+      FAILED=0
+      for target in fuzz_federation_message fuzz_federation_padding \
+                     fuzz_noise_handshake fuzz_noise_v2_detect \
+                     fuzz_federation_url fuzz_validate_client_id; do
+        echo "=== Fuzzing $target for ${FUZZ_DURATION}s ==="
+        cargo fuzz run "$target" -- -max_total_time="$FUZZ_DURATION" 2>&1 || {
+          echo "CRASH FOUND in $target"
+          FAILED=$((FAILED + 1))
+        }
+      done
+      echo "=== Fuzz Summary: Targets=6, Crashes=$FAILED ==="
+      [ "$FAILED" -eq 0 ] || exit 1
+  artifacts:
+    paths:
+      - fuzz/artifacts/
+    expire_in: 1 month
+    when: on_failure
+
+# ============================================================
 # Security Stage (change-based, gated by lint, parallel with test)
 # ============================================================
 
