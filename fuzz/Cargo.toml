@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "vauchi-relay-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.vauchi-relay]
+path = ".."
+
+# Prevent this from interfering with the parent workspace
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_federation_message"
+path = "fuzz_targets/fuzz_federation_message.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_federation_padding"
+path = "fuzz_targets/fuzz_federation_padding.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_noise_handshake"
+path = "fuzz_targets/fuzz_noise_handshake.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_noise_v2_detect"
+path = "fuzz_targets/fuzz_noise_v2_detect.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_federation_url"
+path = "fuzz_targets/fuzz_federation_url.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_validate_client_id"
+path = "fuzz_targets/fuzz_validate_client_id.rs"
+doc = false
