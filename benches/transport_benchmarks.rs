@@ -159,7 +159,7 @@ fn bench_padding(c: &mut Criterion) {
     });
 
     group.bench_function("unpad_256B", |b| {
-        let padded = pad(&vec![0x42; 100]);
+        let padded = pad(&[0x42; 100]);
         b.iter(|| {
             unpad(&padded);
         });
