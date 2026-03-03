@@ -28,6 +28,7 @@ include:
       - '/ci-templates/reuse.yml'
       - '/ci-templates/test-quality.yml'
       - '/ci-templates/mutation.yml'
+      - '/ci-templates/benchmark.yml'
   - template: Security/SAST.gitlab-ci.yml
   - template: Security/Dependency-Scanning.gitlab-ci.yml
   - template: Security/Secret-Detection.gitlab-ci.yml
@@ -184,6 +185,26 @@ mutation:nightly:
     MUTATION_TIMEOUT_NIGHTLY: "60"
 
 # ============================================================
+# Benchmark Stage (uses shared template from vauchi/scripts)
+# ============================================================
+
+bench:save-baseline:
+  extends: [.bench-save-baseline, .linux-runner, .timeout-standard, .bench-cache]
+  before_script:
+    - !reference [.self-hosted, before_script]
+    - !reference [.git-credentials, before_script]
+  variables:
+    BENCH_TARGETS: "--bench storage_benchmarks --bench transport_benchmarks"
+
+bench:compare:
+  extends: [.bench-compare, .linux-runner, .timeout-standard, .bench-cache]
+  before_script:
+    - !reference [.self-hosted, before_script]
+    - !reference [.git-credentials, before_script]
+  variables:
+    BENCH_TARGETS: "--bench storage_benchmarks --bench transport_benchmarks"
+
+# ============================================================
 # Security Stage (change-based, gated by lint, parallel with test)
 # ============================================================
 
@@ -260,7 +281,7 @@ security:deny:
 
 # k6 WebSocket load test — runs against a local relay instance.
 # Thresholds: p95 connection < 500ms, throughput > 10 msg/s.
-# Manual trigger on MRs, automatic on merge to main.
+# Runs on nightly schedule and release tags (advisory).
 load:k6:
   extends: .timeout-standard
   stage: load
@@ -296,7 +317,8 @@ load:k6:
       kill $RELAY_PID 2>/dev/null || true
       exit ${K6_EXIT:-0}
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
   allow_failure: true
   artifacts:
     paths:
