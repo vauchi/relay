@@ -4,7 +4,7 @@
 
 //! Criterion benchmarks for relay transport, integrity, and padding hot paths.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use vauchi_relay::integrity::{compute_integrity_hash, verify_integrity_hash};
 use vauchi_relay::noise_key::generate_relay_keypair;
 use vauchi_relay::noise_transport::{NoiseResponder, NoiseTransport, NOISE_PATTERN};
@@ -72,47 +72,42 @@ fn bench_noise_transport(c: &mut Criterion) {
         });
     });
 
+    // Noise nonces are monotonic — each decrypt advances state, so we need
+    // a fresh transport pair per iteration via iter_batched.
     group.bench_function("decrypt_100B", |b| {
         let kp = generate_relay_keypair();
-        let (mut client, mut relay) = do_handshake(&kp.private, &kp.public);
         let plaintext = vec![0x42; 100];
-        // Pre-generate ciphertexts from client side
-        let ciphertexts: Vec<Vec<u8>> = (0..10000)
-            .map(|_| {
+        b.iter_batched(
+            || {
+                let (mut client, relay) = do_handshake(&kp.private, &kp.public);
                 let mut ct = vec![0u8; plaintext.len() + 16];
                 let len = client.write_message(&plaintext, &mut ct).unwrap();
                 ct.truncate(len);
-                ct
-            })
-            .collect();
-        let mut idx = 0;
-        b.iter(|| {
-            relay
-                .decrypt(&ciphertexts[idx % ciphertexts.len()])
-                .unwrap();
-            idx += 1;
-        });
+                (relay, ct)
+            },
+            |(mut relay, ct)| {
+                relay.decrypt(&ct).unwrap();
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     group.bench_function("decrypt_4KB", |b| {
         let kp = generate_relay_keypair();
-        let (mut client, mut relay) = do_handshake(&kp.private, &kp.public);
         let plaintext = vec![0x42; 4096];
-        let ciphertexts: Vec<Vec<u8>> = (0..10000)
-            .map(|_| {
+        b.iter_batched(
+            || {
+                let (mut client, relay) = do_handshake(&kp.private, &kp.public);
                 let mut ct = vec![0u8; plaintext.len() + 16];
                 let len = client.write_message(&plaintext, &mut ct).unwrap();
                 ct.truncate(len);
-                ct
-            })
-            .collect();
-        let mut idx = 0;
-        b.iter(|| {
-            relay
-                .decrypt(&ciphertexts[idx % ciphertexts.len()])
-                .unwrap();
-            idx += 1;
-        });
+                (relay, ct)
+            },
+            |(mut relay, ct)| {
+                relay.decrypt(&ct).unwrap();
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
