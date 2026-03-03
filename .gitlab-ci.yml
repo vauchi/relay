@@ -153,7 +153,10 @@ coverage:
     - cargo llvm-cov nextest --all-targets --lcov --output-path lcov.info
     - cargo llvm-cov report --cobertura --output-path cobertura.xml
     - cargo llvm-cov report
-  coverage: '/Total:\s+(\d+(?:\.\d+)?%)/'
+    - mkdir -p /tmp/ci-${CI_PIPELINE_ID} && curl -sL -H "JOB-TOKEN:$CI_JOB_TOKEN" "$CI_API_V4_URL/projects/vauchi%2Fscripts/repository/files/scripts%2Fci%2Fpush-coverage.sh/raw?ref=main" -o /tmp/ci-${CI_PIPELINE_ID}/push-coverage.sh
+    - "bash /tmp/ci-${CI_PIPELINE_ID}/push-coverage.sh cobertura.xml relay || echo WARNING: coverage push failed"
+    - rm -rf /tmp/ci-${CI_PIPELINE_ID}
+  coverage: '/TOTAL\s+\d+\s+\d+\s+\d+\.\d+%\s+\d+\s+\d+\s+\d+\.\d+%\s+\d+\s+\d+\s+(\d+\.\d+%)/'
   artifacts:
     reports:
       coverage_report:
