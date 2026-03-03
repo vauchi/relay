@@ -234,11 +234,7 @@ container_scanning:
 security:audit:
   extends: [.rust-runner-readonly, .validation-deps, .timeout-quick]
   stage: security
-  needs:
-    - job: lint:format
-      optional: true
-    - job: lint:clippy
-      optional: true
+  needs: []
   script:
     - cargo audit
 
@@ -270,22 +266,11 @@ load:k6:
   needs:
     - job: build:release
       artifacts: true
-      optional: true
-    - job: test
-      optional: true
   tags: [docker]
   image:
     name: grafana/k6:latest
     entrypoint: [""]
-  before_script:
-    - |
-      # Use prebuilt binary from build:release if available, otherwise compile
-      if [ ! -f "target/release/vauchi-relay" ]; then
-        apt-get update -qq && apt-get install -y -qq curl gcc pkg-config libssl-dev
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-        . "$HOME/.cargo/env"
-        cargo build --release
-      fi
+  before_script: []
   script:
     # Start relay in background with Noise encryption disabled for load testing
     - |
@@ -311,8 +296,6 @@ load:k6:
       exit ${K6_EXIT:-0}
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: manual
   allow_failure: true
   artifacts:
     paths:
@@ -333,21 +316,10 @@ dast:zap:
   needs:
     - job: build:release
       artifacts: true
-      optional: true
-    - job: test
-      optional: true
   image:
     name: ghcr.io/zaproxy/zaproxy:stable
     entrypoint: [""]
-  before_script:
-    - |
-      # Use prebuilt binary from build:release if available, otherwise compile
-      if [ ! -f "target/release/vauchi-relay" ]; then
-        apt-get update -qq && apt-get install -y -qq curl gcc pkg-config libssl-dev
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-        . "$HOME/.cargo/env"
-        cargo build --release
-      fi
+  before_script: []
   script:
     - |
       RELAY_LISTEN_ADDR=0.0.0.0:8080 \
@@ -370,8 +342,6 @@ dast:zap:
       kill $RELAY_PID 2>/dev/null || true
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: manual
   allow_failure: true
   artifacts:
@@ -427,7 +397,6 @@ build:docker:
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
-  allow_failure: true
 
 # ============================================================
 # Deploy Stage (manual gate)
