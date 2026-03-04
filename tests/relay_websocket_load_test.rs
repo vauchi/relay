@@ -343,8 +343,16 @@ async fn test_1000_concurrent_websocket_connections() {
         total_successes
     );
 
-    // After all close, registry should be empty (give extra time for cleanup)
-    tokio::time::sleep(Duration::from_millis(1000)).await;
+    // Poll until registry is empty (bounded to avoid infinite wait)
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while registry.connected_count() > 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "Registry still has {} connections after 5s deadline",
+            registry.connected_count()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     assert_eq!(
         registry.connected_count(),
         0,
