@@ -251,7 +251,7 @@ container_scanning:
   tags: [docker]
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
 
 # Rust-specific security (runs on dependency changes)
 security:audit:
@@ -319,7 +319,7 @@ load:k6:
       exit ${K6_EXIT:-0}
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
   allow_failure: true
   artifacts:
     paths:
@@ -395,7 +395,7 @@ build:release:
     expire_in: 1 week
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
 
 build:docker:
   extends: .timeout-standard
@@ -420,7 +420,7 @@ build:docker:
       fi
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
 
 # ============================================================
 # Deploy Stage (manual gate)
@@ -513,6 +513,6 @@ deploy:production:
     url: https://relay.vauchi.app
   when: manual
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
