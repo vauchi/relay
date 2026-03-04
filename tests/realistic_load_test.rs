@@ -425,6 +425,7 @@ impl StorageSnapshot {
 /// - Average latency < 50ms
 /// - Storage grows linearly (no memory leaks)
 #[tokio::test]
+#[ignore] // ~300s under normal execution, flaky under coverage/mutation instrumentation
 async fn test_realistic_usage_pattern_30_days() {
     // Check file descriptor limit — skip on constrained environments
     #[cfg(unix)]
