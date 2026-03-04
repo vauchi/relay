@@ -424,6 +424,8 @@ impl StorageSnapshot {
 /// - >99% message success rate
 /// - Average latency < 50ms
 /// - Storage grows linearly (no memory leaks)
+// Ignore: 5-min load simulation, run separately in nightly load:k6 job
+#[ignore]
 #[tokio::test]
 async fn test_realistic_usage_pattern_30_days() {
     // Check file descriptor limit — skip on constrained environments
