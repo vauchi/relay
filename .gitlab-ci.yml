@@ -47,12 +47,9 @@ stages:
 
 
 variables:
-  # GitLab Ultimate Security Configuration
-  SAST_EXCLUDED_PATHS: "target/"
-  DS_EXCLUDED_PATHS: "target/"
-  SECRET_DETECTION_EXCLUDED_PATHS: "target/"
-
   # Container scanning for relay image
+  # SAST/DS/SECRET_DETECTION excluded paths inherit from shared security.yml
+  # (template defaults are more restrictive than relay's previous "target/" only)
   CS_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
 
 # ============================================================
