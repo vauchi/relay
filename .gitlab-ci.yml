@@ -28,6 +28,7 @@ include:
       - '/ci-templates/coverage.yml'
       - '/ci-templates/mr-rules.yml'
       - '/ci-templates/reuse.yml'
+      - '/ci-templates/release.yml'
       - '/ci-templates/test-quality.yml'
       - '/ci-templates/mutation.yml'
       - '/ci-templates/benchmark.yml'
