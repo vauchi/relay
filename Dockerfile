@@ -37,6 +37,10 @@ RUN apt-get update && apt-get install -y \
 # Copy binary from builder
 COPY --from=builder /app/relay/target/release/vauchi-relay /usr/local/bin/
 
+# Inject build metadata (passed as --build-arg; defaults to dev placeholder)
+ARG BUILD_INFO='{"sha":"development","ref":"local","built":"unknown"}'
+RUN echo "${BUILD_INFO}" > /usr/share/build-info.json
+
 # Create non-root user and data directory
 RUN useradd -r -s /bin/false vauchi \
   && mkdir -p /data \

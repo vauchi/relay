@@ -508,7 +508,9 @@ build:docker:
       if [ -n "$CI_REGISTRY_PASSWORD" ]; then
         echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
       fi
-    - docker build --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    # Generate build metadata for deploy traceability
+    - BUILD_INFO="{\"sha\":\"$CI_COMMIT_SHA\",\"short_sha\":\"$CI_COMMIT_SHORT_SHA\",\"ref\":\"$CI_COMMIT_REF_NAME\",\"built\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"pipeline\":\"$CI_PIPELINE_URL\"}"
+    - docker build --build-arg BUILD_INFO="$BUILD_INFO" --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
     - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest
     - |
       if [ -n "$CI_REGISTRY_PASSWORD" ]; then
