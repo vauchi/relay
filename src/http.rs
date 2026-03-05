@@ -6,6 +6,8 @@
 //!
 //! Provides REST endpoints for monitoring and health checks.
 
+use std::sync::OnceLock;
+
 use axum::{
     extract::State,
     http::{header, Request, StatusCode},
@@ -17,6 +19,27 @@ use axum::{
 use subtle::ConstantTimeEq;
 
 use crate::metrics::RelayMetrics;
+
+/// Path where build-info.json is written during Docker image builds.
+const BUILD_INFO_PATH: &str = "/usr/share/build-info.json";
+
+/// Cached build info loaded once at first request.
+static BUILD_INFO: OnceLock<serde_json::Value> = OnceLock::new();
+
+/// Loads build info from the well-known path, falling back to a
+/// placeholder for local development builds.
+fn load_build_info() -> serde_json::Value {
+    std::fs::read_to_string(BUILD_INFO_PATH)
+        .ok()
+        .and_then(|contents| serde_json::from_str(&contents).ok())
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "sha": "development",
+                "ref": "local",
+                "built": "unknown"
+            })
+        })
+}
 
 /// Shared state for HTTP handlers.
 #[derive(Clone)]
@@ -73,6 +96,7 @@ pub fn create_router(state: HttpState) -> Router {
         .route("/metrics", get(metrics_handler))
         .route("/health", get(health_handler))
         .route("/pubkey", get(pubkey_handler))
+        .route("/build-info", get(build_info_handler))
         .route("/", get(root_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -86,7 +110,7 @@ pub fn create_router(state: HttpState) -> Router {
 async fn root_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "service": "vauchi-relay",
-        "endpoints": ["/health", "/metrics", "/pubkey"]
+        "endpoints": ["/health", "/metrics", "/pubkey", "/build-info"]
     }))
 }
 
@@ -96,6 +120,14 @@ async fn health_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "status": "ok",
     }))
+}
+
+/// Returns build metadata injected at Docker image build time.
+/// Falls back to a development placeholder when the file is absent
+/// (e.g. during local `cargo run`).
+async fn build_info_handler() -> impl IntoResponse {
+    let info = BUILD_INFO.get_or_init(load_build_info);
+    Json(info.clone())
 }
 
 /// Returns the relay's Noise NK public key (base64url-encoded).
@@ -351,6 +383,46 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body_bytes, "dGVzdC1wdWJrZXk");
+    }
+
+    #[tokio::test]
+    async fn test_build_info_endpoint_returns_ok() {
+        let app = create_router(create_test_state());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/build-info")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .expect("Failed to read response body");
+        let body: serde_json::Value =
+            serde_json::from_slice(&body_bytes).expect("Response body is not valid JSON");
+
+        // In test environment, the file won't exist, so we get the fallback
+        assert_eq!(
+            body["sha"], "development",
+            "Expected fallback sha field to be \"development\", got: {:?}",
+            body["sha"]
+        );
+        assert_eq!(
+            body["ref"], "local",
+            "Expected fallback ref field to be \"local\", got: {:?}",
+            body["ref"]
+        );
+        assert_eq!(
+            body["built"], "unknown",
+            "Expected fallback built field to be \"unknown\", got: {:?}",
+            body["built"]
+        );
     }
 
     #[tokio::test]
