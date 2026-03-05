@@ -383,6 +383,96 @@ dast:zap:
     when: always
 
 # ============================================================
+# Dev Tag Pipeline (lightweight — lint + test only)
+# ============================================================
+# Triggered by v0.2.3-dev.N tags. Fast feedback, no coverage/mutation/publish.
+
+dev:verify:
+  extends: [.rust-runner-nocache, .dev-verify]
+  stage: lint
+  needs: []
+
+dev:lint:format:
+  extends: [.rust-runner-nocache, .lint-format]
+  needs: [dev:verify]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+-dev\.\d+$/
+
+dev:lint:clippy:
+  extends: [.rust-runner-readonly, .lint-clippy]
+  needs: [dev:verify]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+-dev\.\d+$/
+
+dev:test:
+  extends: [.rust-runner, .timeout-standard]
+  stage: test
+  needs: [dev:lint:format]
+  script:
+    - cargo nextest run --profile ci --all-targets
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+-dev\.\d+$/
+  artifacts:
+    when: always
+    reports:
+      junit: target/nextest/ci/junit.xml
+    expire_in: 1 week
+
+# ============================================================
+# RC Tag Pipeline (full quality gate — no publish/deploy)
+# ============================================================
+# Triggered by v0.2.3-rc.N tags. Full coverage + mutation.
+
+rc:verify:
+  extends: [.rust-runner-nocache, .rc-verify]
+  stage: lint
+  needs: []
+
+rc:lint:format:
+  extends: [.rust-runner-nocache, .lint-format]
+  needs: [rc:verify]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+-rc\.\d+$/
+
+rc:lint:clippy:
+  extends: [.rust-runner-readonly, .lint-clippy]
+  needs: [rc:verify]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+-rc\.\d+$/
+
+rc:test:
+  extends: [.coverage-job, .rust-runner, .timeout-long]
+  needs:
+    - job: rc:lint:format
+      optional: true
+    - job: rc:lint:clippy
+      optional: true
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+-rc\.\d+$/
+  before_script:
+    - !reference [.self-hosted, before_script]
+    - !reference [.git-credentials, before_script]
+    - rustup component add llvm-tools-preview 2>/dev/null || true
+  variables:
+    COVERAGE_REPO_LABEL: "relay"
+
+rc:mutation:
+  extends: [.mutation-nightly, .rust-runner, .timeout-extended]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+-rc\.\d+$/
+  variables:
+    MUTATION_TIMEOUT_NIGHTLY: "120"
+
+rc:security:audit:
+  extends: [.rust-runner-readonly, .security-audit, .timeout-quick]
+  needs: []
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+-rc\.\d+$/
+  before_script:
+    - !reference [.self-hosted, before_script]
+    - command -v cargo-audit >/dev/null 2>&1 || cargo binstall cargo-audit --no-confirm 2>/dev/null || cargo install cargo-audit
+
+# ============================================================
 # Build Stage
 # ============================================================
 
