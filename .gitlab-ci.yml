@@ -532,7 +532,7 @@ deploy:trigger:
   needs:
     - job: build:docker
   trigger:
-    project: vauchi/_private
+    project: vauchi/private
     branch: main
   variables:
     DEPLOY_SERVICE: relay
