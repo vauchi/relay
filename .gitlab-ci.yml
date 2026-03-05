@@ -524,25 +524,19 @@ build:docker:
 # ============================================================
 # Deploy Stage
 # ============================================================
-# Triggers the centralized deploy pipeline in _private.
-# The _private pipeline handles SSH, container lifecycle, and kamal-proxy.
+# Auto-triggers the centralized deploy pipeline in _private.
+# The _private pipeline has manual gate jobs — click "play" there.
 
-deploy:production:
+deploy:trigger:
   stage: deploy
   needs:
     - job: build:docker
   trigger:
     project: vauchi/_private
     branch: main
-    strategy: depend
   variables:
     DEPLOY_SERVICE: relay
     DEPLOY_IMAGE: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
-  environment:
-    name: production
-    url: https://relay.vauchi.app
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
-      when: manual
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
