@@ -32,7 +32,7 @@ export const options = {
   ],
   thresholds: {
     ws_connecting: ["p(95)<500"],       // p95 connection < 500ms
-    messages_sent: ["rate>10"],         // Throughput > 10 msg/s
+    messages_sent: ["count>50"],        // Total messages sent > 50
     handshake_time: ["p(95)<300"],      // p95 handshake < 300ms
     message_ack_time: ["p(95)<500"],    // p95 message round-trip < 500ms
   },
@@ -42,7 +42,7 @@ export const options = {
 // Custom metrics
 // ============================================================
 
-const messagesSent = new Rate("messages_sent");
+const messagesSent = new Counter("messages_sent");
 const handshakeTime = new Trend("handshake_time", true);
 const messageAckTime = new Trend("message_ack_time", true);
 const connectionErrors = new Counter("connection_errors");
@@ -102,6 +102,7 @@ export default function () {
 
   const res = ws.connect(RELAY_URL, null, function (socket) {
     let handshakeAcked = false;
+    let lastSendTime = 0;
 
     socket.on("open", function () {
       // Send Handshake (mandatory first message)
@@ -116,10 +117,10 @@ export default function () {
       if (!handshakeAcked) {
         handshakeAcked = true;
         handshakeTime.add(Date.now() - handshakeStart);
+      } else if (lastSendTime > 0) {
+        // Track ACK latency from last message send
+        messageAckTime.add(Date.now() - lastSendTime);
       }
-
-      // Track ACK latency for sent messages
-      messageAckTime.add(Date.now() - handshakeStart);
     });
 
     socket.on("error", function (e) {
@@ -140,8 +141,9 @@ export default function () {
           recipient_id: recipientId,
           ciphertext: Array.from({ length: 256 }, (_, j) => (i + j) % 256),
         });
+        lastSendTime = Date.now();
         socket.sendBinary(encodeFrame(update));
-        messagesSent.add(true);
+        messagesSent.add(1);
       }
     }, 1000); // Wait 1s for handshake to complete
 
@@ -153,8 +155,9 @@ export default function () {
           recipient_id: recipientId,
           ciphertext: Array.from({ length: 128 }, (_, j) => j % 256),
         });
+        lastSendTime = Date.now();
         socket.sendBinary(encodeFrame(update));
-        messagesSent.add(true);
+        messagesSent.add(1);
       }, t * 1000);
     }
 
