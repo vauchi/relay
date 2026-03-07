@@ -320,7 +320,7 @@ load:k6:
       curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start"; kill $RELAY_PID; exit 1; }
 
       # Run k6 load test
-      k6 run tests/load/relay-load-test.js || K6_EXIT=$?
+      k6 run --summary-export=summary.json tests/load/relay-load-test.js || K6_EXIT=$?
 
       kill $RELAY_PID 2>/dev/null || true
       exit ${K6_EXIT:-0}
