@@ -368,7 +368,7 @@ mod tests {
             &signing_key.public_key_hex()
         );
 
-        // Verify the signature using ring
+        // Verify the signature using aws-lc-rs
         let canonical = signed.canonical_data();
         let pk_bytes = hex::decode(signed.relay_signing_key.as_ref().unwrap()).unwrap();
         let sig_bytes = hex::decode(signed.signature.as_ref().unwrap()).unwrap();
