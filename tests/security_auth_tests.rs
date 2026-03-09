@@ -275,7 +275,7 @@ fn test_nonce_tracker_accepts_after_eviction() {
 
 // @scenario: security.feature @relay @auth @signing
 /// Test: R-M4: Forwarding hints must be signed with relay signing key.
-/// Verify sign_hints produces valid signatures verifiable via ring.
+/// Verify sign_hints produces valid signatures verifiable via aws-lc-rs.
 #[test]
 fn test_forwarding_hints_are_signed() {
     let noise_private = [42u8; 32];
@@ -303,7 +303,7 @@ fn test_forwarding_hints_are_signed() {
         &signing_key.public_key_hex()
     );
 
-    // Verify via ring Ed25519
+    // Verify via aws-lc-rs Ed25519
     let canonical = signed.canonical_data();
     let pk_bytes = hex::decode(signed.relay_signing_key.as_ref().unwrap()).unwrap();
     let sig_bytes = hex::decode(signed.signature.as_ref().unwrap()).unwrap();

@@ -158,5 +158,5 @@ Client A                    Relay                     Client B
 | `tokio-tungstenite` | WebSocket support |
 | `serde` | JSON serialization |
 | `rusqlite` | SQLite storage backend |
-| `ring` | SHA-256 integrity hashing (federation) |
+| `aws-lc-rs` | SHA-256 integrity hashing (federation) |
 | `tracing` | Logging |
