@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Test relay instance — test.relay.vauchi.app
+# CI/e2e tests: 5min TTL, memory storage, auto-wipe
+
+services:
+  relay:
+    image: registry.gitlab.com/vauchi/relay:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - RELAY_LISTEN_ADDR=0.0.0.0:8080
+      - RELAY_BLOB_TTL_SECONDS=300
+      - RELAY_STORAGE_BACKEND=memory
+      - RELAY_MAX_BLOBS_PER_RECIPIENT=1000
+      - RELAY_LOG_LEVEL=debug
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3

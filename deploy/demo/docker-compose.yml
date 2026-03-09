@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Demo relay instance — demo.relay.vauchi.app
+# Public sandbox: 1h TTL, 100 blob cap, nightly wipe
+
+services:
+  relay:
+    image: registry.gitlab.com/vauchi/relay:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - RELAY_LISTEN_ADDR=0.0.0.0:8080
+      - RELAY_BLOB_TTL_SECONDS=3600
+      - RELAY_MAX_BLOBS_PER_RECIPIENT=100
+      - RELAY_STORAGE_QUOTA_MB=50
+      - RELAY_TLS_VERIFIED=true
+      - RELAY_LOG_LEVEL=info
+    volumes:
+      - demo-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  demo-data:
