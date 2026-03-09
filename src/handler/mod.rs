@@ -39,7 +39,7 @@ mod tests {
     use crate::recovery_storage::StoredRecoveryProof;
     use crate::storage::StoredBlob;
 
-    use ring::signature::KeyPair;
+    use aws_lc_rs::signature::KeyPair;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -300,9 +300,9 @@ mod tests {
     /// Helper: generate an Ed25519 keypair, sign (nonce || timestamp), and return
     /// (public_key_hex, nonce_hex, signature_hex, timestamp, derived_client_id).
     fn make_test_signed_handshake() -> (String, String, String, u64, String) {
-        let rng = ring::rand::SystemRandom::new();
-        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
-        let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let rng = aws_lc_rs::rand::SystemRandom::new();
+        let pkcs8 = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let key_pair = aws_lc_rs::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
 
         let public_key = key_pair.public_key().as_ref();
         let public_key_hex: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
@@ -360,9 +360,9 @@ mod tests {
         let (_pk, nonce, _, _, _) = make_test_signed_handshake();
 
         // Re-sign with old timestamp
-        let rng = ring::rand::SystemRandom::new();
-        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
-        let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let rng = aws_lc_rs::rand::SystemRandom::new();
+        let pkcs8 = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let key_pair = aws_lc_rs::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
         let pub_hex: String = key_pair
             .public_key()
             .as_ref()
@@ -424,9 +424,9 @@ mod tests {
 
     #[test]
     fn test_purge_request_accepts_valid_signature() {
-        let rng = ring::rand::SystemRandom::new();
-        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
-        let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let rng = aws_lc_rs::rand::SystemRandom::new();
+        let pkcs8 = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let key_pair = aws_lc_rs::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
 
         let public_key = key_pair.public_key().as_ref();
         let pk_hex: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
@@ -468,9 +468,9 @@ mod tests {
 
     #[test]
     fn test_purge_request_rejects_bad_signature() {
-        let rng = ring::rand::SystemRandom::new();
-        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
-        let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let rng = aws_lc_rs::rand::SystemRandom::new();
+        let pkcs8 = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let key_pair = aws_lc_rs::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
 
         let public_key = key_pair.public_key().as_ref();
         let pk_hex: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();

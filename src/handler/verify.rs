@@ -62,8 +62,10 @@ pub(super) fn verify_signed_handshake(
     signed_data.extend_from_slice(&timestamp.to_be_bytes());
 
     // Verify Ed25519 signature
-    let public_key =
-        ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &public_key_bytes);
+    let public_key = aws_lc_rs::signature::UnparsedPublicKey::new(
+        &aws_lc_rs::signature::ED25519,
+        &public_key_bytes,
+    );
     public_key
         .verify(&signed_data, &signature_bytes)
         .map_err(|_| "signature verification failed")?;
@@ -300,7 +302,7 @@ impl PurgeVerify for protocol::PurgeRequest {
         message.extend_from_slice(&timestamp.to_be_bytes());
 
         let public_key =
-            ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
+            aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, &pk_bytes);
         public_key
             .verify(&message, &sig_bytes)
             .map_err(|_| "invalid signature".to_string())

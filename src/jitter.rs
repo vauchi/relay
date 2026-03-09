@@ -7,7 +7,7 @@
 //! Adds configurable random delays before forwarding blobs to prevent
 //! timing-based correlation between sender updates and recipient deliveries.
 
-use ring::rand::{SecureRandom, SystemRandom};
+use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use std::time::Duration;
 
 /// Minimum jitter delay in milliseconds.
@@ -18,7 +18,7 @@ pub const DEFAULT_JITTER_MAX_MS: u64 = 500;
 
 /// Generates a random jitter duration between `min_ms` and `max_ms` (inclusive).
 ///
-/// Uses `ring::rand::SystemRandom` for cryptographically secure randomness.
+/// Uses `aws_lc_rs::rand::SystemRandom` for cryptographically secure randomness.
 /// If `min_ms >= max_ms`, returns `min_ms` (graceful handling of invalid config).
 pub fn generate_jitter(min_ms: u64, max_ms: u64) -> Duration {
     if min_ms >= max_ms {

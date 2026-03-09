@@ -10,7 +10,7 @@
 
 mod common;
 
-use ring::signature::KeyPair;
+use aws_lc_rs::signature::KeyPair;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -158,9 +158,9 @@ fn make_client_handshake(client_id: &str) -> serde_json::Value {
 
 /// Creates a client PurgeRequest message with a valid Ed25519 signature.
 fn make_client_purge() -> serde_json::Value {
-    let rng = ring::rand::SystemRandom::new();
-    let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
-    let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+    let rng = aws_lc_rs::rand::SystemRandom::new();
+    let pkcs8 = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    let key_pair = aws_lc_rs::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
 
     let public_key = key_pair.public_key().as_ref();
     let pk_hex: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();

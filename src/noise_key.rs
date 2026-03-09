@@ -142,7 +142,7 @@ pub fn public_key_base64url(public: &[u8; 32]) -> String {
 /// This avoids managing a separate key file — the signing identity is
 /// deterministically bound to the relay's Noise identity.
 fn derive_signing_seed(noise_private_key: &[u8; 32]) -> [u8; 32] {
-    use ring::hkdf::{self, HKDF_SHA256};
+    use aws_lc_rs::hkdf::{self, HKDF_SHA256};
 
     let salt = hkdf::Salt::new(HKDF_SHA256, b"vauchi-relay-signing-v1");
     let prk = salt.extract(noise_private_key);
@@ -156,17 +156,17 @@ fn derive_signing_seed(noise_private_key: &[u8; 32]) -> [u8; 32] {
 
 /// Relay signing keypair for authenticating forwarding hints.
 pub struct RelaySigningKey {
-    keypair: ring::signature::Ed25519KeyPair,
+    keypair: aws_lc_rs::signature::Ed25519KeyPair,
     public_key: [u8; 32],
 }
 
 impl RelaySigningKey {
     /// Creates a signing key derived from the relay's Noise static private key.
     pub fn from_noise_key(noise_private_key: &[u8; 32]) -> Self {
-        use ring::signature::KeyPair;
+        use aws_lc_rs::signature::KeyPair;
 
         let seed = derive_signing_seed(noise_private_key);
-        let keypair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&seed)
+        let keypair = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&seed)
             .expect("Ed25519 seed should be valid");
         let mut public_key = [0u8; 32];
         public_key.copy_from_slice(keypair.public_key().as_ref());
@@ -372,7 +372,8 @@ mod tests {
         let canonical = signed.canonical_data();
         let pk_bytes = hex::decode(signed.relay_signing_key.as_ref().unwrap()).unwrap();
         let sig_bytes = hex::decode(signed.signature.as_ref().unwrap()).unwrap();
-        let pk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
+        let pk =
+            aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, &pk_bytes);
         assert!(pk.verify(&canonical, &sig_bytes).is_ok());
     }
 
@@ -406,7 +407,8 @@ mod tests {
             signature: None,
         };
 
-        let pk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
+        let pk =
+            aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, &pk_bytes);
         let tampered_canonical = tampered.canonical_data();
         assert!(
             pk.verify(&tampered_canonical, &sig_bytes).is_err(),

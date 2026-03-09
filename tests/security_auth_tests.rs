@@ -307,7 +307,8 @@ fn test_forwarding_hints_are_signed() {
     let canonical = signed.canonical_data();
     let pk_bytes = hex::decode(signed.relay_signing_key.as_ref().unwrap()).unwrap();
     let sig_bytes = hex::decode(signed.signature.as_ref().unwrap()).unwrap();
-    let pk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
+    let pk =
+        aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, &pk_bytes);
     assert!(
         pk.verify(&canonical, &sig_bytes).is_ok(),
         "signature must verify"
@@ -345,7 +346,8 @@ fn test_forwarding_hints_tampered_rejected() {
         signature: None,
     };
 
-    let pk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pk_bytes);
+    let pk =
+        aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, &pk_bytes);
     assert!(
         pk.verify(&tampered.canonical_data(), &sig_bytes).is_err(),
         "tampered hints must fail verification"

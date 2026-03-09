@@ -8,7 +8,7 @@
 //! offload. The hash is always computed on **ciphertext** (the relay never
 //! has plaintext).
 
-use ring::digest;
+use aws_lc_rs::digest;
 use subtle::ConstantTimeEq;
 
 /// Computes a SHA-256 hash of the given data and returns it as a hex string.

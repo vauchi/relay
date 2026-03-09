@@ -13,7 +13,7 @@
 //! [original length: 4 bytes BE] [payload] [random padding bytes]
 //! ```
 
-use ring::rand::{SecureRandom, SystemRandom};
+use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 
 /// Bucket sizes in bytes (including the 4-byte length prefix).
 const BUCKET_SMALL: usize = 256;
@@ -86,6 +86,7 @@ fn select_bucket(size: usize) -> usize {
     }
 }
 
+// INLINE_TEST_REQUIRED: Tests verify internal bucket selection logic and padding/unpadding internals not exposed publicly
 #[cfg(test)]
 mod tests {
     use super::*;

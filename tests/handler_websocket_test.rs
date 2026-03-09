@@ -19,7 +19,7 @@ use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_async, connect_async};
 
-use ring::signature::{Ed25519KeyPair, KeyPair};
+use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
@@ -146,9 +146,9 @@ fn make_recovery_query(key_hashes: &[&str]) -> Value {
 
 /// Builds a PurgeRequest envelope with valid Ed25519 signature.
 fn make_purge_request(include_device_sync: bool) -> Value {
-    let rng = ring::rand::SystemRandom::new();
-    let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
-    let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+    let rng = aws_lc_rs::rand::SystemRandom::new();
+    let pkcs8 = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    let key_pair = aws_lc_rs::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
 
     let public_key = key_pair.public_key().as_ref();
     let pk_hex: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
@@ -2443,7 +2443,7 @@ async fn test_recovery_store_invalid_key_hash() {
 /// Generates an Ed25519 keypair and builds a signed handshake JSON envelope.
 /// Returns (handshake_value, client_id_hex).
 fn make_signed_handshake_envelope() -> (Value, String) {
-    let rng = ring::rand::SystemRandom::new();
+    let rng = aws_lc_rs::rand::SystemRandom::new();
     let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
     let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
 
@@ -2489,7 +2489,7 @@ fn make_signed_handshake_envelope() -> (Value, String) {
 
 /// Helper: generate a signed handshake with a specific nonce (for replay testing).
 fn make_signed_handshake_with_nonce(nonce_bytes: &[u8; 32]) -> (Value, String) {
-    let rng = ring::rand::SystemRandom::new();
+    let rng = aws_lc_rs::rand::SystemRandom::new();
     let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
     let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
 
@@ -2693,7 +2693,7 @@ async fn test_expired_timestamp_rejected() {
     let (mut ws, _) = connect_async(&url).await.unwrap();
 
     // Generate keypair and sign with a timestamp that's 120s old
-    let rng = ring::rand::SystemRandom::new();
+    let rng = aws_lc_rs::rand::SystemRandom::new();
     let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
     let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
 
