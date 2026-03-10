@@ -35,3 +35,9 @@ SPDX-License-Identifier = "GPL-3.0-or-later"
 path = ["**/CLAUDE.md"]
 SPDX-FileCopyrightText = "2026 Mattia Egloff <mattia.egloff@pm.me>"
 SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# cargo-vet supply chain files (headers stripped by cargo-vet on regeneration)
+[[annotations]]
+path = ["supply-chain/**"]
+SPDX-FileCopyrightText = "2026 Mattia Egloff <mattia.egloff@pm.me>"
+SPDX-License-Identifier = "GPL-3.0-or-later"

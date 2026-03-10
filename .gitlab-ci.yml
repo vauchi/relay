@@ -241,6 +241,10 @@ security:audit:
 security:deny:
   extends: [.rust-runner-readonly, .security-deny-job]
 
+# Supply chain verification (cargo-vet)
+security:vet:
+  extends: [.rust-runner-readonly, .security-vet-job]
+
 # ============================================================
 # Load Test Stage (PI-10)
 # ============================================================
