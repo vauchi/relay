@@ -83,6 +83,10 @@ lint:clippy:
 lint:duplicates:
   extends: [.rust-runner-nocache, .lint-duplicates-job, .timeout-quick]
 
+# Unused dependency check (advisory)
+lint:machete:
+  extends: [.rust-runner-nocache, .lint-machete-job, .timeout-quick]
+
 # ============================================================
 # Test Stage (change-based, gated by lint)
 # ============================================================
