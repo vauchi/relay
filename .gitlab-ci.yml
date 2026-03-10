@@ -33,6 +33,7 @@ include:
       - '/ci-templates/test-quality.yml'
       - '/ci-templates/mutation.yml'
       - '/ci-templates/benchmark.yml'
+      - '/ci-templates/perf.yml'
   # Container scanning is relay-specific (not included in shared security.yml)
   - template: Security/Container-Scanning.gitlab-ci.yml
 
@@ -78,6 +79,10 @@ lint:clippy:
   extends: [.rust-runner-readonly, .lint-clippy, .validation-rust, .timeout-quick]
   needs: []
 
+# Duplicate dependency check (advisory)
+lint:duplicates:
+  extends: [.rust-runner-nocache, .lint-duplicates-job, .timeout-quick]
+
 # ============================================================
 # Test Stage (change-based, gated by lint)
 # ============================================================
@@ -106,6 +111,15 @@ coverage:
     - rustup component add llvm-tools-preview 2>/dev/null || true
   variables:
     COVERAGE_REPO_LABEL: "relay"
+
+# Binary size tracking (main merges + release tags)
+perf:binary-size:
+  extends: [.binary-size-tracking-job, .rust-runner, .timeout-long]
+  before_script:
+    - !reference [.self-hosted, before_script]
+    - !reference [.git-credentials, before_script]
+  variables:
+    BINARY_SIZE_REPO_LABEL: "relay"
 
 # ============================================================
 # Mutation Stage (uses shared template from vauchi/scripts)
