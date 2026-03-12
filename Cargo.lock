@@ -2214,7 +2214,7 @@ dependencies = [
 
 [[package]]
 name = "vauchi-relay"
-version = "1.1.0"
+version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
  "axum",
