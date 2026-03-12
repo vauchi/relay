@@ -132,7 +132,7 @@ perf:binary-size:
 mutation:nightly:
   extends: [.mutation-nightly, .rust-runner, .timeout-extended]
   variables:
-    MUTATION_TIMEOUT_NIGHTLY: "120"
+    MUTATION_TIMEOUT_NIGHTLY: "60"
 
 # ============================================================
 # Benchmark Stage (uses shared template from vauchi/scripts)
@@ -172,16 +172,20 @@ fuzz:nightly:
       command -v cargo-fuzz >/dev/null 2>&1 || cargo install cargo-fuzz --locked
       cd fuzz
       FUZZ_DURATION="${FUZZ_DURATION_SECS:-300}"
-      FAILED=0
-      for target in fuzz_federation_message fuzz_federation_padding \
-                     fuzz_noise_handshake fuzz_noise_v2_detect \
-                     fuzz_federation_url fuzz_validate_client_id; do
-        echo "=== Fuzzing $target for ${FUZZ_DURATION}s ==="
-        cargo fuzz run "$target" -- -max_total_time="$FUZZ_DURATION" 2>&1 || {
-          echo "CRASH FOUND in $target"
-          FAILED=$((FAILED + 1))
-        }
-      done
+      FUZZ_JOBS="${FUZZ_PARALLEL_JOBS:-3}"
+
+      TARGETS="fuzz_federation_message fuzz_federation_padding \
+               fuzz_noise_handshake fuzz_noise_v2_detect \
+               fuzz_federation_url fuzz_validate_client_id"
+
+      echo "=== Fuzzing $(echo $TARGETS | wc -w) targets, ${FUZZ_JOBS} parallel, ${FUZZ_DURATION}s each ==="
+
+      echo "$TARGETS" | tr ' ' '\n' | grep -v '^$' | \
+        xargs -P "$FUZZ_JOBS" -I{} sh -c \
+          'echo "START: {}"; cargo fuzz run {} -- -max_total_time='"$FUZZ_DURATION"' 2>&1 || echo "CRASH:{}"' \
+          | tee /tmp/fuzz-output.log
+
+      FAILED=$(grep -c '^CRASH:' /tmp/fuzz-output.log || true)
       echo "=== Fuzz Summary: Targets=6, Crashes=$FAILED ==="
       [ "$FAILED" -eq 0 ] || exit 1
   artifacts:
@@ -230,8 +234,8 @@ container_scanning:
   needs: ["build:docker"]
   tags: [docker]
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+    - if: $CI_PIPELINE_SOURCE == "schedule"
 
 # Rust-specific security (runs on dependency changes)
 security:audit:
@@ -398,7 +402,7 @@ rc:mutation:
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+-rc\.\d+$/
   variables:
-    MUTATION_TIMEOUT_NIGHTLY: "120"
+    MUTATION_TIMEOUT_NIGHTLY: "60"
 
 rc:security:audit:
   extends: [.rust-runner-readonly, .rc-security-audit]
