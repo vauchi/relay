@@ -8,7 +8,7 @@ use tracing::{debug, warn};
 
 use super::nonce::{hash_to_hex, hex_to_hash, MAX_RECOVERY_PROOF_SIZE, MAX_RECOVERY_QUERY_HASHES};
 use super::types::{HandleResult, HandlerResponse, MessageContext};
-use super::verify::{protocol, PurgeVerify};
+use super::verify::{protocol, PurgeVerify, RevocationVerify};
 use crate::device_sync_storage::StoredDeviceSyncMessage;
 use crate::recovery_storage::StoredRecoveryProof;
 use crate::storage::StoredBlob;
@@ -276,6 +276,7 @@ pub(super) fn handle_purge_request(
                     let mut hash = [0u8; 32];
                     hash.copy_from_slice(&decoded);
                     if deps.recovery_storage.remove(&hash) {
+                        deps.metrics.recovery_proofs_active.dec();
                         1
                     } else {
                         0
@@ -319,7 +320,10 @@ pub(super) fn handle_purge_request(
     HandleResult::single(HandlerResponse::SendEnvelope(response))
 }
 
-/// Handles an `AccountRevoked` message: validate, store as blob, ack.
+/// Handles an `AccountRevoked` message: verify signature, validate, store as blob, ack.
+///
+/// F-01 fix: Requires valid Ed25519 signature over canonical revocation bytes.
+/// Without verification, any client could send a revocation for any recipient.
 pub(super) fn handle_account_revoked(
     ctx: &MessageContext<'_>,
     revoked: &protocol::AccountRevoked,
@@ -327,7 +331,22 @@ pub(super) fn handle_account_revoked(
 ) -> HandleResult {
     let deps = ctx.deps;
 
-    // Validate recipient_id format (hex-encoded, 64 chars)
+    // F-01: Verify Ed25519 signature over canonical revocation bytes.
+    // Rejects unsigned, tampered, expired, or forged revocations.
+    if let Err(e) = revoked.verify_revocation() {
+        warn!(
+            "[{}] Rejecting AccountRevoked with invalid signature: {}",
+            ctx.session, e
+        );
+        return HandleResult::single(HandlerResponse::SendAck {
+            message_id: envelope.message_id.clone(),
+            status: protocol::AckStatus::Failed,
+        });
+    }
+
+    // Validate recipient_id format (hex-encoded, 64 chars).
+    // verify_revocation already checks hex decode + 32 bytes for recipient_id,
+    // but this guards the storage key format explicitly.
     if revoked.recipient_id.len() != 64
         || !revoked.recipient_id.chars().all(|c| c.is_ascii_hexdigit())
     {
@@ -353,17 +372,27 @@ pub(super) fn handle_account_revoked(
     }
 
     // Re-encode the entire envelope as a blob for the recipient
-    if let Ok(blob_data) = protocol::encode_message(envelope) {
-        let blob = StoredBlob::new(blob_data);
-        deps.storage.store(&revoked.recipient_id, blob);
+    match protocol::encode_message(envelope) {
+        Ok(blob_data) => {
+            let blob = StoredBlob::new(blob_data);
+            deps.storage.store(&revoked.recipient_id, blob);
 
-        debug!("[{}] Stored AccountRevoked for recipient", ctx.session);
-        HandleResult::single(HandlerResponse::SendAck {
-            message_id: envelope.message_id.clone(),
-            status: protocol::AckStatus::Stored,
-        })
-    } else {
-        HandleResult::empty()
+            debug!("[{}] Stored AccountRevoked for recipient", ctx.session);
+            HandleResult::single(HandlerResponse::SendAck {
+                message_id: envelope.message_id.clone(),
+                status: protocol::AckStatus::Stored,
+            })
+        }
+        Err(e) => {
+            warn!(
+                "[{}] AccountRevoked: failed to re-encode envelope: {}",
+                ctx.session, e
+            );
+            HandleResult::single(HandlerResponse::SendAck {
+                message_id: envelope.message_id.clone(),
+                status: protocol::AckStatus::Failed,
+            })
+        }
     }
 }
 

@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Handshake verification, purge signature verification, and protocol module.
+//! Handshake verification, purge signature verification, revocation signature
+//! verification, and protocol module.
 
 use super::nonce::{decode_hex, NonceTracker};
 
@@ -245,8 +246,8 @@ pub(super) mod protocol {
 }
 
 // =========================================================================
-// Relay-specific extension trait for PurgeRequest signature verification.
-// The struct is defined in vauchi-protocol; crypto logic stays in relay.
+// Relay-specific extension traits for signature verification.
+// Structs are defined in vauchi-protocol; crypto logic stays in relay.
 // =========================================================================
 
 pub(super) trait PurgeVerify {
@@ -306,5 +307,89 @@ impl PurgeVerify for protocol::PurgeRequest {
         public_key
             .verify(&message, &sig_bytes)
             .map_err(|_| "invalid signature".to_string())
+    }
+}
+
+// =========================================================================
+// AccountRevoked signature verification (F-01 fix).
+//
+// The canonical byte format must match vauchi-core's
+// `revocation::canonical_revocation_bytes`:
+//   domain_separator(25) || sender_pk(32) || recipient_pk(32) || timestamp_be(8)
+// =========================================================================
+
+/// Domain separator for revocation signatures (matches vauchi-core exactly).
+const REVOCATION_DOMAIN_SEPARATOR: &[u8] = b"vauchi-account-revoked-v1";
+
+pub(super) trait RevocationVerify {
+    /// Verifies the Ed25519 revocation signature and timestamp window.
+    ///
+    /// The relay verifies that:
+    /// 1. `sender_id` decodes to a valid 32-byte Ed25519 public key
+    /// 2. `recipient_id` decodes to 32 bytes
+    /// 3. `signature` is exactly 64 bytes
+    /// 4. `timestamp` is within ±60s of relay clock
+    /// 5. The Ed25519 signature over the canonical revocation bytes is valid
+    fn verify_revocation(&self) -> Result<(), String>;
+}
+
+impl RevocationVerify for protocol::AccountRevoked {
+    fn verify_revocation(&self) -> Result<(), String> {
+        // Decode sender_id (hex → 32-byte public key)
+        let sender_bytes =
+            hex::decode(&self.sender_id).map_err(|e| format!("invalid sender_id hex: {}", e))?;
+        if sender_bytes.len() != 32 {
+            return Err(format!(
+                "sender_id must be 32 bytes, got {}",
+                sender_bytes.len()
+            ));
+        }
+
+        // Decode recipient_id (hex → 32 bytes)
+        let recipient_bytes = hex::decode(&self.recipient_id)
+            .map_err(|e| format!("invalid recipient_id hex: {}", e))?;
+        if recipient_bytes.len() != 32 {
+            return Err(format!(
+                "recipient_id must be 32 bytes, got {}",
+                recipient_bytes.len()
+            ));
+        }
+
+        // Validate signature length
+        if self.signature.len() != 64 {
+            return Err(format!(
+                "signature must be 64 bytes, got {}",
+                self.signature.len()
+            ));
+        }
+
+        // Timestamp window check (same window as purge/handshake)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now.abs_diff(self.timestamp) > TIMESTAMP_WINDOW {
+            return Err(format!(
+                "revocation timestamp outside window: now={}, timestamp={}, window={}",
+                now, self.timestamp, TIMESTAMP_WINDOW
+            ));
+        }
+
+        // Reconstruct canonical revocation bytes (must match vauchi-core exactly):
+        // domain_separator(25) || sender_pk(32) || recipient_pk(32) || timestamp_be(8)
+        let mut canonical = Vec::with_capacity(97);
+        canonical.extend_from_slice(REVOCATION_DOMAIN_SEPARATOR);
+        canonical.extend_from_slice(&sender_bytes);
+        canonical.extend_from_slice(&recipient_bytes);
+        canonical.extend_from_slice(&self.timestamp.to_be_bytes());
+
+        // Verify Ed25519 signature using sender's public key
+        let public_key = aws_lc_rs::signature::UnparsedPublicKey::new(
+            &aws_lc_rs::signature::ED25519,
+            &sender_bytes,
+        );
+        public_key
+            .verify(&canonical, &self.signature)
+            .map_err(|_| "revocation signature verification failed".to_string())
     }
 }
