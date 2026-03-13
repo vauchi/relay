@@ -647,8 +647,8 @@ end = "2027-03-10"
 
 [[trusted.tracing-serde]]
 criteria = "safe-to-deploy"
-user-id = 10
-start = "2025-08-29"
+user-id = 172786
+start = "2024-11-01"
 end = "2027-03-10"
 
 [[trusted.tracing-subscriber]]
