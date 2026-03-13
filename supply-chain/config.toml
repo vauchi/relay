@@ -75,8 +75,16 @@ criteria = "safe-to-deploy"
 version = "4.5.60"
 criteria = "safe-to-run"
 
+[[exemptions.clap_builder]]
+version = "4.6.0"
+criteria = "safe-to-run"
+
 [[exemptions.clap_lex]]
 version = "1.0.0"
+criteria = "safe-to-run"
+
+[[exemptions.clap_lex]]
+version = "1.1.0"
 criteria = "safe-to-run"
 
 [[exemptions.criterion]]
@@ -239,6 +247,10 @@ criteria = "safe-to-run"
 version = "1.21.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.once_cell]]
+version = "1.21.4"
+criteria = "safe-to-deploy"
+
 [[exemptions.pem]]
 version = "3.0.6"
 criteria = "safe-to-run"
@@ -349,6 +361,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tempfile]]
 version = "3.26.0"
+criteria = "safe-to-run"
+
+[[exemptions.tempfile]]
+version = "3.27.0"
 criteria = "safe-to-run"
 
 [[exemptions.time]]
