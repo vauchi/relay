@@ -145,31 +145,29 @@ relay_recovery_vouchers_total
 
 # Rate limiting
 relay_rate_limited_total
+
+# Runtime
+relay_panics_total
+
+# Federation (when enabled)
+relay_federation_peers_connected
+relay_federation_peer_connections_total
+relay_federation_peer_connection_errors_total
+relay_federation_offloads_sent_total
+relay_federation_offloads_received_total
+relay_federation_offloads_rejected_total
+relay_federation_hints_active
+relay_federation_hints_stored_total
+relay_federation_hints_expired_total
+relay_federation_drain_notices_total
+relay_federation_rate_limited_total
 ```
 
 ### Grafana Dashboard
 
-Example Prometheus queries for a dashboard:
+Import `deploy/grafana/relay-dashboard.json` into Grafana. It includes panels for connections, messages, storage, and federation.
 
-```promql
-# Connection rate
-rate(relay_connections_total[5m])
-
-# Active connections
-relay_connections_active
-
-# Message throughput
-rate(relay_messages_received_total[5m])
-
-# Error rate
-rate(relay_connection_errors_total[5m]) / rate(relay_connections_total[5m])
-
-# Storage utilization
-relay_blobs_stored
-
-# Rate limiting events
-rate(relay_rate_limited_total[5m])
-```
+For operational runbooks (incident response, maintenance, troubleshooting), see `RUNBOOKS.md`.
 
 ## Security
 

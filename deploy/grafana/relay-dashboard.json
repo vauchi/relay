@@ -1,0 +1,172 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Connections",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "title": "Active Connections",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "targets": [{ "expr": "relay_connections_active", "legendFormat": "active" }],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [
+        { "color": "green", "value": null },
+        { "color": "yellow", "value": 500 },
+        { "color": "red", "value": 900 }
+      ]}}}
+    },
+    {
+      "title": "Connection Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 1 },
+      "targets": [
+        { "expr": "rate(relay_connections_total[5m])", "legendFormat": "connections/s" },
+        { "expr": "rate(relay_connection_errors_total[5m])", "legendFormat": "errors/s" }
+      ]
+    },
+    {
+      "title": "Panics",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 1 },
+      "targets": [{ "expr": "relay_panics_total", "legendFormat": "panics" }],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [
+        { "color": "green", "value": null },
+        { "color": "red", "value": 1 }
+      ]}}}
+    },
+    {
+      "title": "Messages",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "collapsed": false
+    },
+    {
+      "title": "Message Throughput",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "targets": [
+        { "expr": "rate(relay_messages_received_total[5m])", "legendFormat": "received/s" },
+        { "expr": "rate(relay_messages_sent_total[5m])", "legendFormat": "sent/s" },
+        { "expr": "rate(relay_messages_rejected_total[5m])", "legendFormat": "rejected/s" }
+      ]
+    },
+    {
+      "title": "Message Latency (p50/p95/p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(relay_message_duration_seconds_bucket[5m]))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, rate(relay_message_duration_seconds_bucket[5m]))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, rate(relay_message_duration_seconds_bucket[5m]))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }}
+    },
+    {
+      "title": "Rate Limited",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 18 },
+      "targets": [{ "expr": "rate(relay_rate_limited_total[5m])", "legendFormat": "rate limited/s" }]
+    },
+    {
+      "title": "Storage",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "collapsed": false
+    },
+    {
+      "title": "Blobs Stored",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 23 },
+      "targets": [{ "expr": "relay_blobs_stored", "legendFormat": "blobs" }]
+    },
+    {
+      "title": "Blob Lifecycle",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 23 },
+      "targets": [
+        { "expr": "rate(relay_blobs_created_total[5m])", "legendFormat": "created/s" },
+        { "expr": "rate(relay_blobs_delivered_total[5m])", "legendFormat": "delivered/s" },
+        { "expr": "rate(relay_blobs_expired_total[5m])", "legendFormat": "expired/s" }
+      ]
+    },
+    {
+      "title": "Recovery Proofs",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 23 },
+      "targets": [
+        { "expr": "relay_recovery_proofs_active", "legendFormat": "active proofs" },
+        { "expr": "rate(relay_recovery_vouchers_total[5m])", "legendFormat": "vouchers/s" }
+      ]
+    },
+    {
+      "title": "Federation",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 },
+      "collapsed": false
+    },
+    {
+      "title": "Federation Peers",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 32 },
+      "targets": [{ "expr": "relay_federation_peers_connected", "legendFormat": "connected" }],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [
+        { "color": "red", "value": null },
+        { "color": "green", "value": 1 }
+      ]}}}
+    },
+    {
+      "title": "Federation Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 32 },
+      "targets": [
+        { "expr": "rate(relay_federation_peer_connections_total[5m])", "legendFormat": "attempts/s" },
+        { "expr": "rate(relay_federation_peer_connection_errors_total[5m])", "legendFormat": "errors/s" }
+      ]
+    },
+    {
+      "title": "Federation Offloads",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 32 },
+      "targets": [
+        { "expr": "rate(relay_federation_offloads_sent_total[5m])", "legendFormat": "sent/s" },
+        { "expr": "rate(relay_federation_offloads_received_total[5m])", "legendFormat": "received/s" },
+        { "expr": "rate(relay_federation_offloads_rejected_total[5m])", "legendFormat": "rejected/s" }
+      ]
+    },
+    {
+      "title": "Federation Hints",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "targets": [
+        { "expr": "relay_federation_hints_active", "legendFormat": "active" },
+        { "expr": "rate(relay_federation_hints_stored_total[5m])", "legendFormat": "stored/s" },
+        { "expr": "rate(relay_federation_hints_expired_total[5m])", "legendFormat": "expired/s" }
+      ]
+    },
+    {
+      "title": "Federation Health",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "targets": [
+        { "expr": "rate(relay_federation_drain_notices_total[5m])", "legendFormat": "drain notices/s" },
+        { "expr": "rate(relay_federation_rate_limited_total[5m])", "legendFormat": "rate limited/s" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["vauchi", "relay"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Vauchi Relay",
+  "uid": "vauchi-relay",
+  "version": 1
+}

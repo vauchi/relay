@@ -25,6 +25,9 @@ Environment=RELAY_BLOB_TTL_SECS=7776000
 Environment=RELAY_RATE_LIMIT=60
 Environment=RUST_LOG=vauchi_relay=info
 
+# File descriptor limit (1000 max connections + headroom for DB, listener, metrics)
+LimitNOFILE=65536
+
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
