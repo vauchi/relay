@@ -22,6 +22,7 @@ use tokio_tungstenite::{accept_async, connect_async};
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
+use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
@@ -131,6 +132,7 @@ fn make_deps(
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     }
 }
 

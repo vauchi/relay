@@ -525,6 +525,7 @@ mod tests {
         fn make_test_deps() -> ConnectionDeps {
             use crate::connection_registry::ConnectionRegistry;
             use crate::device_sync_storage::SqliteDeviceSyncStore;
+            use crate::metrics::RelayMetrics;
             use crate::rate_limit::RateLimiter;
             use crate::recovery_storage::SqliteRecoveryProofStore;
             use crate::storage::SqliteBlobStore;
@@ -550,6 +551,7 @@ mod tests {
                 delivery_jitter_min_ms: 0,
                 delivery_jitter_max_ms: 0,
                 relay_signing_key: None,
+                metrics: RelayMetrics::new(),
             }
         }
 
@@ -602,6 +604,7 @@ mod tests {
         fn test_handle_encrypted_update_quota_exceeded_returns_failed() {
             use crate::connection_registry::ConnectionRegistry;
             use crate::device_sync_storage::SqliteDeviceSyncStore;
+            use crate::metrics::RelayMetrics;
             use crate::rate_limit::RateLimiter;
             use crate::recovery_storage::SqliteRecoveryProofStore;
             use crate::storage::SqliteBlobStore;
@@ -627,6 +630,7 @@ mod tests {
                 delivery_jitter_min_ms: 0,
                 delivery_jitter_max_ms: 0,
                 relay_signing_key: None,
+                metrics: RelayMetrics::new(),
             };
             let ctx = make_test_context(&deps);
             let recipient_id = "c".repeat(64);

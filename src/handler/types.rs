@@ -12,6 +12,7 @@ use super::verify::protocol;
 use crate::connection_registry::ConnectionRegistry;
 use crate::device_sync_storage::DeviceSyncStore;
 use crate::forwarding_hints::ForwardingHintStore;
+use crate::metrics::RelayMetrics;
 use crate::noise_key::RelaySigningKey;
 use crate::rate_limit::RateLimiter;
 use crate::recovery_storage::RecoveryProofStore;
@@ -62,6 +63,8 @@ pub struct ConnectionDeps {
     /// R-M4: Signing key for authenticating forwarding hints.
     /// Derived from the relay's Noise static key. None if Noise key is absent.
     pub relay_signing_key: Option<Arc<RelaySigningKey>>,
+    /// Prometheus metrics for observability.
+    pub metrics: RelayMetrics,
 }
 
 // =========================================================================

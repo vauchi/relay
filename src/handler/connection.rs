@@ -292,6 +292,8 @@ async fn deliver_pending(
                     warn!("[{}] Failed to send pending blob", ctx.session);
                     return false;
                 }
+                ctx.deps.metrics.blobs_delivered.inc();
+                ctx.deps.metrics.messages_sent.inc();
             }
             Err(e) => {
                 error!("[{}] Failed to encode blob delivery: {}", ctx.session, e);
@@ -458,11 +460,13 @@ async fn process_handle_result(
                 if let Ok(ack_data) = protocol::encode_message(&ack) {
                     let _ =
                         noise_encrypt_and_send(write, ack_data, noise_session, ctx.session).await;
+                    ctx.deps.metrics.messages_sent.inc();
                 }
             }
             HandlerResponse::SendEnvelope(envelope) => {
                 if let Ok(data) = protocol::encode_message(&envelope) {
                     let _ = noise_encrypt_and_send(write, data, noise_session, ctx.session).await;
+                    ctx.deps.metrics.messages_sent.inc();
                 }
             }
             HandlerResponse::ForwardToRegistry { target_id, data } => {
@@ -574,27 +578,37 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         session,
                         plaintext_data.len()
                     );
+                    deps.metrics.messages_rejected.inc();
                     continue;
                 }
 
                 // Rate limit check
                 if !deps.rate_limiter.consume(&routing_id) {
                     warn!("[{}] Rate limited", session);
+                    deps.metrics.rate_limited.inc();
+                    deps.metrics.messages_rejected.inc();
                     continue;
                 }
+
+                deps.metrics.messages_received.inc();
 
                 // Decode message
                 let envelope = match protocol::decode_message(&plaintext_data) {
                     Ok(e) => e,
                     Err(e) => {
                         warn!("[{}] Failed to decode message: {}", session, e);
+                        deps.metrics.messages_rejected.inc();
                         continue;
                     }
                 };
 
                 // Dispatch to the appropriate handler and process responses
+                let timer = std::time::Instant::now();
                 let result = handle_message(&ctx, &envelope);
                 process_handle_result(result, &mut write, &mut noise_session, &ctx).await;
+                deps.metrics
+                    .message_duration
+                    .observe(timer.elapsed().as_secs_f64());
             }
             Ok(Message::Ping(data)) => {
                 let _ = write.send(Message::Pong(data)).await;

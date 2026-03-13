@@ -497,10 +497,27 @@ async fn main() {
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
     let shutdown_for_signal = shutdown_notify.clone();
     tokio::spawn(async move {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to install signal handler");
-        info!("Shutdown signal received, draining connections...");
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    info!("SIGINT received, draining connections...");
+                }
+                _ = sigterm.recv() => {
+                    info!("SIGTERM received, draining connections...");
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("Failed to install signal handler");
+            info!("Shutdown signal received, draining connections...");
+        }
         shutdown_for_signal.notify_waiters();
     });
 
@@ -710,6 +727,7 @@ async fn main() {
                                 delivery_jitter_min_ms: config.security.delivery_jitter_min_ms,
                                 delivery_jitter_max_ms: config.security.delivery_jitter_max_ms,
                                 relay_signing_key: Some(relay_signing_key),
+                                metrics: metrics.clone(),
                             },
                         )
                         .await;

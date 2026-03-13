@@ -32,6 +32,7 @@ use vauchi_relay::federation_protocol::{
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::integrity;
+use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
@@ -361,6 +362,7 @@ fn make_client_deps(
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     }
 }
 

@@ -42,6 +42,10 @@ pub(super) fn handle_encrypted_update(
     let blob = StoredBlob::new(update.ciphertext.clone());
     let blob_id = blob.id.clone();
     deps.storage.store(&update.recipient_id, blob);
+    deps.metrics.blobs_created.inc();
+    deps.metrics
+        .blobs_stored
+        .set(deps.storage.blob_count() as i64);
 
     // Track sender for delivery notification (ephemeral, in-memory only)
     deps.blob_sender_map
@@ -111,6 +115,8 @@ pub(super) fn handle_recovery_proof_store(
     if let Ok(key_hash) = hex_to_hash(&store_msg.key_hash) {
         let proof = StoredRecoveryProof::new(key_hash, store_msg.proof_data.clone());
         ctx.deps.recovery_storage.store(proof);
+        ctx.deps.metrics.recovery_vouchers_total.inc();
+        ctx.deps.metrics.recovery_proofs_active.inc();
 
         debug!("[{}] Stored recovery proof", ctx.session);
         HandleResult::single(HandlerResponse::SendAck {

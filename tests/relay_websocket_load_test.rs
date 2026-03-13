@@ -28,6 +28,7 @@ use tokio_tungstenite::{accept_async, connect_async};
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
+use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
@@ -109,6 +110,7 @@ fn test_deps() -> (
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
     (deps, storage, registry)
 }
@@ -142,6 +144,7 @@ fn test_deps_custom(
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
     (deps, storage, registry)
 }
@@ -183,6 +186,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 delivery_jitter_min_ms: 0,
                 delivery_jitter_max_ms: 0,
                 relay_signing_key: None,
+                metrics: RelayMetrics::new(),
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -570,6 +574,7 @@ async fn test_delivery_notification_latency() {
             delivery_jitter_min_ms: 0,
             delivery_jitter_max_ms: 0,
             relay_signing_key: None,
+            metrics: RelayMetrics::new(),
         }
     };
 

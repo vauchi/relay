@@ -23,6 +23,7 @@ use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
+use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
@@ -245,6 +246,7 @@ fn test_deps() -> (
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
     (deps, storage, registry)
 }
@@ -574,6 +576,7 @@ async fn test_quota_blob_count_exceeded() {
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
 
     let url = start_test_server(deps).await;
@@ -625,6 +628,7 @@ async fn test_quota_byte_limit_exceeded() {
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
 
     let url = start_test_server(deps).await;
@@ -838,6 +842,7 @@ async fn test_delivered_ack_to_sender() {
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -860,6 +865,7 @@ async fn test_delivered_ack_to_sender() {
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
 
     // Spawn both servers
@@ -970,6 +976,7 @@ async fn test_suppress_presence_no_delivered_ack() {
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
     let deps2 = ConnectionDeps {
         storage: storage.clone(),
@@ -992,6 +999,7 @@ async fn test_suppress_presence_no_delivered_ack() {
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
 
     tokio::spawn(async move {
@@ -1197,6 +1205,7 @@ fn test_deps_custom(
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
     (deps, storage, registry, device_sync_storage)
 }
@@ -1254,6 +1263,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 delivery_jitter_min_ms: 0,
                 delivery_jitter_max_ms: 0,
                 relay_signing_key: None,
+                metrics: RelayMetrics::new(),
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -2117,6 +2127,7 @@ async fn test_concurrent_store_and_receive() {
             delivery_jitter_min_ms: 0,
             delivery_jitter_max_ms: 0,
             relay_signing_key: None,
+            metrics: RelayMetrics::new(),
         }
     };
 
@@ -2188,6 +2199,7 @@ async fn test_received_by_recipient_after_delivered_not_forwarded() {
             delivery_jitter_min_ms: 0,
             delivery_jitter_max_ms: 0,
             relay_signing_key: None,
+            metrics: RelayMetrics::new(),
         }
     };
 
@@ -2292,6 +2304,7 @@ async fn test_suppress_presence_blocks_received_by_recipient() {
             delivery_jitter_min_ms: 0,
             delivery_jitter_max_ms: 0,
             relay_signing_key: None,
+            metrics: RelayMetrics::new(),
         }
     };
 
@@ -2632,6 +2645,7 @@ async fn test_nonce_replay_rejected() {
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
 
     let url1 = start_test_server(deps1).await;
@@ -2667,6 +2681,7 @@ async fn test_nonce_replay_rejected() {
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
+        metrics: RelayMetrics::new(),
     };
 
     let url2 = start_test_server(deps2).await;

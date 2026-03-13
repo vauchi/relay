@@ -11,7 +11,6 @@ use std::sync::Arc;
 
 /// Relay server metrics.
 #[derive(Clone)]
-#[allow(dead_code)] // Metrics are registered but some not yet used in handler
 pub struct RelayMetrics {
     /// Registry for all metrics.
     pub registry: Arc<Registry>,
