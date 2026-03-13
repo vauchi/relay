@@ -34,6 +34,7 @@ include:
       - '/ci-templates/mutation.yml'
       - '/ci-templates/benchmark.yml'
       - '/ci-templates/perf.yml'
+      - '/ci-templates/badges.yml'
   # Container scanning is relay-specific (not included in shared security.yml)
   - template: Security/Container-Scanning.gitlab-ci.yml
 
@@ -498,3 +499,10 @@ verify:upstream-prerelease:
   needs: []
   script:
     - cargo nextest run --profile ci --all-targets
+
+# ============================================================
+# Deploy Stage — Badge Pages
+# ============================================================
+
+pages:
+  extends: .badges-pages
