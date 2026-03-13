@@ -368,6 +368,13 @@ user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
 
+[[publisher.tracing-serde]]
+version = "0.2.0"
+when = "2024-11-27"
+user-id = 172786
+user-login = "hds"
+user-name = "Hayden Stainsby"
+
 [[publisher.unicode-ident]]
 version = "1.0.24"
 when = "2026-02-16"
