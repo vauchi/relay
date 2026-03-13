@@ -384,6 +384,7 @@ async fn test_federation_handshake_accepted() {
         peer_registry: peer_registry.clone(),
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -424,6 +425,7 @@ async fn test_federation_handshake_version_mismatch_rejected() {
         peer_registry,
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -477,6 +479,7 @@ async fn test_offload_blob_accepted_under_capacity() {
         peer_registry,
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -524,6 +527,7 @@ async fn test_offload_blob_rejected_integrity_mismatch() {
         peer_registry,
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -564,6 +568,7 @@ async fn test_offload_blob_rejected_hop_count_too_high() {
         peer_registry,
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -609,6 +614,7 @@ async fn test_offload_blob_rejected_at_capacity() {
         peer_registry,
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -649,6 +655,7 @@ async fn test_offload_preserves_created_at_secs() {
         peer_registry,
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -694,6 +701,7 @@ async fn test_offload_increments_hop_count() {
         peer_registry,
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -739,6 +747,7 @@ async fn test_capacity_report_updates_peer_registry() {
         peer_registry: peer_registry.clone(),
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -775,6 +784,7 @@ async fn test_drain_notice_marks_peer_as_draining() {
         peer_registry: peer_registry.clone(),
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -1135,6 +1145,7 @@ async fn test_end_to_end_offload_and_retrieval() {
         peer_registry: relay_b_registry,
         config: relay_b_config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -1299,6 +1310,7 @@ async fn test_multiple_blobs_offloaded_to_peer() {
         peer_registry,
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 
@@ -1343,6 +1355,7 @@ async fn test_peer_disconnect_marks_disconnected() {
         peer_registry: peer_registry.clone(),
         config,
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 

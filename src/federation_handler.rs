@@ -26,6 +26,7 @@ use crate::federation_protocol::{
 };
 use crate::forwarding_hints::ForwardingHintStore;
 use crate::integrity;
+use crate::metrics::RelayMetrics;
 use crate::padding;
 use crate::peer_registry::gossip;
 use crate::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
@@ -56,6 +57,7 @@ pub struct FederationDeps {
     /// Per-peer rate limiter for incoming federation messages.
     /// Prevents a compromised or misbehaving peer from flooding the relay.
     pub federation_rate_limiter: Arc<RateLimiter>,
+    pub metrics: RelayMetrics,
 }
 
 /// Handles an incoming federation WebSocket connection from a peer relay.
@@ -70,6 +72,7 @@ where
         peer_registry,
         config,
         federation_rate_limiter,
+        metrics,
     } = deps;
 
     // Random session label for logging (never log routing_id)
@@ -141,6 +144,7 @@ where
     };
 
     info!("[fed-{}] Peer connected", session);
+    metrics.federation_peers_connected.inc();
 
     // Register peer in PeerRegistry
     let used_bytes = storage.storage_size_bytes();
@@ -202,6 +206,7 @@ where
                 // Per-peer rate limiting for federation messages
                 if !federation_rate_limiter.consume(&peer_relay_id) {
                     warn!("[fed-{}] Federation peer rate limited", session);
+                    metrics.federation_rate_limited.inc();
                     continue;
                 }
 
@@ -224,6 +229,7 @@ where
                     } => {
                         // Reject if hop_count >= 1 (prevent re-offloading)
                         if hop_count >= 1 {
+                            metrics.federation_offloads_rejected.inc();
                             send_federation_msg(
                                 &mut write,
                                 FederationPayload::OffloadAck {
@@ -238,6 +244,7 @@ where
 
                         // Verify integrity (on padded data, as sent)
                         if !integrity::verify_integrity_hash(&blob_data, &integrity_hash) {
+                            metrics.federation_offloads_rejected.inc();
                             send_federation_msg(
                                 &mut write,
                                 FederationPayload::OffloadAck {
@@ -265,6 +272,7 @@ where
                         let usage_ratio =
                             current_usage as f64 / config.storage.max_storage_bytes as f64;
                         if usage_ratio >= config.federation.offload_refuse {
+                            metrics.federation_offloads_rejected.inc();
                             send_federation_msg(
                                 &mut write,
                                 FederationPayload::OffloadAck {
@@ -285,6 +293,7 @@ where
                         );
                         storage.store(&blob_routing_id, blob);
                         offload_count += 1;
+                        metrics.federation_offloads_received.inc();
 
                         // Send acceptance ack
                         send_federation_msg(
@@ -309,6 +318,7 @@ where
                         drain_timeout_secs: _,
                     } => {
                         peer_registry.set_status(&peer_relay_id, PeerStatus::Draining);
+                        metrics.federation_drain_notices.inc();
                         info!("[fed-{}] Peer is draining", session);
                         send_federation_msg(&mut write, FederationPayload::DrainAck).await;
                     }
@@ -381,5 +391,6 @@ where
         );
     }
 
+    metrics.federation_peers_connected.dec();
     peer_registry.set_status(&peer_relay_id, PeerStatus::Disconnected);
 }

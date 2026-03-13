@@ -40,16 +40,21 @@ use vauchi_relay::storage::{create_blob_store, BlobStore, StorageBackend};
 
 #[tokio::main]
 async fn main() {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env().add_directive(
-                "vauchi_relay=info"
-                    .parse()
-                    .expect("hardcoded log directive must be valid"),
-            ),
-        )
-        .init();
+    // Initialize logging (supports RELAY_LOG_FORMAT=json for structured output)
+    let env_filter = tracing_subscriber::EnvFilter::from_default_env().add_directive(
+        "vauchi_relay=info"
+            .parse()
+            .expect("hardcoded log directive must be valid"),
+    );
+    let log_format = std::env::var("RELAY_LOG_FORMAT").unwrap_or_default();
+    if log_format == "json" {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(env_filter)
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    }
 
     // Load configuration
     let config = RelayConfig::from_env();
@@ -146,6 +151,17 @@ async fn main() {
 
     // Initialize metrics
     let metrics = RelayMetrics::new();
+
+    // Install panic hook: log structured error and increment relay_panics_total
+    {
+        let panics_metric = metrics.panics_total.clone();
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            panics_metric.inc();
+            error!("PANIC: {}", panic_info);
+            prev_hook(panic_info);
+        }));
+    }
 
     // Initialize shared state
     let storage: Arc<dyn BlobStore> = Arc::from(create_blob_store(
@@ -245,6 +261,7 @@ async fn main() {
             let config = config.clone();
             let tls_config = tls_client_config.clone();
             let offload_mgr = offload_manager.clone();
+            let conn_metrics = metrics.clone();
             tokio::spawn(async move {
                 federation_connector::maintain_peer_connection(
                     peer_url,
@@ -253,6 +270,7 @@ async fn main() {
                     config,
                     tls_config,
                     Some(offload_mgr),
+                    conn_metrics,
                 )
                 .await;
             });
@@ -271,6 +289,7 @@ async fn main() {
             let fed_peer_registry = peer_registry.clone();
             let fed_config = config.clone();
             let fed_rate_limiter = federation_rate_limiter.clone();
+            let fed_metrics = metrics.clone();
 
             tokio::spawn(async move {
                 let listener = match TcpListener::bind(&mtls_addr).await {
@@ -293,6 +312,7 @@ async fn main() {
                     let peer_registry = fed_peer_registry.clone();
                     let config = fed_config.clone();
                     let federation_rate_limiter = fed_rate_limiter.clone();
+                    let metrics = fed_metrics.clone();
 
                     tokio::spawn(async move {
                         // TLS handshake — rejects peers without valid client cert
@@ -328,6 +348,7 @@ async fn main() {
                                         peer_registry,
                                         config,
                                         federation_rate_limiter,
+                                        metrics,
                                     },
                                 )
                                 .await;
@@ -435,12 +456,16 @@ async fn main() {
 
     // Start cleanup task for recovery proofs
     let cleanup_recovery = recovery_storage.clone();
+    let cleanup_recovery_metrics = metrics.clone();
     tokio::spawn(async move {
         loop {
             // Check every hour for expired proofs
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
             let removed = cleanup_recovery.cleanup_expired();
             if removed > 0 {
+                cleanup_recovery_metrics
+                    .recovery_proofs_active
+                    .sub(removed as i64);
                 info!("Cleaned up {} expired recovery proofs", removed);
             }
         }
@@ -694,6 +719,7 @@ async fn main() {
                                     peer_registry,
                                     config,
                                     federation_rate_limiter,
+                                    metrics: metrics.clone(),
                                 },
                             )
                             .await;

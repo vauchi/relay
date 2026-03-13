@@ -250,6 +250,7 @@ async fn start_federation_server(deps: FederationDeps) -> String {
     let peer_registry = deps.peer_registry;
     let config = deps.config;
     let federation_rate_limiter = deps.federation_rate_limiter;
+    let metrics = deps.metrics;
 
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
@@ -259,6 +260,7 @@ async fn start_federation_server(deps: FederationDeps) -> String {
                 peer_registry: peer_registry.clone(),
                 config: config.clone(),
                 federation_rate_limiter: federation_rate_limiter.clone(),
+                metrics: metrics.clone(),
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -340,6 +342,7 @@ async fn create_relay(
         peer_registry: peer_registry.clone(),
         config: config.clone(),
         federation_rate_limiter: Arc::new(RateLimiter::new(1000)),
+        metrics: RelayMetrics::new(),
     })
     .await;
 

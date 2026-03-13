@@ -52,6 +52,34 @@ pub struct RelayMetrics {
     // Rate limiting
     /// Requests rate limited.
     pub rate_limited: IntCounter,
+
+    // Runtime
+    /// Total panics caught by the panic hook.
+    pub panics_total: IntCounter,
+
+    // Federation metrics
+    /// Current active peer connections.
+    pub federation_peers_connected: IntGauge,
+    /// Total outbound peer connection attempts.
+    pub federation_peer_connections_total: IntCounter,
+    /// Total peer connection errors.
+    pub federation_peer_connection_errors: IntCounter,
+    /// Total blobs offloaded to peers (outbound).
+    pub federation_offloads_sent: IntCounter,
+    /// Total blobs received from peers (inbound).
+    pub federation_offloads_received: IntCounter,
+    /// Total inbound offloads rejected (hop count, integrity, capacity).
+    pub federation_offloads_rejected: IntCounter,
+    /// Current active forwarding hints.
+    pub federation_hints_active: IntGauge,
+    /// Total forwarding hints stored.
+    pub federation_hints_stored: IntCounter,
+    /// Total forwarding hints expired.
+    pub federation_hints_expired: IntCounter,
+    /// Total drain notices received from peers.
+    pub federation_drain_notices: IntCounter,
+    /// Total peer rate-limited messages.
+    pub federation_rate_limited: IntCounter,
 }
 
 impl RelayMetrics {
@@ -148,6 +176,70 @@ impl RelayMetrics {
         ))
         .unwrap();
 
+        // Runtime
+        let panics_total = IntCounter::with_opts(Opts::new(
+            "relay_panics_total",
+            "Total panics caught by panic hook",
+        ))
+        .unwrap();
+
+        // Federation metrics
+        let federation_peers_connected = IntGauge::with_opts(Opts::new(
+            "relay_federation_peers_connected",
+            "Current active peer connections",
+        ))
+        .unwrap();
+        let federation_peer_connections_total = IntCounter::with_opts(Opts::new(
+            "relay_federation_peer_connections_total",
+            "Total outbound peer connection attempts",
+        ))
+        .unwrap();
+        let federation_peer_connection_errors = IntCounter::with_opts(Opts::new(
+            "relay_federation_peer_connection_errors_total",
+            "Total peer connection errors",
+        ))
+        .unwrap();
+        let federation_offloads_sent = IntCounter::with_opts(Opts::new(
+            "relay_federation_offloads_sent_total",
+            "Total blobs offloaded to peers",
+        ))
+        .unwrap();
+        let federation_offloads_received = IntCounter::with_opts(Opts::new(
+            "relay_federation_offloads_received_total",
+            "Total blobs received from peers",
+        ))
+        .unwrap();
+        let federation_offloads_rejected = IntCounter::with_opts(Opts::new(
+            "relay_federation_offloads_rejected_total",
+            "Total inbound offloads rejected",
+        ))
+        .unwrap();
+        let federation_hints_active = IntGauge::with_opts(Opts::new(
+            "relay_federation_hints_active",
+            "Current active forwarding hints",
+        ))
+        .unwrap();
+        let federation_hints_stored = IntCounter::with_opts(Opts::new(
+            "relay_federation_hints_stored_total",
+            "Total forwarding hints stored",
+        ))
+        .unwrap();
+        let federation_hints_expired = IntCounter::with_opts(Opts::new(
+            "relay_federation_hints_expired_total",
+            "Total forwarding hints expired",
+        ))
+        .unwrap();
+        let federation_drain_notices = IntCounter::with_opts(Opts::new(
+            "relay_federation_drain_notices_total",
+            "Total drain notices received from peers",
+        ))
+        .unwrap();
+        let federation_rate_limited = IntCounter::with_opts(Opts::new(
+            "relay_federation_rate_limited_total",
+            "Total peer rate-limited messages",
+        ))
+        .unwrap();
+
         // Register all metrics
         registry
             .register(Box::new(connections_total.clone()))
@@ -181,6 +273,40 @@ impl RelayMetrics {
             .register(Box::new(recovery_vouchers_total.clone()))
             .unwrap();
         registry.register(Box::new(rate_limited.clone())).unwrap();
+        registry.register(Box::new(panics_total.clone())).unwrap();
+        registry
+            .register(Box::new(federation_peers_connected.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(federation_peer_connections_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(federation_peer_connection_errors.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(federation_offloads_sent.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(federation_offloads_received.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(federation_offloads_rejected.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(federation_hints_active.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(federation_hints_stored.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(federation_hints_expired.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(federation_drain_notices.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(federation_rate_limited.clone()))
+            .unwrap();
 
         RelayMetrics {
             registry: Arc::new(registry),
@@ -198,6 +324,18 @@ impl RelayMetrics {
             recovery_proofs_active,
             recovery_vouchers_total,
             rate_limited,
+            panics_total,
+            federation_peers_connected,
+            federation_peer_connections_total,
+            federation_peer_connection_errors,
+            federation_offloads_sent,
+            federation_offloads_received,
+            federation_offloads_rejected,
+            federation_hints_active,
+            federation_hints_stored,
+            federation_hints_expired,
+            federation_drain_notices,
+            federation_rate_limited,
         }
     }
 

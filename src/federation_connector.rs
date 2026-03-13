@@ -22,6 +22,7 @@ use crate::config::RelayConfig;
 use crate::federation_protocol::{self, FederationPayload, FEDERATION_PROTOCOL_VERSION};
 use crate::forwarding_hints::{ForwardingHint, ForwardingHintStore};
 use crate::integrity;
+use crate::metrics::RelayMetrics;
 use crate::padding;
 use crate::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
 use crate::storage::BlobStore;
@@ -36,6 +37,7 @@ pub async fn maintain_peer_connection(
     config: Arc<RelayConfig>,
     tls_client_config: Option<Arc<tokio_rustls::rustls::ClientConfig>>,
     offload_manager: Option<Arc<OffloadManager>>,
+    metrics: RelayMetrics,
 ) {
     let mut backoff_secs = 1u64;
     let max_backoff_secs = 60u64;
@@ -43,6 +45,7 @@ pub async fn maintain_peer_connection(
 
     loop {
         info!("[fed-conn-{}] Connecting to peer {}", session, peer_url);
+        metrics.federation_peer_connections_total.inc();
 
         match try_connect_to_peer(
             &peer_url,
@@ -61,6 +64,7 @@ pub async fn maintain_peer_connection(
             }
             Err(e) => {
                 warn!("[fed-conn-{}] Connection to peer failed: {}", session, e);
+                metrics.federation_peer_connection_errors.inc();
             }
         }
 
@@ -880,7 +884,8 @@ mod tests {
             Arc<RelayConfig>,
             Option<Arc<tokio_rustls::rustls::ClientConfig>>,
             Option<Arc<OffloadManager>>,
-        ) -> _ = |a, b, c, d, e, f| maintain_peer_connection(a, b, c, d, e, f);
+            RelayMetrics,
+        ) -> _ = |a, b, c, d, e, f, g| maintain_peer_connection(a, b, c, d, e, f, g);
         // Verify the function reference is valid (compile-time signature check)
         assert!(std::mem::size_of_val(&fn_ref) > 0);
     }
