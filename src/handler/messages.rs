@@ -25,7 +25,10 @@ pub(super) fn handle_encrypted_update(
     if (deps.quota.max_blobs > 0
         && deps.storage.blob_count_for(&update.recipient_id) >= deps.quota.max_blobs)
         || (deps.quota.max_bytes > 0
-            && deps.storage.storage_size_for(&update.recipient_id) + update.ciphertext.len()
+            && deps
+                .storage
+                .storage_size_for(&update.recipient_id)
+                .saturating_add(update.ciphertext.len())
                 > deps.quota.max_bytes)
     {
         debug!("[{}] Quota exceeded for recipient", ctx.session);
