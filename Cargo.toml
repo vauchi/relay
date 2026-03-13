@@ -32,7 +32,7 @@ hex = "0.4"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # SQLite for persistent storage
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -76,6 +76,13 @@ criterion = "0.5"
 
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"
+
+[profile.release]
+overflow-checks = true   # Catch integer overflows in production
+lto = "thin"             # Link-time optimization (smaller binary)
+panic = "abort"          # Abort on panic (no unwinding in production)
+strip = true             # Strip symbols (smaller binary)
+codegen-units = 1        # Single codegen unit (better optimization)
 
 [[bench]]
 name = "storage_benchmarks"
