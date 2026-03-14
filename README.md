@@ -269,4 +269,4 @@ Vauchi is open source and community-funded — no VC money, no data harvesting.
 
 ## License
 
-MIT
+GPL-3.0-or-later
