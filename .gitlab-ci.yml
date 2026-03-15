@@ -31,6 +31,7 @@ include:
       - '/ci-templates/reuse.yml'
       - '/ci-templates/release.yml'
       - '/ci-templates/test-quality.yml'
+      - '/ci-templates/file-size.yml'
       - '/ci-templates/mutation.yml'
       - '/ci-templates/benchmark.yml'
       - '/ci-templates/perf.yml'
