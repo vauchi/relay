@@ -1,0 +1,5 @@
+# Generated 2026-03-15. Files above error threshold, grandfathered.
+# These files must not grow beyond their baseline. Reduce over time.
+src/handler/mod.rs 1188
+tests/federation_integration_test.rs 1376
+tests/handler_websocket_test.rs 2815
