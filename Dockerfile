@@ -23,31 +23,17 @@ COPY --from=cook /app/target target
 COPY --from=cook /usr/local/cargo /usr/local/cargo
 COPY . ./relay
 RUN cd relay && cargo build --release
-
-# Runtime stage
-FROM debian:bookworm-slim
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-  ca-certificates \
-  curl \
-  libssl3 \
-  && rm -rf /var/lib/apt/lists/*
-
-# Copy binary from builder
-COPY --from=builder /app/relay/target/release/vauchi-relay /usr/local/bin/
-
-# Inject build metadata (passed as --build-arg; defaults to dev placeholder)
+# Prepare build metadata (distroless has no shell, so we do it here)
 ARG BUILD_INFO='{"sha":"development","ref":"local","built":"unknown"}'
-RUN echo "${BUILD_INFO}" > /usr/share/build-info.json
+RUN echo "${BUILD_INFO}" > /tmp/build-info.json \
+    && mkdir -p /tmp/data && chown 65534:65534 /tmp/data
 
-# Create non-root user and data directory
-RUN useradd -r -s /bin/false vauchi \
-  && mkdir -p /data \
-  && chown vauchi:vauchi /data
+# Runtime stage — distroless for minimal attack surface
+FROM gcr.io/distroless/cc-debian12
 
-# Switch to non-root user
-USER vauchi
+COPY --from=builder /app/relay/target/release/vauchi-relay /usr/local/bin/
+COPY --from=builder /tmp/build-info.json /usr/share/build-info.json
+COPY --chown=nonroot:nonroot --from=builder /tmp/data /data
 
 LABEL service="vauchi-relay"
 
@@ -56,6 +42,9 @@ EXPOSE 8080
 
 # Data volume for persistent storage
 VOLUME /data
+
+# Run as non-root (distroless provides uid 65534/nobody)
+USER nonroot
 
 # Environment variables with defaults
 ENV RELAY_LISTEN_ADDR=0.0.0.0:8080
@@ -68,8 +57,7 @@ ENV RELAY_STORAGE_BACKEND=sqlite
 ENV RELAY_DATA_DIR=/data
 ENV RUST_LOG=vauchi_relay=info
 
-# Healthcheck - verify the health endpoint returns 200 OK
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -sf http://localhost:8080/health || exit 1
+# No HEALTHCHECK — distroless has no shell/curl.
+# Kamal uses its own HTTP probe; Kubernetes uses tcpSocket probes.
 
-CMD ["vauchi-relay"]
+ENTRYPOINT ["vauchi-relay"]

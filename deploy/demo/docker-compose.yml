@@ -19,11 +19,8 @@ services:
     volumes:
       - demo-data:/data
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+    # No in-container healthcheck — distroless has no shell/curl.
+    # Use external probes (Docker Swarm, Kamal, or orchestrator-level checks).
 
 volumes:
   demo-data:

@@ -30,7 +30,8 @@ services:
       # Logging
       - RUST_LOG=vauchi_relay=info
     restart: unless-stopped
-    # Healthcheck defined in Dockerfile (TCP port check)
+    # No in-container healthcheck — distroless has no shell/curl.
+    # Kamal uses its own HTTP probe; Kubernetes uses tcpSocket probes.
 
 volumes:
   relay-data:

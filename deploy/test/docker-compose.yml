@@ -16,8 +16,5 @@ services:
       - RELAY_MAX_BLOBS_PER_RECIPIENT=1000
       - RELAY_LOG_LEVEL=debug
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
+    # No in-container healthcheck — distroless has no shell/curl.
+    # Use external probes or wait-for-it scripts in CI.
