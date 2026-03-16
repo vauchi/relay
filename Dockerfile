@@ -11,27 +11,37 @@ RUN cd relay && cargo chef prepare --recipe-path /app/recipe.json
 
 # Cook stage: build dependencies only (cached layer)
 FROM rust:1.93-bookworm AS cook
-RUN cargo install cargo-chef
+RUN cargo install cargo-chef \
+    && apt-get update && apt-get install -y --no-install-recommends \
+       musl-tools cmake clang perl \
+    && rustup target add x86_64-unknown-linux-musl \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
 
 # Build stage: compile the actual source (deps already cached)
 FROM rust:1.93-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+       musl-tools cmake clang perl \
+    && rustup target add x86_64-unknown-linux-musl \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=cook /app/target target
 COPY --from=cook /usr/local/cargo /usr/local/cargo
 COPY . ./relay
-RUN cd relay && cargo build --release
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+RUN cd relay && cargo build --release --target x86_64-unknown-linux-musl
 # Prepare build metadata (distroless has no shell, so we do it here)
 ARG BUILD_INFO='{"sha":"development","ref":"local","built":"unknown"}'
 RUN echo "${BUILD_INFO}" > /tmp/build-info.json \
     && mkdir -p /tmp/data && chown 65534:65534 /tmp/data
 
-# Runtime stage — distroless for minimal attack surface
-FROM gcr.io/distroless/cc-debian12
+# Runtime stage — distroless/static for zero OS-level CVEs
+FROM gcr.io/distroless/static-debian12
 
-COPY --from=builder /app/relay/target/release/vauchi-relay /usr/local/bin/
+COPY --from=builder /app/relay/target/x86_64-unknown-linux-musl/release/vauchi-relay /usr/local/bin/
 COPY --from=builder /tmp/build-info.json /usr/share/build-info.json
 COPY --chown=nonroot:nonroot --from=builder /tmp/data /data
 
