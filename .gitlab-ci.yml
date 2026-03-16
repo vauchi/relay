@@ -313,37 +313,47 @@ smoke:websocket:
       fi
 
       # 3. WebSocket handshake + message exchange using python3
+      #    Protocol: binary WS frame, 4-byte BE length prefix, JSON MessageEnvelope
       python3 -c "
-      import socket, hashlib, base64, struct, os, json
+      import socket, base64, struct, os, json, time
 
-      # Connect
+      # Connect with timeout on all operations
       s = socket.create_connection(('relay', 8080), timeout=5)
+      s.settimeout(5)
 
-      # WebSocket handshake
+      # WebSocket upgrade handshake
       key = base64.b64encode(os.urandom(16)).decode()
       s.sendall(f'GET / HTTP/1.1\r\nHost: relay:8080\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n'.encode())
 
       resp = s.recv(4096).decode()
       assert '101' in resp, f'Expected 101, got: {resp[:80]}'
 
-      # Build v1 Handshake message
+      # Build v1 Handshake as a MessageEnvelope with length-prefixed binary frame
       client_id = 'a' * 64
-      handshake = json.dumps({'type': 'Handshake', 'client_id': client_id, 'protocol_version': 1}).encode()
+      envelope = json.dumps({
+          'version': 1,
+          'message_id': 'smoke-test-1',
+          'timestamp': int(time.time()),
+          'payload': {'type': 'Handshake', 'client_id': client_id}
+      }).encode()
 
-      # Send as WebSocket text frame (masked)
+      # Length-prefix: 4-byte big-endian length + JSON bytes
+      payload = struct.pack('>I', len(envelope)) + envelope
+
+      # Send as WebSocket binary frame (opcode 0x82), masked per RFC 6455
       mask = os.urandom(4)
-      frame = bytearray([0x81])  # FIN + text
-      length = len(handshake)
+      frame = bytearray([0x82])  # FIN + binary
+      length = len(payload)
       if length < 126:
           frame.append(0x80 | length)  # MASK bit + length
       elif length < 65536:
           frame.append(0x80 | 126)
           frame.extend(struct.pack('>H', length))
       frame.extend(mask)
-      frame.extend(bytes(b ^ mask[i % 4] for i, b in enumerate(handshake)))
+      frame.extend(bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
       s.sendall(bytes(frame))
 
-      # Read server response
+      # Read server response (HandshakeAck)
       data = s.recv(4096)
       assert len(data) > 2, f'Expected server response, got {len(data)} bytes'
       print(f'PASS: WebSocket handshake + message exchange ({len(data)} bytes received)')
@@ -401,7 +411,9 @@ dast:zap:
   before_script: []
   script:
     - *wait-for-relay
+    - mkdir -p /zap/wrk
     - zap-baseline.py -t http://relay:8080 -r zap-report.html -J zap-report.json
+    - cp /zap/wrk/zap-report.html /zap/wrk/zap-report.json . 2>/dev/null || true
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
