@@ -319,32 +319,31 @@ dast:zap:
   stage: load
   tags: [docker]
   needs:
-    - job: build:release
-      artifacts: true
+    - job: build:docker
   image:
     name: ghcr.io/zaproxy/zaproxy:stable
     entrypoint: [""]
+  services:
+    - name: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+      alias: relay
+      variables:
+        RELAY_LISTEN_ADDR: "0.0.0.0:8080"
+        RELAY_REQUIRE_NOISE_ENCRYPTION: "false"
+        RELAY_STORAGE_BACKEND: "sqlite"
+        RELAY_DATA_DIR: "/data"
   before_script: []
   script:
     - |
-      RELAY_LISTEN_ADDR=0.0.0.0:8080 \
-      RELAY_REQUIRE_NOISE_ENCRYPTION=false \
-      ./target/release/vauchi-relay &
-      RELAY_PID=$!
-
-      # Wait for relay to be ready (poll health endpoint)
+      # Wait for relay service to be ready
       for i in $(seq 1 30); do
-        curl -sf http://127.0.0.1:8080/health && break
+        curl -sf http://relay:8080/health && break
         sleep 0.5
       done
 
-      # Verify relay is running
-      curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start"; kill $RELAY_PID; exit 1; }
+      curl -sf http://relay:8080/health || { echo "Relay service failed to start"; exit 1; }
 
       # ZAP baseline scan against HTTP endpoints
-      zap-baseline.py -t http://127.0.0.1:8080 -r zap-report.html -J zap-report.json
-
-      kill $RELAY_PID 2>/dev/null || true
+      zap-baseline.py -t http://relay:8080 -r zap-report.html -J zap-report.json
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
