@@ -414,11 +414,10 @@ dast:zap:
   script:
     - *wait-for-relay
     - mkdir -p /zap/wrk
-    # ZAP exits 2 on WARN findings — capture exit code so cp still runs
-    - zap-baseline.py -t http://relay:8080 -r zap-report.html -J zap-report.json; ZAP_EXIT=$?
+    # ZAP exits 1 on FAIL, 2 on WARN. Use || to suppress set -e.
+    - ZAP_EXIT=0; zap-baseline.py -t http://relay:8080 -r zap-report.html -J zap-report.json || ZAP_EXIT=$?
     - cp /zap/wrk/zap-report.html /zap/wrk/zap-report.json . 2>/dev/null || true
-    # Fail only on exit code 1 (FAIL findings), not 2 (WARN only)
-    - if [ "$ZAP_EXIT" -eq 1 ]; then exit 1; fi
+    - if [ "$ZAP_EXIT" -eq 1 ]; then echo "ZAP found FAIL-level issues"; exit 1; fi
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
