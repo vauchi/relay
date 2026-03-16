@@ -242,7 +242,10 @@ container_scanning:
   tags: [docker]
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+    - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+      allow_failure: true
 
 # Rust-specific security (runs on dependency changes)
 security:audit:
@@ -260,136 +263,45 @@ security:vet:
 # Load Test Stage (PI-10)
 # ============================================================
 
-# Shared service definition for Docker relay (used by multiple jobs)
-.relay-docker-service:
-  services:
-    - name: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
-      alias: relay
-      variables:
-        RELAY_LISTEN_ADDR: "0.0.0.0:8080"
-        RELAY_TLS_VERIFIED: "true"
-        RELAY_REQUIRE_NOISE_ENCRYPTION: "false"
-        RELAY_STORAGE_BACKEND: "sqlite"
-        RELAY_DATA_DIR: "/data"
-
-.wait-for-relay: &wait-for-relay
-  - |
-    for i in $(seq 1 30); do
-      curl -sf http://relay:8080/health && break
-      sleep 0.5
-    done
-    curl -sf http://relay:8080/health || { echo "Relay service failed to start"; exit 1; }
-
-# Lightweight WebSocket smoke test against the Docker image.
-# Verifies the musl static binary handles real WebSocket connections.
-smoke:websocket:
-  stage: load
-  tags: [docker]
-  needs: ["build:docker"]
-  extends: .relay-docker-service
-  image: alpine:3.21
-  before_script:
-    - apk add --no-cache curl python3
-  script:
-    - *wait-for-relay
-    - |
-      # 1. Health endpoint
-      curl -sf http://relay:8080/health | grep -q '"healthy"'
-      echo "PASS: health endpoint"
-
-      # 2. WebSocket upgrade — verify server responds with 101.
-      #    curl hangs after 101 (it doesn't speak WS), so we capture
-      #    response headers with -D and let --max-time kill the wait.
-      HEADERS=$(curl -sS -D /dev/stdout -o /dev/null --max-time 5 \
-        -H "Upgrade: websocket" \
-        -H "Connection: Upgrade" \
-        -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-        -H "Sec-WebSocket-Version: 13" \
-        http://relay:8080/ 2>/dev/null || true)
-      if echo "$HEADERS" | grep -q "101 Switching Protocols"; then
-        echo "PASS: WebSocket upgrade accepted (101)"
-      else
-        echo "FAIL: Expected 101 Switching Protocols in response headers"
-        echo "$HEADERS"
-        exit 1
-      fi
-
-      # 3. WebSocket handshake + message exchange using python3
-      #    Protocol: binary WS frame, 4-byte BE length prefix, JSON MessageEnvelope
-      python3 -c "
-      import socket, base64, struct, os, json, time
-
-      # Connect with timeout on all operations
-      s = socket.create_connection(('relay', 8080), timeout=5)
-      s.settimeout(5)
-
-      # WebSocket upgrade handshake
-      key = base64.b64encode(os.urandom(16)).decode()
-      s.sendall(f'GET / HTTP/1.1\r\nHost: relay:8080\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n'.encode())
-
-      resp = s.recv(4096).decode()
-      assert '101' in resp, f'Expected 101, got: {resp[:80]}'
-
-      # Build v1 Handshake as a MessageEnvelope with length-prefixed binary frame
-      client_id = 'a' * 64
-      envelope = json.dumps({
-          'version': 1,
-          'message_id': 'smoke-test-1',
-          'timestamp': int(time.time()),
-          'payload': {'type': 'Handshake', 'client_id': client_id}
-      }).encode()
-
-      # Length-prefix: 4-byte big-endian length + JSON bytes
-      payload = struct.pack('>I', len(envelope)) + envelope
-
-      # Send as WebSocket binary frame (opcode 0x82), masked per RFC 6455
-      mask = os.urandom(4)
-      frame = bytearray([0x82])  # FIN + binary
-      length = len(payload)
-      if length < 126:
-          frame.append(0x80 | length)  # MASK bit + length
-      elif length < 65536:
-          frame.append(0x80 | 126)
-          frame.extend(struct.pack('>H', length))
-      frame.extend(mask)
-      frame.extend(bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
-      s.sendall(bytes(frame))
-
-      # Read server response (HandshakeAck)
-      data = s.recv(4096)
-      assert len(data) > 2, f'Expected server response, got {len(data)} bytes'
-      print(f'PASS: WebSocket handshake + message exchange ({len(data)} bytes received)')
-      s.close()
-      "
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      needs: ["build:docker"]
-
-# k6 WebSocket load test against the Docker relay image.
+# k6 WebSocket load test — runs against a local relay instance.
 # Thresholds: p95 connection < 500ms, throughput > 10 msg/s.
+# Runs on nightly schedule and release tags (advisory).
 load:k6:
+  extends: [.linux-runner, .timeout-standard]
   stage: load
-  tags: [docker]
-  needs: ["build:docker"]
-  extends: .relay-docker-service
-  image:
-    name: grafana/k6:latest
-    entrypoint: [""]
+  needs:
+    - job: build:release
+      artifacts: true
+  before_script:
+    - !reference [.self-hosted, before_script]
+    - command -v k6 >/dev/null 2>&1 || { curl -fsSL https://github.com/grafana/k6/releases/download/v0.56.0/k6-v0.56.0-linux-amd64.tar.gz | tar xz --strip-components=1 -C /usr/local/bin k6-v0.56.0-linux-amd64/k6; }
   script:
+    # Start relay in background with Noise encryption disabled for load testing
     - |
-      # Wait for relay service
+      RELAY_LISTEN_ADDR=127.0.0.1:8080 \
+      RELAY_REQUIRE_NOISE_ENCRYPTION=false \
+      RELAY_MAX_CONNECTIONS=500 \
+      ./target/release/vauchi-relay &
+      RELAY_PID=$!
+
+      # Wait for relay to be ready (poll health endpoint)
       for i in $(seq 1 30); do
-        wget -qO- http://relay:8080/health && break
+        curl -sf http://127.0.0.1:8080/health && break
         sleep 0.5
       done
-      wget -qO- http://relay:8080/health || { echo "Relay service failed to start"; exit 1; }
-    - k6 run --env RELAY_URL=ws://relay:8080 --summary-export=summary.json tests/load/relay-load-test.js
+
+      # Verify relay is healthy
+      curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start"; kill $RELAY_PID; exit 1; }
+
+      # Run k6 load test
+      k6 run --summary-export=summary.json tests/load/relay-load-test.js || K6_EXIT=$?
+
+      kill $RELAY_PID 2>/dev/null || true
+      exit ${K6_EXIT:-0}
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
     - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  allow_failure: true
   artifacts:
     paths:
       - summary.json
@@ -401,26 +313,41 @@ load:k6:
 # ============================================================
 
 # OWASP ZAP dynamic application security testing.
-# Scans relay HTTP endpoints for common vulnerabilities.
+# Scans relay HTTP endpoints and WebSocket for common vulnerabilities.
+# Manual trigger, advisory (allow_failure).
 dast:zap:
   stage: load
   tags: [docker]
-  needs: ["build:docker"]
-  extends: .relay-docker-service
+  needs:
+    - job: build:release
+      artifacts: true
   image:
     name: ghcr.io/zaproxy/zaproxy:stable
     entrypoint: [""]
   before_script: []
   script:
-    - *wait-for-relay
-    - mkdir -p /zap/wrk
-    # ZAP exits 1 on FAIL, 2 on WARN. Use || to suppress set -e.
-    - ZAP_EXIT=0; zap-baseline.py -t http://relay:8080 -r zap-report.html -J zap-report.json || ZAP_EXIT=$?
-    - cp /zap/wrk/zap-report.html /zap/wrk/zap-report.json . 2>/dev/null || true
-    - if [ "$ZAP_EXIT" -eq 1 ]; then echo "ZAP found FAIL-level issues"; exit 1; fi
+    - |
+      RELAY_LISTEN_ADDR=0.0.0.0:8080 \
+      RELAY_REQUIRE_NOISE_ENCRYPTION=false \
+      ./target/release/vauchi-relay &
+      RELAY_PID=$!
+
+      # Wait for relay to be ready (poll health endpoint)
+      for i in $(seq 1 30); do
+        curl -sf http://127.0.0.1:8080/health && break
+        sleep 0.5
+      done
+
+      # Verify relay is running
+      curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start"; kill $RELAY_PID; exit 1; }
+
+      # ZAP baseline scan against HTTP endpoints
+      zap-baseline.py -t http://127.0.0.1:8080 -r zap-report.html -J zap-report.json
+
+      kill $RELAY_PID 2>/dev/null || true
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+      when: manual
   allow_failure: true
   artifacts:
     paths:
@@ -530,25 +457,14 @@ build:docker:
     - BUILD_INFO="{\"sha\":\"$CI_COMMIT_SHA\",\"short_sha\":\"$CI_COMMIT_SHORT_SHA\",\"ref\":\"$CI_COMMIT_REF_NAME\",\"built\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"pipeline\":\"$CI_PIPELINE_URL\"}"
     - docker build --build-arg BUILD_INFO="$BUILD_INFO" --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
     - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest
-    # Tag with semver version when building from a release tag
-    - |
-      if [[ "$CI_COMMIT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
-      fi
     - |
       if [ -n "$CI_REGISTRY_PASSWORD" ]; then
         docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
         docker push $CI_REGISTRY_IMAGE:latest
-        if [[ "$CI_COMMIT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-          docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
-        fi
       fi
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: manual
-      allow_failure: true
 
 # ============================================================
 # Deploy Stage

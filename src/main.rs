@@ -11,12 +11,6 @@
 //! - Rate limiting and abuse prevention
 //! - Recovery proof storage for contact recovery
 
-// Use mimalloc on musl to avoid global lock contention in musl's default malloc.
-// Without this, async Rust servers see 51-700% throughput regression under concurrency.
-#[cfg(target_env = "musl")]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
