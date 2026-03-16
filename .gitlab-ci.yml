@@ -297,18 +297,20 @@ smoke:websocket:
       curl -sf http://relay:8080/health | grep -q '"healthy"'
       echo "PASS: health endpoint"
 
-      # 2. WebSocket upgrade — verify server accepts upgrade and responds
-      #    with 101 Switching Protocols (requires proper WS headers)
-      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+      # 2. WebSocket upgrade — verify server responds with 101.
+      #    curl hangs after 101 (it doesn't speak WS), so we capture
+      #    response headers with -D and let --max-time kill the wait.
+      HEADERS=$(curl -sS -D /dev/stdout -o /dev/null --max-time 5 \
         -H "Upgrade: websocket" \
         -H "Connection: Upgrade" \
         -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
         -H "Sec-WebSocket-Version: 13" \
-        http://relay:8080/)
-      if [ "$HTTP_CODE" = "101" ]; then
+        http://relay:8080/ 2>/dev/null || true)
+      if echo "$HEADERS" | grep -q "101 Switching Protocols"; then
         echo "PASS: WebSocket upgrade accepted (101)"
       else
-        echo "FAIL: Expected 101, got $HTTP_CODE"
+        echo "FAIL: Expected 101 Switching Protocols in response headers"
+        echo "$HEADERS"
         exit 1
       fi
 
