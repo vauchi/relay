@@ -346,11 +346,14 @@ mod tests {
 
     #[test]
     fn test_verify_signed_handshake_bad_signature() {
-        let (pk, nonce, mut sig, ts, _) = make_test_signed_handshake();
-        // Corrupt the signature
-        sig.replace_range(0..2, "ff");
+        let (pk, nonce, sig, ts, _) = make_test_signed_handshake();
+        // Corrupt the signature by XOR-flipping a bit — guaranteed to change it
+        // (replace_range(0..2, "ff") was a no-op when the first byte was already 0xFF)
+        let mut sig_bytes = decode_hex(&sig).unwrap();
+        sig_bytes[0] ^= 0x01;
+        let corrupted_sig: String = sig_bytes.iter().map(|b| format!("{:02x}", b)).collect();
         let tracker = NonceTracker::new();
-        let result = verify_signed_handshake(&pk, &nonce, &sig, ts, &tracker);
+        let result = verify_signed_handshake(&pk, &nonce, &corrupted_sig, ts, &tracker);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "signature verification failed");
     }
