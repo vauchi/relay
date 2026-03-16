@@ -190,6 +190,11 @@ fuzz:nightly:
       FAILED=$(grep -c '^CRASH:' /tmp/fuzz-output.log || true)
       echo "=== Fuzz Summary: Targets=6, Crashes=$FAILED ==="
       [ "$FAILED" -eq 0 ] || exit 1
+  cache:
+    key: fuzz-corpus-relay
+    paths:
+      - fuzz/corpus/
+    policy: pull-push
   artifacts:
     paths:
       - fuzz/artifacts/
