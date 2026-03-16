@@ -267,6 +267,7 @@ security:vet:
       alias: relay
       variables:
         RELAY_LISTEN_ADDR: "0.0.0.0:8080"
+        RELAY_TLS_VERIFIED: "true"
         RELAY_REQUIRE_NOISE_ENCRYPTION: "false"
         RELAY_STORAGE_BACKEND: "sqlite"
         RELAY_DATA_DIR: "/data"
