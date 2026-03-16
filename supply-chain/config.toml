@@ -39,6 +39,10 @@ criteria = "safe-to-deploy"
 version = "1.1.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.anstyle]]
+version = "1.0.14"
+criteria = "safe-to-run"
+
 [[exemptions.asn1-rs]]
 version = "0.7.1"
 criteria = "safe-to-run"
@@ -68,19 +72,11 @@ version = "0.10.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.cc]]
-version = "1.2.56"
+version = "1.2.57"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_builder]]
-version = "4.5.60"
-criteria = "safe-to-run"
-
-[[exemptions.clap_builder]]
 version = "4.6.0"
-criteria = "safe-to-run"
-
-[[exemptions.clap_lex]]
-version = "1.0.0"
 criteria = "safe-to-run"
 
 [[exemptions.clap_lex]]
@@ -255,10 +251,6 @@ criteria = "safe-to-run"
 version = "1.21.3"
 criteria = "safe-to-deploy"
 
-[[exemptions.once_cell]]
-version = "1.21.4"
-criteria = "safe-to-deploy"
-
 [[exemptions.pem]]
 version = "3.0.6"
 criteria = "safe-to-run"
@@ -368,10 +360,6 @@ version = "1.0.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.tempfile]]
-version = "3.26.0"
-criteria = "safe-to-run"
-
-[[exemptions.tempfile]]
 version = "3.27.0"
 criteria = "safe-to-run"
 
@@ -416,7 +404,7 @@ version = "0.1.36"
 criteria = "safe-to-deploy"
 
 [[exemptions.tracing-subscriber]]
-version = "0.3.22"
+version = "0.3.23"
 criteria = "safe-to-deploy"
 
 [[exemptions.tungstenite]]
@@ -468,15 +456,7 @@ version = "0.5.2"
 criteria = "safe-to-run"
 
 [[exemptions.zerocopy]]
-version = "0.8.40"
-criteria = "safe-to-deploy"
-
-[[exemptions.zerocopy]]
 version = "0.8.42"
-criteria = "safe-to-deploy"
-
-[[exemptions.zerocopy-derive]]
-version = "0.8.40"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy-derive]]
