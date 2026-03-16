@@ -242,10 +242,7 @@ container_scanning:
   tags: [docker]
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
-    - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-      allow_failure: true
 
 # Rust-specific security (runs on dependency changes)
 security:audit:
@@ -263,45 +260,123 @@ security:vet:
 # Load Test Stage (PI-10)
 # ============================================================
 
-# k6 WebSocket load test — runs against a local relay instance.
-# Thresholds: p95 connection < 500ms, throughput > 10 msg/s.
-# Runs on nightly schedule and release tags (advisory).
-load:k6:
-  extends: [.linux-runner, .timeout-standard]
-  stage: load
-  needs:
-    - job: build:release
-      artifacts: true
-  before_script:
-    - !reference [.self-hosted, before_script]
-    - command -v k6 >/dev/null 2>&1 || { curl -fsSL https://github.com/grafana/k6/releases/download/v0.56.0/k6-v0.56.0-linux-amd64.tar.gz | tar xz --strip-components=1 -C /usr/local/bin k6-v0.56.0-linux-amd64/k6; }
-  script:
-    # Start relay in background with Noise encryption disabled for load testing
-    - |
-      RELAY_LISTEN_ADDR=127.0.0.1:8080 \
-      RELAY_REQUIRE_NOISE_ENCRYPTION=false \
-      RELAY_MAX_CONNECTIONS=500 \
-      ./target/release/vauchi-relay &
-      RELAY_PID=$!
+# Shared service definition for Docker relay (used by multiple jobs)
+.relay-docker-service:
+  services:
+    - name: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+      alias: relay
+      variables:
+        RELAY_LISTEN_ADDR: "0.0.0.0:8080"
+        RELAY_REQUIRE_NOISE_ENCRYPTION: "false"
+        RELAY_STORAGE_BACKEND: "sqlite"
+        RELAY_DATA_DIR: "/data"
 
-      # Wait for relay to be ready (poll health endpoint)
+.wait-for-relay: &wait-for-relay
+  - |
+    for i in $(seq 1 30); do
+      curl -sf http://relay:8080/health && break
+      sleep 0.5
+    done
+    curl -sf http://relay:8080/health || { echo "Relay service failed to start"; exit 1; }
+
+# Lightweight WebSocket smoke test against the Docker image.
+# Verifies the musl static binary handles real WebSocket connections.
+smoke:websocket:
+  stage: load
+  tags: [docker]
+  needs: ["build:docker"]
+  extends: .relay-docker-service
+  image: alpine:3.21
+  before_script:
+    - apk add --no-cache curl python3
+  script:
+    - *wait-for-relay
+    - |
+      # 1. Health endpoint
+      curl -sf http://relay:8080/health | grep -q '"healthy"'
+      echo "PASS: health endpoint"
+
+      # 2. WebSocket upgrade — verify server accepts upgrade and responds
+      #    with 101 Switching Protocols (requires proper WS headers)
+      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        -H "Upgrade: websocket" \
+        -H "Connection: Upgrade" \
+        -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+        -H "Sec-WebSocket-Version: 13" \
+        http://relay:8080/)
+      if [ "$HTTP_CODE" = "101" ]; then
+        echo "PASS: WebSocket upgrade accepted (101)"
+      else
+        echo "FAIL: Expected 101, got $HTTP_CODE"
+        exit 1
+      fi
+
+      # 3. WebSocket handshake + message exchange using python3
+      python3 -c "
+      import socket, hashlib, base64, struct, os, json
+
+      # Connect
+      s = socket.create_connection(('relay', 8080), timeout=5)
+
+      # WebSocket handshake
+      key = base64.b64encode(os.urandom(16)).decode()
+      s.sendall(f'GET / HTTP/1.1\r\nHost: relay:8080\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n'.encode())
+
+      resp = s.recv(4096).decode()
+      assert '101' in resp, f'Expected 101, got: {resp[:80]}'
+
+      # Build v1 Handshake message
+      client_id = 'a' * 64
+      handshake = json.dumps({'type': 'Handshake', 'client_id': client_id, 'protocol_version': 1}).encode()
+
+      # Send as WebSocket text frame (masked)
+      mask = os.urandom(4)
+      frame = bytearray([0x81])  # FIN + text
+      length = len(handshake)
+      if length < 126:
+          frame.append(0x80 | length)  # MASK bit + length
+      elif length < 65536:
+          frame.append(0x80 | 126)
+          frame.extend(struct.pack('>H', length))
+      frame.extend(mask)
+      frame.extend(bytes(b ^ mask[i % 4] for i, b in enumerate(handshake)))
+      s.sendall(bytes(frame))
+
+      # Read server response
+      data = s.recv(4096)
+      assert len(data) > 2, f'Expected server response, got {len(data)} bytes'
+      print(f'PASS: WebSocket handshake + message exchange ({len(data)} bytes received)')
+      s.close()
+      "
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      needs: ["build:docker"]
+
+# k6 WebSocket load test against the Docker relay image.
+# Thresholds: p95 connection < 500ms, throughput > 10 msg/s.
+load:k6:
+  stage: load
+  tags: [docker]
+  needs: ["build:docker"]
+  extends: .relay-docker-service
+  image:
+    name: grafana/k6:latest
+    entrypoint: [""]
+  script:
+    - |
+      # Wait for relay service
       for i in $(seq 1 30); do
-        curl -sf http://127.0.0.1:8080/health && break
+        wget -qO- http://relay:8080/health && break
         sleep 0.5
       done
-
-      # Verify relay is healthy
-      curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start"; kill $RELAY_PID; exit 1; }
-
-      # Run k6 load test
-      k6 run --summary-export=summary.json tests/load/relay-load-test.js || K6_EXIT=$?
-
-      kill $RELAY_PID 2>/dev/null || true
-      exit ${K6_EXIT:-0}
+      wget -qO- http://relay:8080/health || { echo "Relay service failed to start"; exit 1; }
+    - k6 run --env RELAY_URL=ws://relay:8080 --summary-export=summary.json tests/load/relay-load-test.js
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
-  allow_failure: true
+    - if: $CI_PIPELINE_SOURCE == "schedule"
   artifacts:
     paths:
       - summary.json
@@ -313,40 +388,22 @@ load:k6:
 # ============================================================
 
 # OWASP ZAP dynamic application security testing.
-# Scans relay HTTP endpoints and WebSocket for common vulnerabilities.
-# Manual trigger, advisory (allow_failure).
+# Scans relay HTTP endpoints for common vulnerabilities.
 dast:zap:
   stage: load
   tags: [docker]
-  needs:
-    - job: build:docker
+  needs: ["build:docker"]
+  extends: .relay-docker-service
   image:
     name: ghcr.io/zaproxy/zaproxy:stable
     entrypoint: [""]
-  services:
-    - name: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
-      alias: relay
-      variables:
-        RELAY_LISTEN_ADDR: "0.0.0.0:8080"
-        RELAY_REQUIRE_NOISE_ENCRYPTION: "false"
-        RELAY_STORAGE_BACKEND: "sqlite"
-        RELAY_DATA_DIR: "/data"
   before_script: []
   script:
-    - |
-      # Wait for relay service to be ready
-      for i in $(seq 1 30); do
-        curl -sf http://relay:8080/health && break
-        sleep 0.5
-      done
-
-      curl -sf http://relay:8080/health || { echo "Relay service failed to start"; exit 1; }
-
-      # ZAP baseline scan against HTTP endpoints
-      zap-baseline.py -t http://relay:8080 -r zap-report.html -J zap-report.json
+    - *wait-for-relay
+    - zap-baseline.py -t http://relay:8080 -r zap-report.html -J zap-report.json
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
   allow_failure: true
   artifacts:
     paths:
