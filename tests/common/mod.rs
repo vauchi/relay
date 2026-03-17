@@ -4,6 +4,9 @@
 
 //! Common test utilities for relay integration tests.
 
+#[allow(dead_code, unused_imports)]
+pub mod ws_helpers;
+
 use std::sync::Arc;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
