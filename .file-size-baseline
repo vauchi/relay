@@ -2,8 +2,14 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Generated 2026-03-15. Files above error threshold, grandfathered.
-# These files must not grow beyond their baseline. Reduce over time.
+# Generated 2026-03-15. Updated 2026-03-16 with exemptions from PRB-2026-032.
+# Files must not grow beyond baseline. EXEMPT/SPLIT per PRB-2026-032.
+
+# SPLIT — Phase 1: per-message-type handler files
 src/handler/mod.rs 1188
-tests/federation_integration_test.rs 1376
+
+# SPLIT — Phase 2: split into 7 files by protocol area
 tests/handler_websocket_test.rs 2815
+
+# Grandfathered — below split threshold, monitor
+tests/federation_integration_test.rs 1376
