@@ -56,8 +56,11 @@ async fn main() {
         tracing_subscriber::fmt().with_env_filter(env_filter).init();
     }
 
-    // Load configuration
-    let config = RelayConfig::from_env();
+    // Load configuration (warnings for invalid numeric/address env vars are logged below)
+    let (config, parse_warnings) = RelayConfig::from_env_with_warnings();
+    for warning in &parse_warnings {
+        tracing::warn!("Configuration parse warning: {}", warning);
+    }
 
     // R-C1: Validate configuration and abort on critical errors
     let warnings = config.validate();

@@ -196,45 +196,73 @@ pub struct RelayConfig {
 }
 
 impl RelayConfig {
-    /// Loads configuration from environment variables.
-    pub fn from_env() -> Self {
+    /// Loads configuration from environment variables, collecting parse warnings.
+    ///
+    /// Returns `(config, warnings)` where `warnings` describes any env vars that
+    /// had invalid values and were ignored (falling back to defaults).
+    pub fn from_env_with_warnings() -> (Self, Vec<String>) {
         let mut config = Self::default();
+        let mut warnings: Vec<String> = Vec::new();
 
         // Network configuration
         if let Ok(addr) = std::env::var("RELAY_LISTEN_ADDR") {
-            if let Ok(parsed) = addr.parse() {
-                config.network.listen_addr = parsed;
+            match addr.parse() {
+                Ok(parsed) => config.network.listen_addr = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_LISTEN_ADDR: invalid value '{}', using default {}",
+                    addr, config.network.listen_addr
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_MAX_CONNECTIONS") {
-            if let Ok(parsed) = val.parse() {
-                config.network.max_connections = parsed;
+            match val.parse() {
+                Ok(parsed) => config.network.max_connections = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_MAX_CONNECTIONS: invalid value '{}', using default {}",
+                    val, config.network.max_connections
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_MAX_MESSAGE_SIZE") {
-            if let Ok(parsed) = val.parse() {
-                config.network.max_message_size = parsed;
+            match val.parse() {
+                Ok(parsed) => config.network.max_message_size = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_MAX_MESSAGE_SIZE: invalid value '{}', using default {}",
+                    val, config.network.max_message_size
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_IDLE_TIMEOUT") {
-            if let Ok(parsed) = val.parse() {
-                config.network.idle_timeout_secs = parsed;
+            match val.parse() {
+                Ok(parsed) => config.network.idle_timeout_secs = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_IDLE_TIMEOUT: invalid value '{}', using default {}",
+                    val, config.network.idle_timeout_secs
+                )),
             }
         }
 
         // Storage configuration
         if let Ok(val) = std::env::var("RELAY_BLOB_TTL_SECS") {
-            if let Ok(parsed) = val.parse() {
-                config.storage.blob_ttl_secs = parsed;
+            match val.parse() {
+                Ok(parsed) => config.storage.blob_ttl_secs = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_BLOB_TTL_SECS: invalid value '{}', using default {}",
+                    val, config.storage.blob_ttl_secs
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_CLEANUP_INTERVAL") {
-            if let Ok(parsed) = val.parse() {
-                config.storage.cleanup_interval_secs = parsed;
+            match val.parse() {
+                Ok(parsed) => config.storage.cleanup_interval_secs = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_CLEANUP_INTERVAL: invalid value '{}', using default {}",
+                    val, config.storage.cleanup_interval_secs
+                )),
             }
         }
 
@@ -250,33 +278,53 @@ impl RelayConfig {
         }
 
         if let Ok(val) = std::env::var("RELAY_MAX_BLOBS_PER_USER") {
-            if let Ok(parsed) = val.parse() {
-                config.storage.max_blobs_per_user = parsed;
+            match val.parse() {
+                Ok(parsed) => config.storage.max_blobs_per_user = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_MAX_BLOBS_PER_USER: invalid value '{}', using default {}",
+                    val, config.storage.max_blobs_per_user
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_MAX_STORAGE_PER_USER") {
-            if let Ok(parsed) = val.parse() {
-                config.storage.max_storage_per_user = parsed;
+            match val.parse() {
+                Ok(parsed) => config.storage.max_storage_per_user = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_MAX_STORAGE_PER_USER: invalid value '{}', using default {}",
+                    val, config.storage.max_storage_per_user
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_MAX_STORAGE_BYTES") {
-            if let Ok(parsed) = val.parse() {
-                config.storage.max_storage_bytes = parsed;
+            match val.parse() {
+                Ok(parsed) => config.storage.max_storage_bytes = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_MAX_STORAGE_BYTES: invalid value '{}', using default {}",
+                    val, config.storage.max_storage_bytes
+                )),
             }
         }
 
         // Security configuration
         if let Ok(val) = std::env::var("RELAY_RATE_LIMIT") {
-            if let Ok(parsed) = val.parse() {
-                config.security.rate_limit_per_min = parsed;
+            match val.parse() {
+                Ok(parsed) => config.security.rate_limit_per_min = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_RATE_LIMIT: invalid value '{}', using default {}",
+                    val, config.security.rate_limit_per_min
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_RECOVERY_RATE_LIMIT") {
-            if let Ok(parsed) = val.parse() {
-                config.security.recovery_rate_limit_per_min = parsed;
+            match val.parse() {
+                Ok(parsed) => config.security.recovery_rate_limit_per_min = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_RECOVERY_RATE_LIMIT: invalid value '{}', using default {}",
+                    val, config.security.recovery_rate_limit_per_min
+                )),
             }
         }
 
@@ -285,14 +333,22 @@ impl RelayConfig {
         }
 
         if let Ok(val) = std::env::var("RELAY_DELIVERY_JITTER_MIN_MS") {
-            if let Ok(parsed) = val.parse() {
-                config.security.delivery_jitter_min_ms = parsed;
+            match val.parse() {
+                Ok(parsed) => config.security.delivery_jitter_min_ms = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_DELIVERY_JITTER_MIN_MS: invalid value '{}', using default {}",
+                    val, config.security.delivery_jitter_min_ms
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_DELIVERY_JITTER_MAX_MS") {
-            if let Ok(parsed) = val.parse() {
-                config.security.delivery_jitter_max_ms = parsed;
+            match val.parse() {
+                Ok(parsed) => config.security.delivery_jitter_max_ms = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_DELIVERY_JITTER_MAX_MS: invalid value '{}', using default {}",
+                    val, config.security.delivery_jitter_max_ms
+                )),
             }
         }
 
@@ -310,32 +366,52 @@ impl RelayConfig {
         }
 
         if let Ok(val) = std::env::var("RELAY_FEDERATION_OFFLOAD_THRESHOLD") {
-            if let Ok(parsed) = val.parse() {
-                config.federation.offload_threshold = parsed;
+            match val.parse() {
+                Ok(parsed) => config.federation.offload_threshold = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_FEDERATION_OFFLOAD_THRESHOLD: invalid value '{}', using default {}",
+                    val, config.federation.offload_threshold
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_FEDERATION_OFFLOAD_REFUSE") {
-            if let Ok(parsed) = val.parse() {
-                config.federation.offload_refuse = parsed;
+            match val.parse() {
+                Ok(parsed) => config.federation.offload_refuse = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_FEDERATION_OFFLOAD_REFUSE: invalid value '{}', using default {}",
+                    val, config.federation.offload_refuse
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_FEDERATION_DRAIN_TIMEOUT") {
-            if let Ok(parsed) = val.parse() {
-                config.federation.drain_timeout_secs = parsed;
+            match val.parse() {
+                Ok(parsed) => config.federation.drain_timeout_secs = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_FEDERATION_DRAIN_TIMEOUT: invalid value '{}', using default {}",
+                    val, config.federation.drain_timeout_secs
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_FEDERATION_PEER_TIMEOUT") {
-            if let Ok(parsed) = val.parse() {
-                config.federation.peer_timeout_secs = parsed;
+            match val.parse() {
+                Ok(parsed) => config.federation.peer_timeout_secs = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_FEDERATION_PEER_TIMEOUT: invalid value '{}', using default {}",
+                    val, config.federation.peer_timeout_secs
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_FEDERATION_CAPACITY_INTERVAL") {
-            if let Ok(parsed) = val.parse() {
-                config.federation.capacity_interval_secs = parsed;
+            match val.parse() {
+                Ok(parsed) => config.federation.capacity_interval_secs = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_FEDERATION_CAPACITY_INTERVAL: invalid value '{}', using default {}",
+                    val, config.federation.capacity_interval_secs
+                )),
             }
         }
 
@@ -345,14 +421,22 @@ impl RelayConfig {
         }
 
         if let Ok(val) = std::env::var("RELAY_FEDERATION_GOSSIP_INTERVAL") {
-            if let Ok(parsed) = val.parse() {
-                config.federation.gossip_interval_secs = parsed;
+            match val.parse() {
+                Ok(parsed) => config.federation.gossip_interval_secs = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_FEDERATION_GOSSIP_INTERVAL: invalid value '{}', using default {}",
+                    val, config.federation.gossip_interval_secs
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_FEDERATION_PEER_TTL") {
-            if let Ok(parsed) = val.parse() {
-                config.federation.peer_ttl_secs = parsed;
+            match val.parse() {
+                Ok(parsed) => config.federation.peer_ttl_secs = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_FEDERATION_PEER_TTL: invalid value '{}', using default {}",
+                    val, config.federation.peer_ttl_secs
+                )),
             }
         }
 
@@ -376,20 +460,37 @@ impl RelayConfig {
         }
 
         if let Ok(val) = std::env::var("RELAY_FEDERATION_MTLS_ADDR") {
-            if let Ok(parsed) = val.parse() {
-                config.federation.mtls_addr = Some(parsed);
+            match val.parse() {
+                Ok(parsed) => config.federation.mtls_addr = Some(parsed),
+                Err(_) => warnings.push(format!(
+                    "RELAY_FEDERATION_MTLS_ADDR: invalid value '{}', using default (none)",
+                    val
+                )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_FEDERATION_RATE_LIMIT") {
-            if let Ok(parsed) = val.parse() {
-                config.federation.federation_rate_limit_per_min = parsed;
+            match val.parse() {
+                Ok(parsed) => config.federation.federation_rate_limit_per_min = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_FEDERATION_RATE_LIMIT: invalid value '{}', using default {}",
+                    val, config.federation.federation_rate_limit_per_min
+                )),
             }
         }
 
         // Load or generate relay_id
         config.federation.relay_id = load_relay_id(&config.storage.data_dir);
 
+        (config, warnings)
+    }
+
+    /// Loads configuration from environment variables.
+    ///
+    /// Parse warnings for invalid numeric/address fields are silently discarded.
+    /// Use [`from_env_with_warnings`](Self::from_env_with_warnings) to capture them.
+    pub fn from_env() -> Self {
+        let (config, _warnings) = Self::from_env_with_warnings();
         config
     }
 
@@ -516,432 +617,5 @@ pub fn load_relay_id(data_dir: &Path) -> String {
     id
 }
 
-// INLINE_TEST_REQUIRED: Binary crate without lib.rs - tests cannot be external
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_default_config() {
-        let config = RelayConfig::default();
-
-        assert_eq!(config.network.listen_addr.port(), 8080);
-        assert_eq!(config.network.max_connections, 1000);
-        assert_eq!(config.network.max_message_size, 1_048_576);
-        assert_eq!(config.storage.blob_ttl_secs, 30 * 24 * 60 * 60); // 30 days
-        assert_eq!(config.security.rate_limit_per_min, 60);
-        assert_eq!(config.storage.cleanup_interval_secs, 3600);
-        assert_eq!(config.storage.backend, StorageBackend::Sqlite);
-        assert_eq!(config.storage.data_dir, std::path::PathBuf::from("./data"));
-        assert_eq!(config.storage.max_blobs_per_user, 1000);
-        assert_eq!(config.storage.max_storage_per_user, 50_000_000);
-        assert_eq!(config.security.recovery_rate_limit_per_min, 10);
-    }
-
-    #[test]
-    fn test_blob_ttl_duration() {
-        let config = RelayConfig::default();
-        assert_eq!(config.blob_ttl(), Duration::from_secs(30 * 24 * 60 * 60));
-    }
-
-    #[test]
-    fn test_cleanup_interval_duration() {
-        let config = RelayConfig::default();
-        assert_eq!(config.cleanup_interval(), Duration::from_secs(3600));
-    }
-
-    #[test]
-    fn test_federation_defaults() {
-        let config = RelayConfig::default();
-        assert!(!config.federation.enabled);
-        assert!(config.federation.peers.is_empty());
-        assert!((config.federation.offload_threshold - 0.80).abs() < f64::EPSILON);
-        assert!((config.federation.offload_refuse - 0.95).abs() < f64::EPSILON);
-        assert_eq!(config.federation.drain_timeout_secs, 300);
-        assert_eq!(config.federation.peer_timeout_secs, 30);
-        assert_eq!(config.federation.capacity_interval_secs, 60);
-        assert_eq!(config.storage.max_storage_bytes, 1_073_741_824);
-    }
-
-    #[test]
-    fn test_gossip_defaults() {
-        let config = RelayConfig::default();
-        assert!(!config.federation.gossip_enabled);
-        assert_eq!(config.federation.gossip_interval_secs, 120);
-        assert_eq!(config.federation.peer_ttl_secs, 3600);
-    }
-
-    // Trace: codebase-review-tracker item #44
-    #[test]
-    fn test_validate_gossip_requires_mtls() {
-        let config = RelayConfig {
-            federation: FederationConfig {
-                gossip_enabled: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        // No TLS cert path -> should error
-        let warnings = config.validate();
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.level == ConfigWarningLevel::Error && w.message.contains("mTLS")),
-            "Gossip without mTLS should produce an error"
-        );
-    }
-
-    // Trace: codebase-review-tracker item #44
-    #[test]
-    fn test_validate_gossip_with_mtls_ok() {
-        let config = RelayConfig {
-            federation: FederationConfig {
-                gossip_enabled: true,
-                tls_cert_path: Some("/path/to/cert.pem".to_string()),
-                tls_key_path: Some("/path/to/key.pem".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let warnings = config.validate();
-        assert!(
-            !warnings.iter().any(|w| w.message.contains("mTLS")),
-            "Gossip with mTLS configured should not warn about mTLS"
-        );
-    }
-
-    #[test]
-    fn test_validate_offload_threshold_sanity() {
-        let config = RelayConfig {
-            federation: FederationConfig {
-                offload_threshold: 0.99,
-                offload_refuse: 0.95,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let warnings = config.validate();
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.level == ConfigWarningLevel::Warning && w.message.contains("threshold")),
-            "Inverted threshold should warn"
-        );
-    }
-
-    #[test]
-    fn test_mtls_defaults() {
-        let config = RelayConfig::default();
-        assert!(config.federation.tls_cert_path.is_none());
-        assert!(config.federation.tls_key_path.is_none());
-        assert!(config.federation.tls_ca_path.is_none());
-    }
-
-    /// R-M3: Cert without key is a partial mTLS config — must produce error.
-    #[test]
-    fn test_validate_partial_mtls_cert_without_key() {
-        let config = RelayConfig {
-            federation: FederationConfig {
-                tls_cert_path: Some("/path/to/cert.pem".to_string()),
-                tls_key_path: None,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let warnings = config.validate();
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.level == ConfigWarningLevel::Error && w.message.contains("Partial mTLS")),
-            "R-M3: Cert without key should produce an error about partial mTLS config"
-        );
-    }
-
-    /// R-M3: Key without cert is a partial mTLS config — must produce error.
-    #[test]
-    fn test_validate_partial_mtls_key_without_cert() {
-        let config = RelayConfig {
-            federation: FederationConfig {
-                tls_cert_path: None,
-                tls_key_path: Some("/path/to/key.pem".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let warnings = config.validate();
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.level == ConfigWarningLevel::Error && w.message.contains("Partial mTLS")),
-            "R-M3: Key without cert should produce an error about partial mTLS config"
-        );
-    }
-
-    /// R-M3: Both cert and key present is valid — no partial mTLS error.
-    #[test]
-    fn test_validate_complete_mtls_no_error() {
-        let config = RelayConfig {
-            federation: FederationConfig {
-                tls_cert_path: Some("/path/to/cert.pem".to_string()),
-                tls_key_path: Some("/path/to/key.pem".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let warnings = config.validate();
-        assert!(
-            !warnings.iter().any(|w| w.message.contains("Partial mTLS")),
-            "Complete mTLS config should not produce partial mTLS error"
-        );
-    }
-
-    #[test]
-    fn test_federation_peer_list_parsing() {
-        // Simulate comma-separated peer parsing
-        let peer_str = "ws://relay-a:8080, ws://relay-b:8080 , ws://relay-c:8080";
-        let peers: Vec<String> = peer_str
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        assert_eq!(peers.len(), 3);
-        assert_eq!(peers[0], "ws://relay-a:8080");
-        assert_eq!(peers[1], "ws://relay-b:8080");
-        assert_eq!(peers[2], "ws://relay-c:8080");
-    }
-
-    #[test]
-    fn test_federation_peer_list_empty() {
-        let peer_str = "";
-        let peers: Vec<String> = peer_str
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        assert!(peers.is_empty());
-    }
-
-    #[test]
-    fn test_federation_peer_whitespace_trimming() {
-        let peer_str = "  ws://relay-a:8080  ,  ws://relay-b:8080  ";
-        let peers: Vec<String> = peer_str
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        assert_eq!(peers[0], "ws://relay-a:8080");
-        assert_eq!(peers[1], "ws://relay-b:8080");
-    }
-
-    #[test]
-    fn test_relay_id_file_persistence() {
-        let dir = tempfile::tempdir().unwrap();
-        let data_dir = dir.path();
-
-        // First call: generates and writes
-        let id1 = load_relay_id(data_dir);
-        assert!(!id1.is_empty());
-
-        // Second call: reads from file
-        let id2 = load_relay_id(data_dir);
-        assert_eq!(id1, id2, "relay_id should be stable across calls");
-
-        // Verify file exists
-        let file_content = std::fs::read_to_string(data_dir.join("relay_id")).unwrap();
-        assert_eq!(file_content.trim(), id1);
-    }
-
-    #[test]
-    fn test_relay_id_env_var_overrides_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let data_dir = dir.path();
-
-        // Write a file first
-        std::fs::write(data_dir.join("relay_id"), "file-relay-id").unwrap();
-
-        // Set env var
-        std::env::set_var("RELAY_FEDERATION_RELAY_ID", "env-relay-id");
-        let id = load_relay_id(data_dir);
-        std::env::remove_var("RELAY_FEDERATION_RELAY_ID");
-
-        assert_eq!(id, "env-relay-id");
-    }
-
-    // === Tests for nested config struct layout ===
-
-    #[test]
-    fn test_nested_network_config_defaults() {
-        let config = RelayConfig::default();
-        assert_eq!(config.network.listen_addr.port(), 8080);
-        assert_eq!(config.network.max_connections, 1000);
-        assert_eq!(config.network.max_message_size, 1_048_576);
-        assert_eq!(config.network.idle_timeout_secs, 300);
-    }
-
-    #[test]
-    fn test_nested_storage_config_defaults() {
-        let config = RelayConfig::default();
-        assert_eq!(config.storage.backend, StorageBackend::Sqlite);
-        assert_eq!(config.storage.data_dir, PathBuf::from("./data"));
-        assert_eq!(config.storage.blob_ttl_secs, 30 * 24 * 60 * 60);
-        assert_eq!(config.storage.cleanup_interval_secs, 3600);
-        assert_eq!(config.storage.max_blobs_per_user, 1000);
-        assert_eq!(config.storage.max_storage_per_user, 50_000_000);
-        assert_eq!(config.storage.max_storage_bytes, 1_073_741_824);
-    }
-
-    #[test]
-    fn test_nested_federation_config_defaults() {
-        let config = RelayConfig::default();
-        assert!(!config.federation.enabled);
-        assert!(config.federation.peers.is_empty());
-        assert!((config.federation.offload_threshold - 0.80).abs() < f64::EPSILON);
-        assert!((config.federation.offload_refuse - 0.95).abs() < f64::EPSILON);
-        assert_eq!(config.federation.drain_timeout_secs, 300);
-        assert_eq!(config.federation.peer_timeout_secs, 30);
-        assert_eq!(config.federation.capacity_interval_secs, 60);
-        assert!(!config.federation.gossip_enabled);
-        assert_eq!(config.federation.gossip_interval_secs, 120);
-        assert_eq!(config.federation.peer_ttl_secs, 3600);
-        assert_eq!(config.federation.federation_rate_limit_per_min, 300);
-        assert!(config.federation.tls_cert_path.is_none());
-        assert!(config.federation.tls_key_path.is_none());
-        assert!(config.federation.tls_ca_path.is_none());
-        assert!(config.federation.mtls_addr.is_none());
-        assert!(config.federation.relay_id.is_empty());
-    }
-
-    #[test]
-    fn test_nested_security_config_defaults() {
-        let config = RelayConfig::default();
-        assert_eq!(config.security.rate_limit_per_min, 60);
-        assert_eq!(config.security.recovery_rate_limit_per_min, 10);
-        assert!(config.security.require_noise_encryption);
-        assert_eq!(config.security.delivery_jitter_min_ms, 50);
-        assert_eq!(config.security.delivery_jitter_max_ms, 500);
-    }
-
-    #[test]
-    fn test_nested_config_network_has_idle_timeout_method() {
-        let config = RelayConfig::default();
-        assert_eq!(config.network.idle_timeout(), Duration::from_secs(300));
-    }
-
-    #[test]
-    fn test_nested_config_storage_has_blob_ttl_method() {
-        let config = RelayConfig::default();
-        assert_eq!(
-            config.storage.blob_ttl(),
-            Duration::from_secs(30 * 24 * 60 * 60)
-        );
-    }
-
-    #[test]
-    fn test_nested_config_storage_has_cleanup_interval_method() {
-        let config = RelayConfig::default();
-        assert_eq!(config.storage.cleanup_interval(), Duration::from_secs(3600));
-    }
-
-    #[test]
-    fn test_nested_config_construction_with_overrides() {
-        let config = RelayConfig {
-            network: NetworkConfig {
-                listen_addr: "127.0.0.1:9090".parse().unwrap(),
-                max_connections: 500,
-                ..Default::default()
-            },
-            storage: StorageConfig {
-                backend: StorageBackend::Memory,
-                max_storage_bytes: 512_000,
-                ..Default::default()
-            },
-            federation: FederationConfig {
-                enabled: true,
-                peers: vec!["ws://peer-1:8080".to_string()],
-                offload_threshold: 0.70,
-                ..Default::default()
-            },
-            security: SecurityConfig {
-                rate_limit_per_min: 120,
-                require_noise_encryption: false,
-                ..Default::default()
-            },
-        };
-        assert_eq!(config.network.listen_addr.port(), 9090);
-        assert_eq!(config.network.max_connections, 500);
-        assert_eq!(config.storage.backend, StorageBackend::Memory);
-        assert_eq!(config.storage.max_storage_bytes, 512_000);
-        assert!(config.federation.enabled);
-        assert_eq!(config.federation.peers.len(), 1);
-        assert!((config.federation.offload_threshold - 0.70).abs() < f64::EPSILON);
-        assert_eq!(config.security.rate_limit_per_min, 120);
-        assert!(!config.security.require_noise_encryption);
-    }
-
-    /// validate() returns no warnings for a valid default config.
-    #[test]
-    fn test_validate_default_config_clean() {
-        let config = RelayConfig::default();
-        let warnings = config.validate();
-        assert!(
-            warnings.is_empty(),
-            "Default config should produce no warnings, got: {:?}",
-            warnings.iter().map(|w| &w.message).collect::<Vec<_>>()
-        );
-    }
-
-    /// validate() catches equal thresholds (boundary of >= check).
-    #[test]
-    fn test_validate_offload_threshold_equal() {
-        let config = RelayConfig {
-            federation: FederationConfig {
-                offload_threshold: 0.95,
-                offload_refuse: 0.95,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let warnings = config.validate();
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.level == ConfigWarningLevel::Warning),
-            "Equal threshold/refuse should produce a warning"
-        );
-    }
-
-    /// RelayConfig delegate: idle_timeout()
-    #[test]
-    fn test_relay_config_idle_timeout_delegate() {
-        let config = RelayConfig::default();
-        assert_eq!(config.idle_timeout(), Duration::from_secs(300));
-    }
-
-    /// load_relay_id: empty env var falls through to file/generate.
-    #[test]
-    fn test_relay_id_empty_env_var_ignored() {
-        let dir = tempfile::tempdir().unwrap();
-        let data_dir = dir.path();
-
-        std::env::set_var("RELAY_FEDERATION_RELAY_ID", "");
-        let id = load_relay_id(data_dir);
-        std::env::remove_var("RELAY_FEDERATION_RELAY_ID");
-
-        // Should have generated a UUID, not returned empty string
-        assert!(!id.is_empty(), "Empty env var should be ignored");
-        assert!(id.len() >= 32, "Should be a UUID: {}", id);
-    }
-
-    /// load_relay_id: empty file falls through to generate.
-    #[test]
-    fn test_relay_id_empty_file_regenerates() {
-        let dir = tempfile::tempdir().unwrap();
-        let data_dir = dir.path();
-
-        // Write an empty file
-        std::fs::write(data_dir.join("relay_id"), "").unwrap();
-
-        let id = load_relay_id(data_dir);
-        assert!(!id.is_empty(), "Empty file should trigger regeneration");
-    }
-}
+// Tests live in relay/tests/config_tests.rs (external, uses vauchi_relay::config).
+// The lib.rs exports config as pub mod config, so no inline tests are needed here.
