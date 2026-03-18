@@ -95,6 +95,79 @@ helm install vauchi-relay deploy/helm/vauchi-relay \
   --set ingress.tls[0].hosts[0]=relay.vauchi.example.com
 ```
 
+## Static Binary (musl)
+
+Phase 2 of the distroless migration produces a fully static binary linked against musl libc,
+shrinking the image from ~32.7 MB (`distroless/cc`) to ~11.2 MB (`distroless/static`).
+
+### Binary characteristics
+
+- **Size**: 9.1 MiB on disk
+- **CVEs**: 0 (no shared libraries to scan)
+- **Linking**: static-PIE (`-static -pie`)
+- **Shared library dependencies**: none (`ldd` reports "not a dynamic executable")
+
+### Build requirements (build-time only)
+
+The following packages are needed in the build environment and are **not** present in the
+runtime image:
+
+```
+musl-tools   # provides musl-gcc wrapper and CRT objects
+cmake        # required by aws-lc-rs
+clang        # alternative C compiler used by aws-lc-rs
+perl         # required by aws-lc-rs build scripts
+```
+
+Add the musl target once:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+```
+
+### mimalloc allocator
+
+musl's default `malloc` uses a global lock. Under concurrent load this causes a 51–700%
+throughput regression compared to glibc. The relay links [mimalloc](https://github.com/microsoft/mimalloc)
+as a replacement allocator, reducing the delta to ~13%.
+
+The allocator is enabled via the `mimalloc` Cargo feature and requires no runtime configuration.
+
+### Build command
+
+```bash
+cargo build --release --target x86_64-unknown-linux-musl
+```
+
+No `CC` or `LINKER` environment variable overrides are needed. Rust uses the bundled musl CRT
+objects automatically.
+
+### Runtime image
+
+```
+gcr.io/distroless/static-debian12
+```
+
+This image contains only four Debian packages: `base-files`, `media-types`, `netbase`, `tzdata`.
+There is no shell, no package manager, and no C runtime — the musl binary is fully self-contained.
+
+### Known issues
+
+**Arch Linux musl-gcc SIGSEGV**
+
+On Arch Linux, `musl-gcc` has a spec-file bug that misconfigures `scrt1.o`, causing a SIGSEGV at
+startup. Fix: do not set `CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc`. Let Rust
+resolve the linker automatically — it will use the bundled musl CRT, which is correct.
+
+**Intermittent test failure: `test_relay_id_file_persistence`**
+
+This test fails intermittently when run in parallel due to environment variable pollution.
+The failure is pre-existing and also reproduces on glibc builds. It is not a musl regression.
+Workaround: run the test serially (`cargo nextest run --test-threads=1`) or skip it in CI
+parallel runs.
+
+---
+
 ## Configuration
 
 All configuration via environment variables:
@@ -237,3 +310,16 @@ kubectl logs -l app=vauchi-relay -f
 - Switch from `memory` to `sqlite` storage backend
 - Reduce `RELAY_BLOB_TTL_DAYS`
 - Check for connection leaks
+
+## Ops Validation Checklist (musl static binary)
+
+Complete these steps before promoting the musl image to production:
+
+- [ ] CI Docker build with musl target passes
+- [ ] Container scanning shows 0 CVEs
+- [ ] k6 performance test: p95 latency comparable to glibc baseline
+- [ ] k6 performance test: throughput comparable to glibc baseline
+- [ ] Staging deploy via Kamal succeeds
+- [ ] Federation peer DNS resolution works on musl
+- [ ] 24h production soak test: RSS stable, fd count stable
+- [ ] Production deploy
