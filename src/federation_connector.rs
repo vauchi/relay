@@ -399,6 +399,7 @@ pub struct OffloadManager {
     pub hint_store: Arc<dyn ForwardingHintStore>,
     pub peer_registry: Arc<PeerRegistry>,
     pub config: Arc<RelayConfig>,
+    pub metrics: RelayMetrics,
     /// Blobs sent to peers awaiting acknowledgment. Keyed by blob_id.
     pub pending_offloads:
         Arc<parking_lot::Mutex<std::collections::HashMap<String, PendingOffload>>>,
@@ -479,6 +480,7 @@ impl OffloadManager {
                     },
                 );
             }
+            self.metrics.federation_offloads_sent.inc();
             sent += 1;
         }
 
@@ -510,6 +512,8 @@ impl OffloadManager {
                         expires_at_secs: info.created_at_secs + self.config.storage.blob_ttl_secs,
                     };
                     self.hint_store.store_hint(hint);
+                    self.metrics.federation_hints_stored.inc();
+                    self.metrics.federation_hints_active.inc();
                     debug!("Offload confirmed: blob {} deleted locally", blob_id);
                 }
             } else {
@@ -559,6 +563,7 @@ mod tests {
             hint_store: hint_store.clone(),
             peer_registry: registry,
             config,
+            metrics: RelayMetrics::new(),
             pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 
@@ -582,6 +587,7 @@ mod tests {
             hint_store,
             peer_registry: registry,
             config,
+            metrics: RelayMetrics::new(),
             pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 
@@ -620,6 +626,7 @@ mod tests {
             hint_store: hint_store.clone(),
             peer_registry: registry,
             config,
+            metrics: RelayMetrics::new(),
             pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 
@@ -687,6 +694,7 @@ mod tests {
             hint_store: hint_store.clone(),
             peer_registry: registry,
             config,
+            metrics: RelayMetrics::new(),
             pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 
@@ -764,6 +772,7 @@ mod tests {
             hint_store: hint_store.clone(),
             peer_registry: registry,
             config,
+            metrics: RelayMetrics::new(),
             pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 
@@ -814,6 +823,7 @@ mod tests {
             hint_store,
             peer_registry: registry,
             config,
+            metrics: RelayMetrics::new(),
             pending_offloads: pending,
         };
 
@@ -849,6 +859,7 @@ mod tests {
             hint_store,
             peer_registry: registry,
             config,
+            metrics: RelayMetrics::new(),
             pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         };
 

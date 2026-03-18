@@ -155,6 +155,23 @@ async fn main() {
     // Initialize metrics
     let metrics = RelayMetrics::new();
 
+    // Spawn tokio runtime metrics update task (updates gauges every 15s)
+    {
+        let tokio_metrics = metrics.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                let rt_metrics = tokio::runtime::Handle::current().metrics();
+                tokio_metrics
+                    .tokio_alive_tasks
+                    .set(rt_metrics.num_alive_tasks() as i64);
+                tokio_metrics
+                    .tokio_workers
+                    .set(rt_metrics.num_workers() as i64);
+            }
+        });
+    }
+
     // Install panic hook: log structured error and increment relay_panics_total
     {
         let panics_metric = metrics.panics_total.clone();
@@ -253,6 +270,7 @@ async fn main() {
             hint_store: hint_store.clone(),
             peer_registry: peer_registry.clone(),
             config: config.clone(),
+            metrics: metrics.clone(),
             pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         });
 
@@ -378,12 +396,19 @@ async fn main() {
         // Spawn forwarding hints cleanup task (reuse cleanup_interval timing)
         let cleanup_hints = hint_store.clone();
         let hints_cleanup_interval = config.cleanup_interval();
+        let hints_cleanup_metrics = metrics.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(hints_cleanup_interval).await;
                 let removed = cleanup_hints.cleanup_expired();
                 if removed > 0 {
                     info!("Cleaned up {} expired forwarding hints", removed);
+                    hints_cleanup_metrics
+                        .federation_hints_expired
+                        .inc_by(removed as u64);
+                    hints_cleanup_metrics
+                        .federation_hints_active
+                        .sub(removed as i64);
                 }
             }
         });

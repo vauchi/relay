@@ -644,6 +644,7 @@ async fn test_offload_under_load() {
         hint_store: relay_a.hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry: relay_a.peer_registry.clone(),
         config: relay_a.config.clone(),
+        metrics: RelayMetrics::new(),
         pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
     };
 
@@ -838,6 +839,7 @@ async fn test_federation_reconnection_after_partition() {
         storage: relay_a.storage.clone() as Arc<dyn BlobStore>,
         hint_store: relay_a.hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry: relay_a.peer_registry.clone(),
+        metrics: RelayMetrics::new(),
         config: Arc::new(RelayConfig {
             storage: StorageConfig {
                 max_storage_bytes: 100, // Tiny to force offload attempt
@@ -982,6 +984,7 @@ async fn test_high_volume_offload_batch() {
         hint_store: relay_a.hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry: relay_a.peer_registry.clone(),
         config: relay_a.config.clone(),
+        metrics: RelayMetrics::new(),
         pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
     };
 

@@ -828,6 +828,7 @@ async fn test_offload_manager_below_threshold_does_nothing() {
         hint_store: hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry,
         config,
+        metrics: RelayMetrics::new(),
         pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
     };
 
@@ -852,6 +853,7 @@ async fn test_offload_manager_no_peers_available() {
         hint_store: hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry,
         config,
+        metrics: RelayMetrics::new(),
         pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
     };
 
@@ -892,6 +894,7 @@ async fn test_offload_manager_successful_offload_with_hints() {
         hint_store: hint_store.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry,
         config,
+        metrics: RelayMetrics::new(),
         pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
     };
 
@@ -1252,6 +1255,7 @@ async fn test_end_to_end_offload_with_forwarding_hints() {
         hint_store: relay_a_hints.clone() as Arc<dyn ForwardingHintStore>,
         peer_registry: relay_a_registry,
         config: relay_a_config,
+        metrics: RelayMetrics::new(),
         pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
     };
 
