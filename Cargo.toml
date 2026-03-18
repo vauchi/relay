@@ -40,8 +40,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # HTTP server for health/metrics endpoints
 axum = "0.7"
 
-# Prometheus metrics
-prometheus = "0.14"
+# Prometheus metrics (process feature: process_cpu_seconds, open_fds, rss, vsize, threads)
+prometheus = { version = "0.14", features = ["process"] }
 
 # SHA-256 integrity hashing, Ed25519 signatures, HKDF (FIPS 140-3 Level 1)
 aws-lc-rs = "1.16"

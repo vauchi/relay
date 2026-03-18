@@ -80,6 +80,12 @@ pub struct RelayMetrics {
     pub federation_drain_notices: IntCounter,
     /// Total peer rate-limited messages.
     pub federation_rate_limited: IntCounter,
+
+    // Tokio runtime metrics
+    /// Number of alive async tasks in the tokio runtime.
+    pub tokio_alive_tasks: IntGauge,
+    /// Number of worker threads in the tokio runtime.
+    pub tokio_workers: IntGauge,
 }
 
 impl RelayMetrics {
@@ -308,6 +314,29 @@ impl RelayMetrics {
             .register(Box::new(federation_rate_limited.clone()))
             .unwrap();
 
+        // Register ProcessCollector (Linux only — reads /proc/self/stat)
+        #[cfg(target_os = "linux")]
+        {
+            let pc = prometheus::process_collector::ProcessCollector::for_self();
+            registry.register(Box::new(pc)).unwrap();
+        }
+
+        // Tokio runtime metrics
+        let tokio_alive_tasks = IntGauge::with_opts(Opts::new(
+            "relay_tokio_alive_tasks",
+            "Number of alive async tasks in the tokio runtime",
+        ))
+        .unwrap();
+        let tokio_workers = IntGauge::with_opts(Opts::new(
+            "relay_tokio_workers",
+            "Number of worker threads in the tokio runtime",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(tokio_alive_tasks.clone()))
+            .unwrap();
+        registry.register(Box::new(tokio_workers.clone())).unwrap();
+
         RelayMetrics {
             registry: Arc::new(registry),
             connections_total,
@@ -336,6 +365,8 @@ impl RelayMetrics {
             federation_hints_expired,
             federation_drain_notices,
             federation_rate_limited,
+            tokio_alive_tasks,
+            tokio_workers,
         }
     }
 
