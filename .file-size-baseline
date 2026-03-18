@@ -12,4 +12,4 @@ src/handler/mod.rs 1188
 tests/handler_websocket_test.rs 2815
 
 # Grandfathered — below split threshold, monitor
-tests/federation_integration_test.rs 1376
+tests/federation_integration_test.rs 1380

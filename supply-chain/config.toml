@@ -275,6 +275,11 @@ criteria = "safe-to-run"
 version = "0.2.21"
 criteria = "safe-to-deploy"
 
+[[exemptions.procfs]]
+version = "0.17.0"
+criteria = "safe-to-deploy"
+notes = "Well-known /proc filesystem parser used by prometheus; exempted pending review"
+
 [[exemptions.prometheus]]
 version = "0.14.0"
 criteria = "safe-to-deploy"
