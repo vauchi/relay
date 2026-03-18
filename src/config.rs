@@ -269,7 +269,14 @@ impl RelayConfig {
         if let Ok(val) = std::env::var("RELAY_STORAGE_BACKEND") {
             config.storage.backend = match val.to_lowercase().as_str() {
                 "memory" => StorageBackend::Memory,
-                _ => StorageBackend::Sqlite,
+                "sqlite" => StorageBackend::Sqlite,
+                other => {
+                    warnings.push(format!(
+                        "RELAY_STORAGE_BACKEND: unrecognised value '{}', using default sqlite",
+                        other
+                    ));
+                    StorageBackend::Sqlite
+                }
             };
         }
 

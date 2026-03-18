@@ -179,7 +179,7 @@ All configuration via environment variables:
 | `RELAY_MAX_MESSAGE_SIZE` | `1048576` | Max message size (1MB) |
 | `RELAY_BLOB_TTL_DAYS` | `90` | Blob expiration in days |
 | `RELAY_RATE_LIMIT_PER_MIN` | `60` | Max messages per client per minute |
-| `RELAY_CLEANUP_INTERVAL_SECS` | `3600` | Cleanup interval in seconds |
+| `RELAY_CLEANUP_INTERVAL` | `3600` | Cleanup interval in seconds |
 | `RELAY_STORAGE_BACKEND` | `sqlite` | `memory` or `sqlite` |
 | `RELAY_DATA_DIR` | `/data` | Data directory for SQLite |
 

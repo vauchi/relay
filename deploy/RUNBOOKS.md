@@ -70,9 +70,9 @@ openssl s_client -connect relay.example.com:443 -servername relay.example.com </
 ```bash
 # Generate new certificates (see federation docs)
 # Place in configured paths:
-#   RELAY_MTLS_CERT=/etc/vauchi-relay/federation.crt
-#   RELAY_MTLS_KEY=/etc/vauchi-relay/federation.key
-#   RELAY_MTLS_CA=/etc/vauchi-relay/federation-ca.crt
+#   RELAY_FEDERATION_TLS_CERT=/etc/vauchi-relay/federation.crt
+#   RELAY_FEDERATION_TLS_KEY=/etc/vauchi-relay/federation.key
+#   RELAY_FEDERATION_TLS_CA=/etc/vauchi-relay/federation-ca.crt
 
 # Restart to load new certs
 sudo systemctl restart vauchi-relay
@@ -428,9 +428,9 @@ Client C ─── Relay 1 ──┘
 RELAY_FEDERATION_ENABLED=true
 RELAY_FEDERATION_RELAY_ID=relay-2.example.com
 RELAY_FEDERATION_PEERS=https://relay-1.example.com:8082
-RELAY_MTLS_CERT=/etc/vauchi-relay/federation.crt
-RELAY_MTLS_KEY=/etc/vauchi-relay/federation.key
-RELAY_MTLS_CA=/etc/vauchi-relay/federation-ca.crt
+RELAY_FEDERATION_TLS_CERT=/etc/vauchi-relay/federation.crt
+RELAY_FEDERATION_TLS_KEY=/etc/vauchi-relay/federation.key
+RELAY_FEDERATION_TLS_CA=/etc/vauchi-relay/federation-ca.crt
 
 # On the existing relay: add the new peer
 # Edit service environment to append relay-2 URL to RELAY_FEDERATION_PEERS
@@ -597,9 +597,9 @@ See `DEPLOYMENT.md` for the core set. Additional variables:
 | `RELAY_FEDERATION_ENABLED` | `false` | Enable federation |
 | `RELAY_FEDERATION_RELAY_ID` | | Unique relay identifier |
 | `RELAY_FEDERATION_PEERS` | | Comma-separated peer URLs |
-| `RELAY_MTLS_CERT` | | Federation mTLS cert path |
-| `RELAY_MTLS_KEY` | | Federation mTLS key path |
-| `RELAY_MTLS_CA` | | Federation CA cert path |
+| `RELAY_FEDERATION_TLS_CERT` | | Federation mTLS cert path |
+| `RELAY_FEDERATION_TLS_KEY` | | Federation mTLS key path |
+| `RELAY_FEDERATION_TLS_CA` | | Federation CA cert path |
 | `RELAY_MAX_STORAGE_BYTES` | `10737418240` | Max storage (10GB) |
 
 ### 6.5 File Descriptor Budget

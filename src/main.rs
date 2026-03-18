@@ -405,10 +405,13 @@ async fn main() {
                     info!("Cleaned up {} expired forwarding hints", removed);
                     hints_cleanup_metrics
                         .federation_hints_expired
-                        .inc_by(removed as u64);
+                        .inc_by(removed.try_into().unwrap_or(u64::MAX));
+                    // Note: gauge may transiently go negative due to non-atomic relationship
+                    // between inc() in handle_offload_ack and sub() here. This is a known
+                    // gauge-inaccuracy class in multi-threaded metrics — cosmetic only.
                     hints_cleanup_metrics
                         .federation_hints_active
-                        .sub(removed as i64);
+                        .sub(removed.try_into().unwrap_or(i64::MAX));
                 }
             }
         });

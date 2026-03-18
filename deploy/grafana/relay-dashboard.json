@@ -160,31 +160,6 @@
       ]
     },
     {
-      "title": "Offloads Sent Rate",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 48 },
-      "targets": [
-        { "expr": "rate(relay_federation_offloads_sent_total[5m])", "legendFormat": "sent/s" }
-      ]
-    },
-    {
-      "title": "Hints Active",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 48 },
-      "targets": [
-        { "expr": "relay_federation_hints_active", "legendFormat": "active" }
-      ]
-    },
-    {
-      "title": "Hints Stored / Expired Rates",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
-      "targets": [
-        { "expr": "rate(relay_federation_hints_stored_total[5m])", "legendFormat": "stored/s" },
-        { "expr": "rate(relay_federation_hints_expired_total[5m])", "legendFormat": "expired/s" }
-      ]
-    },
-    {
       "title": "Runtime",
       "type": "row",
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 },
@@ -218,7 +193,7 @@
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 6, "x": 12, "y": 57 },
       "targets": [
-        { "expr": "tokio_alive_tasks", "legendFormat": "active tasks" }
+        { "expr": "relay_tokio_alive_tasks", "legendFormat": "active tasks" }
       ]
     },
     {
@@ -228,7 +203,7 @@
       "targets": [
         { "expr": "rate(process_cpu_seconds_total[5m])", "legendFormat": "cpu" }
       ],
-      "fieldConfig": { "defaults": { "unit": "percentunit" }}
+      "fieldConfig": { "defaults": { "unit": "none" }}
     }
   ],
   "schemaVersion": 39,

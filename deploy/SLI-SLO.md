@@ -89,24 +89,32 @@ histogram_quantile(0.50, rate(relay_message_duration_seconds_bucket[5m]))
 
 ---
 
-### SLI-4 — Federation Delivery Rate
+### SLI-4 — Federation Bidirectional Throughput Balance (TODO: placeholder)
 
-**What it measures**: Fraction of outbound blob offloads that were accepted by peer relays.
+> **TODO**: A proper federation delivery SLI requires a `relay_federation_offloads_acked_total`
+> counter that is incremented when a peer relay explicitly acknowledges successful storage of an
+> offloaded blob. This counter does not exist yet. Until it is added, SLI-4 is a **proxy
+> metric** only — it measures bidirectional federation throughput balance, not delivery success.
 
-**PromQL**:
+**What it measures**: Ratio of inbound federation offloads to outbound federation offloads,
+used as a federation health proxy. A balanced federation has roughly symmetric traffic; a
+large imbalance may indicate a one-sided overload or peer rejection cascade. This does **not**
+measure whether outbound offloads were successfully stored by peers.
+
+**PromQL** (health proxy — not a true delivery SLI):
 ```promql
 rate(relay_federation_offloads_received_total[5m])
 /
 rate(relay_federation_offloads_sent_total[5m])
 ```
 
-**SLO**: >= **99%** over a 30-day window
-
-**Error budget (30d)**: 1% × 30 × 24 × 60 min = **432 minutes** per month
+**SLO**: Not applicable until `relay_federation_offloads_acked_total` is implemented.
 
 **Notes**:
 - Only applicable when `RELAY_FEDERATION_ENABLED=true`.
-- Rejections due to hop-count limits (`relay_federation_offloads_rejected_total`) are expected by design (loop prevention) and may be excluded from SLO calculations if the rejection reason can be labelled.
+- To implement a true delivery SLI: add a `relay_federation_offloads_acked_total` counter
+  incremented on receipt of an explicit ack message from the peer relay, then compute
+  `rate(acked) / rate(sent)` as the delivery success fraction.
 - Returns `NaN` when no federation traffic is present. Suppress alerts when `rate(relay_federation_offloads_sent_total[5m]) == 0`.
 
 ---
@@ -133,7 +141,7 @@ relay_panics_total
 | Delivery success rate | 5m rolling | 30 days |
 | Availability | 30s probe | 30 days |
 | P99 latency | 5m rolling | 30 days |
-| Federation delivery | 5m rolling | 30 days |
+| Federation throughput balance (proxy) | 5m rolling | N/A (pending ack counter) |
 | Panics | instantaneous | rolling (any occurrence) |
 
 ---
@@ -145,7 +153,7 @@ relay_panics_total
 | Delivery success | 99.9% | 43.2 min |
 | Availability | 99.5% | 216 min |
 | P99 latency | < 200ms | 216 min of windows |
-| Federation delivery | 99% | 432 min |
+| Federation throughput balance | N/A (proxy — pending ack counter) | N/A |
 | Panics | 0 | 0 (no budget) |
 
 ---
@@ -231,22 +239,27 @@ Paste these into Alertmanager rules. Adjust `for` durations and routing to match
     description: "P99 is {{ $value | humanizeDuration }}. Check for SQLite contention, connection storms."
 ```
 
-### Alert: Federation Delivery Rate Low
+### Alert: Federation Throughput Imbalance (proxy — not a delivery SLI)
+
+> **Note**: This alert is a placeholder. It fires when inbound federation traffic is
+> significantly below outbound, which may indicate peer rejections or connectivity issues.
+> It does **not** confirm delivery success. Replace with an ack-based alert once
+> `relay_federation_offloads_acked_total` is implemented.
 
 ```yaml
-- alert: RelayFederationDeliveryLow
+- alert: RelayFederationImbalanced
   expr: |
     (
       rate(relay_federation_offloads_received_total[5m])
       / rate(relay_federation_offloads_sent_total[5m])
-    ) < 0.99
+    ) < 0.5
     and rate(relay_federation_offloads_sent_total[5m]) > 0
   for: 10m
   labels:
     severity: warning
   annotations:
-    summary: "Federation delivery rate below SLO (99%)"
-    description: "Rate {{ $value | humanizePercentage }}. Check peer connectivity. See RUNBOOKS.md §2.3 and §2.4."
+    summary: "Federation throughput heavily imbalanced (proxy metric)"
+    description: "Inbound/outbound ratio {{ $value | humanizePercentage }}. Check peer connectivity and relay_federation_offloads_rejected_total. See RUNBOOKS.md §2.3 and §2.4."
 ```
 
 ### Alert: Panic Detected
