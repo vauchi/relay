@@ -158,6 +158,77 @@
         { "expr": "rate(relay_federation_drain_notices_total[5m])", "legendFormat": "drain notices/s" },
         { "expr": "rate(relay_federation_rate_limited_total[5m])", "legendFormat": "rate limited/s" }
       ]
+    },
+    {
+      "title": "Offloads Sent Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 48 },
+      "targets": [
+        { "expr": "rate(relay_federation_offloads_sent_total[5m])", "legendFormat": "sent/s" }
+      ]
+    },
+    {
+      "title": "Hints Active",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 48 },
+      "targets": [
+        { "expr": "relay_federation_hints_active", "legendFormat": "active" }
+      ]
+    },
+    {
+      "title": "Hints Stored / Expired Rates",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
+      "targets": [
+        { "expr": "rate(relay_federation_hints_stored_total[5m])", "legendFormat": "stored/s" },
+        { "expr": "rate(relay_federation_hints_expired_total[5m])", "legendFormat": "expired/s" }
+      ]
+    },
+    {
+      "title": "Runtime",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 },
+      "collapsed": false
+    },
+    {
+      "title": "Process RSS",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 57 },
+      "targets": [
+        { "expr": "process_resident_memory_bytes", "legendFormat": "RSS" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }}
+    },
+    {
+      "title": "Open FDs",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 57 },
+      "targets": [
+        { "expr": "process_open_fds", "legendFormat": "open" },
+        { "expr": "process_max_fds", "legendFormat": "max" }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [
+        { "color": "green", "value": null },
+        { "color": "yellow", "value": 0.8 },
+        { "color": "red", "value": 0.95 }
+      ]}}}
+    },
+    {
+      "title": "Tokio Active Tasks",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 57 },
+      "targets": [
+        { "expr": "tokio_alive_tasks", "legendFormat": "active tasks" }
+      ]
+    },
+    {
+      "title": "CPU Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 57 },
+      "targets": [
+        { "expr": "rate(process_cpu_seconds_total[5m])", "legendFormat": "cpu" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }}
     }
   ],
   "schemaVersion": 39,
