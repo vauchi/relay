@@ -77,6 +77,16 @@ criterion = "0.5"
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"
 
+# Development profile: fast builds, backtraces work (matches core)
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+# Test profile: skip full debug info, reduce binary size ~60%
+[profile.test]
+debug = "line-tables-only"
+split-debuginfo = "off"
+
 [profile.release]
 overflow-checks = true   # Catch integer overflows in production
 lto = "thin"             # Link-time optimization (smaller binary)
