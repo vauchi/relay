@@ -5,7 +5,7 @@
 //! Handshake verification, purge signature verification, revocation signature
 //! verification, and protocol module.
 
-use super::nonce::{decode_hex, NonceTracker};
+use super::nonce::{NonceTracker, decode_hex};
 
 /// Maximum allowed clock skew between client and relay (±60 seconds).
 pub(super) const TIMESTAMP_WINDOW: u64 = 60;

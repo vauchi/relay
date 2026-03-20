@@ -233,8 +233,8 @@ mod tests {
     ) {
         use rcgen::{
             BasicConstraints, CertificateParams, DistinguishedName, DnType,
-            ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose, SanType,
-            PKCS_ECDSA_P256_SHA256,
+            ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose,
+            PKCS_ECDSA_P256_SHA256, SanType,
         };
         use std::io::Write;
 

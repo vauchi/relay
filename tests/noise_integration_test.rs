@@ -14,7 +14,7 @@
 use snow::Builder;
 use vauchi_relay::noise_key::generate_relay_keypair;
 use vauchi_relay::noise_transport::{
-    is_noise_v2_handshake, NoiseResponder, NOISE_PATTERN, V2_MAGIC,
+    NOISE_PATTERN, NoiseResponder, V2_MAGIC, is_noise_v2_handshake,
 };
 
 /// Simulates a core client's NoiseInitiator: creates an NK initiator

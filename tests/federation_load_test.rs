@@ -32,8 +32,8 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
@@ -49,13 +49,13 @@ use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::federation_connector::OffloadManager;
 use vauchi_relay::federation_handler::{self, FederationDeps};
 use vauchi_relay::federation_protocol::{
-    self, AdvertisedPeer, FederationEnvelope, FederationPayload, FEDERATION_PROTOCOL_VERSION,
+    self, AdvertisedPeer, FEDERATION_PROTOCOL_VERSION, FederationEnvelope, FederationPayload,
 };
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::integrity;
 use vauchi_relay::metrics::RelayMetrics;
-use vauchi_relay::peer_registry::{gossip, PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
+use vauchi_relay::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus, gossip};
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};

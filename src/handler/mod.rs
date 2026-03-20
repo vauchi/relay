@@ -16,7 +16,7 @@ mod verify;
 pub use connection::handle_connection;
 pub use nonce::NonceTracker;
 pub use nonce::{
-    hash_to_hex, validate_client_id, MAX_RECOVERY_PROOF_SIZE, MAX_RECOVERY_QUERY_HASHES,
+    MAX_RECOVERY_PROOF_SIZE, MAX_RECOVERY_QUERY_HASHES, hash_to_hex, validate_client_id,
 };
 pub use types::new_blob_sender_map;
 pub use types::{BlobSenderMap, ConnectionDeps, QuotaLimits};

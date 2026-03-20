@@ -15,14 +15,14 @@ use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::timeout;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
 use crate::config::RelayConfig;
 use crate::federation_protocol::{
-    self, create_federation_envelope, encode_federation_message, FederationPayload,
-    FEDERATION_PROTOCOL_VERSION,
+    self, FEDERATION_PROTOCOL_VERSION, FederationPayload, create_federation_envelope,
+    encode_federation_message,
 };
 use crate::forwarding_hints::ForwardingHintStore;
 use crate::integrity;
@@ -172,12 +172,12 @@ where
             capacity_used_bytes: used_bytes,
             capacity_max_bytes: config.storage.max_storage_bytes,
         });
-    if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
-        if write.send(Message::Binary(data)).await.is_err() {
-            warn!("[fed-{}] Failed to send PeerHandshakeAck", session);
-            peer_registry.set_status(&peer_relay_id, PeerStatus::Disconnected);
-            return;
-        }
+    if let Ok(data) = federation_protocol::encode_federation_message(&ack)
+        && write.send(Message::Binary(data)).await.is_err()
+    {
+        warn!("[fed-{}] Failed to send PeerHandshakeAck", session);
+        peer_registry.set_status(&peer_relay_id, PeerStatus::Disconnected);
+        return;
     }
 
     let mut offload_count: usize = 0;

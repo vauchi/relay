@@ -7,8 +7,8 @@
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, warn};
 
 use super::messages::handle_message;
@@ -144,21 +144,21 @@ async fn perform_handshake(
                         return None;
                     }
                     // Validate device_id format if present
-                    if let Some(ref did) = hs.device_id {
-                        if !validate_client_id(did) {
-                            warn!("[{}] Invalid device_id format", session);
-                            return None;
-                        }
+                    if let Some(ref did) = hs.device_id
+                        && !validate_client_id(did)
+                    {
+                        warn!("[{}] Invalid device_id format", session);
+                        return None;
                     }
                     // Validate routing_token format if present
-                    if let Some(ref rt) = hs.routing_token {
-                        if !validate_client_id(rt) {
-                            warn!("[{}] Invalid routing_token format", session);
-                            return None;
-                        }
+                    if let Some(ref rt) = hs.routing_token
+                        && !validate_client_id(rt)
+                    {
+                        warn!("[{}] Invalid routing_token format", session);
+                        return None;
                     }
                     // Verify signed handshake if auth fields are present.
-                    if let (Some(ref pk), Some(ref nonce), Some(ref sig), Some(ts)) = (
+                    if let (Some(pk), Some(nonce), Some(sig), Some(ts)) = (
                         &hs.identity_public_key,
                         &hs.nonce,
                         &hs.signature,
@@ -277,7 +277,7 @@ async fn deliver_pending(
         let envelope = protocol::create_update_delivery(&blob.id, &ctx.routing_id, &blob.data);
         match protocol::encode_message(&envelope) {
             Ok(data) => {
-                let send_data = if let Some(ref mut ns) = noise_session {
+                let send_data = if let Some(ns) = noise_session {
                     match ns.encrypt(&data) {
                         Ok(encrypted) => encrypted,
                         Err(e) => {
@@ -350,7 +350,7 @@ async fn deliver_pending(
                 }),
             };
             if let Ok(data) = protocol::encode_message(&hint_envelope) {
-                let send_data = if let Some(ref mut ns) = noise_session {
+                let send_data = if let Some(ns) = noise_session {
                     match ns.encrypt(&data) {
                         Ok(encrypted) => encrypted,
                         Err(e) => {
@@ -388,7 +388,7 @@ async fn deliver_pending(
             );
             match protocol::encode_message(&envelope) {
                 Ok(data) => {
-                    let send_data = if let Some(ref mut ns) = noise_session {
+                    let send_data = if let Some(ns) = noise_session {
                         match ns.encrypt(&data) {
                             Ok(encrypted) => encrypted,
                             Err(e) => {
@@ -431,7 +431,7 @@ async fn noise_encrypt_and_send(
     noise_session: &mut Option<NoiseTransport>,
     session: &str,
 ) -> Result<(), ()> {
-    let send_data = if let Some(ref mut ns) = noise_session {
+    let send_data = if let Some(ns) = noise_session {
         match ns.encrypt(&data) {
             Ok(encrypted) => encrypted,
             Err(e) => {

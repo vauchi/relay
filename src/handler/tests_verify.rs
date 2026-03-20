@@ -8,7 +8,7 @@
 use super::*;
 
 use nonce::decode_hex;
-use verify::{protocol, verify_signed_handshake, PurgeVerify};
+use verify::{PurgeVerify, protocol, verify_signed_handshake};
 
 use aws_lc_rs::signature::KeyPair;
 

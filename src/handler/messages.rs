@@ -6,9 +6,9 @@
 
 use tracing::{debug, warn};
 
-use super::nonce::{hash_to_hex, hex_to_hash, MAX_RECOVERY_PROOF_SIZE, MAX_RECOVERY_QUERY_HASHES};
+use super::nonce::{MAX_RECOVERY_PROOF_SIZE, MAX_RECOVERY_QUERY_HASHES, hash_to_hex, hex_to_hash};
 use super::types::{HandleResult, HandlerResponse, MessageContext};
-use super::verify::{protocol, PurgeVerify, RevocationVerify};
+use super::verify::{PurgeVerify, RevocationVerify, protocol};
 use crate::device_sync_storage::StoredDeviceSyncMessage;
 use crate::recovery_storage::StoredRecoveryProof;
 use crate::storage::StoredBlob;
@@ -443,7 +443,7 @@ pub(super) fn handle_message(
         protocol::MessagePayload::PurgeRequest(purge) => {
             handle_purge_request(ctx, purge, &envelope.message_id)
         }
-        protocol::MessagePayload::AccountRevoked(ref revoked) => {
+        protocol::MessagePayload::AccountRevoked(revoked) => {
             handle_account_revoked(ctx, revoked, envelope)
         }
         protocol::MessagePayload::PurgeResponse(_) => {

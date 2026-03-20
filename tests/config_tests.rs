@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use vauchi_relay::config::{
-    load_relay_id, ConfigWarningLevel, FederationConfig, NetworkConfig, RelayConfig,
-    SecurityConfig, StorageConfig,
+    ConfigWarningLevel, FederationConfig, NetworkConfig, RelayConfig, SecurityConfig,
+    StorageConfig, load_relay_id,
 };
 use vauchi_relay::storage::StorageBackend;
 
@@ -405,9 +405,11 @@ fn test_relay_id_env_var_overrides_file() {
 
     std::fs::write(data_dir.join("relay_id"), "file-relay-id").unwrap();
 
-    std::env::set_var("RELAY_FEDERATION_RELAY_ID", "env-relay-id");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_FEDERATION_RELAY_ID", "env-relay-id") };
     let id = load_relay_id(data_dir);
-    std::env::remove_var("RELAY_FEDERATION_RELAY_ID");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_FEDERATION_RELAY_ID") };
 
     assert_eq!(id, "env-relay-id");
 }
@@ -418,9 +420,11 @@ fn test_relay_id_empty_env_var_ignored() {
     let dir = tempfile::tempdir().unwrap();
     let data_dir = dir.path();
 
-    std::env::set_var("RELAY_FEDERATION_RELAY_ID", "");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_FEDERATION_RELAY_ID", "") };
     let id = load_relay_id(data_dir);
-    std::env::remove_var("RELAY_FEDERATION_RELAY_ID");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_FEDERATION_RELAY_ID") };
 
     assert!(!id.is_empty(), "Empty env var should be ignored");
     assert!(id.len() >= 32, "Should be a UUID: {}", id);
@@ -451,9 +455,11 @@ fn test_relay_id_empty_file_regenerates() {
 /// Invalid RELAY_MAX_CONNECTIONS produces a warning and keeps the default.
 #[test]
 fn test_parse_warning_max_connections_invalid() {
-    std::env::set_var("RELAY_MAX_CONNECTIONS", "not_a_number");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_MAX_CONNECTIONS", "not_a_number") };
     let (config, warnings) = RelayConfig::from_env_with_warnings();
-    std::env::remove_var("RELAY_MAX_CONNECTIONS");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_MAX_CONNECTIONS") };
 
     assert_eq!(
         config.network.max_connections,
@@ -472,9 +478,11 @@ fn test_parse_warning_max_connections_invalid() {
 /// Valid RELAY_MAX_CONNECTIONS produces no warning and updates the field.
 #[test]
 fn test_no_warning_max_connections_valid() {
-    std::env::set_var("RELAY_MAX_CONNECTIONS", "500");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_MAX_CONNECTIONS", "500") };
     let (config, warnings) = RelayConfig::from_env_with_warnings();
-    std::env::remove_var("RELAY_MAX_CONNECTIONS");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_MAX_CONNECTIONS") };
 
     assert_eq!(config.network.max_connections, 500);
     assert!(
@@ -486,9 +494,11 @@ fn test_no_warning_max_connections_valid() {
 /// Invalid RELAY_LISTEN_ADDR produces a warning and keeps the default.
 #[test]
 fn test_parse_warning_listen_addr_invalid() {
-    std::env::set_var("RELAY_LISTEN_ADDR", "not-an-address");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_LISTEN_ADDR", "not-an-address") };
     let (config, warnings) = RelayConfig::from_env_with_warnings();
-    std::env::remove_var("RELAY_LISTEN_ADDR");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_LISTEN_ADDR") };
 
     assert_eq!(
         config.network.listen_addr,
@@ -506,9 +516,11 @@ fn test_parse_warning_listen_addr_invalid() {
 /// Invalid RELAY_IDLE_TIMEOUT produces a warning.
 #[test]
 fn test_parse_warning_idle_timeout_invalid() {
-    std::env::set_var("RELAY_IDLE_TIMEOUT", "five_minutes");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_IDLE_TIMEOUT", "five_minutes") };
     let (config, warnings) = RelayConfig::from_env_with_warnings();
-    std::env::remove_var("RELAY_IDLE_TIMEOUT");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_IDLE_TIMEOUT") };
 
     assert_eq!(
         config.network.idle_timeout_secs,
@@ -524,9 +536,11 @@ fn test_parse_warning_idle_timeout_invalid() {
 /// Invalid RELAY_MAX_MESSAGE_SIZE produces a warning.
 #[test]
 fn test_parse_warning_max_message_size_invalid() {
-    std::env::set_var("RELAY_MAX_MESSAGE_SIZE", "1mb");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_MAX_MESSAGE_SIZE", "1mb") };
     let (config, warnings) = RelayConfig::from_env_with_warnings();
-    std::env::remove_var("RELAY_MAX_MESSAGE_SIZE");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_MAX_MESSAGE_SIZE") };
 
     assert_eq!(
         config.network.max_message_size,
@@ -544,9 +558,11 @@ fn test_parse_warning_max_message_size_invalid() {
 /// Invalid RELAY_BLOB_TTL_SECS produces a warning.
 #[test]
 fn test_parse_warning_blob_ttl_secs_invalid() {
-    std::env::set_var("RELAY_BLOB_TTL_SECS", "thirty-days");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_BLOB_TTL_SECS", "thirty-days") };
     let (config, warnings) = RelayConfig::from_env_with_warnings();
-    std::env::remove_var("RELAY_BLOB_TTL_SECS");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_BLOB_TTL_SECS") };
 
     assert_eq!(
         config.storage.blob_ttl_secs,
@@ -562,9 +578,11 @@ fn test_parse_warning_blob_ttl_secs_invalid() {
 /// Invalid RELAY_RATE_LIMIT produces a warning.
 #[test]
 fn test_parse_warning_rate_limit_invalid() {
-    std::env::set_var("RELAY_RATE_LIMIT", "unlimited");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_RATE_LIMIT", "unlimited") };
     let (config, warnings) = RelayConfig::from_env_with_warnings();
-    std::env::remove_var("RELAY_RATE_LIMIT");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_RATE_LIMIT") };
 
     assert_eq!(
         config.security.rate_limit_per_min,
@@ -580,9 +598,11 @@ fn test_parse_warning_rate_limit_invalid() {
 /// Invalid RELAY_FEDERATION_OFFLOAD_THRESHOLD produces a warning.
 #[test]
 fn test_parse_warning_offload_threshold_invalid() {
-    std::env::set_var("RELAY_FEDERATION_OFFLOAD_THRESHOLD", "eighty-percent");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_FEDERATION_OFFLOAD_THRESHOLD", "eighty-percent") };
     let (config, warnings) = RelayConfig::from_env_with_warnings();
-    std::env::remove_var("RELAY_FEDERATION_OFFLOAD_THRESHOLD");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_FEDERATION_OFFLOAD_THRESHOLD") };
 
     assert!(
         (config.federation.offload_threshold - 0.80).abs() < f64::EPSILON,
@@ -600,9 +620,11 @@ fn test_parse_warning_offload_threshold_invalid() {
 /// Invalid RELAY_FEDERATION_MTLS_ADDR produces a warning and leaves mtls_addr as None.
 #[test]
 fn test_parse_warning_mtls_addr_invalid() {
-    std::env::set_var("RELAY_FEDERATION_MTLS_ADDR", "bad-addr:xyz");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_FEDERATION_MTLS_ADDR", "bad-addr:xyz") };
     let (config, warnings) = RelayConfig::from_env_with_warnings();
-    std::env::remove_var("RELAY_FEDERATION_MTLS_ADDR");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_FEDERATION_MTLS_ADDR") };
 
     assert!(
         config.federation.mtls_addr.is_none(),
@@ -620,13 +642,19 @@ fn test_parse_warning_mtls_addr_invalid() {
 /// Multiple invalid env vars produce one warning each.
 #[test]
 fn test_parse_warnings_multiple_invalid_vars() {
-    std::env::set_var("RELAY_MAX_CONNECTIONS", "abc");
-    std::env::set_var("RELAY_RATE_LIMIT", "xyz");
-    std::env::set_var("RELAY_BLOB_TTL_SECS", "forever");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_MAX_CONNECTIONS", "abc") };
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_RATE_LIMIT", "xyz") };
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_BLOB_TTL_SECS", "forever") };
     let (_config, warnings) = RelayConfig::from_env_with_warnings();
-    std::env::remove_var("RELAY_MAX_CONNECTIONS");
-    std::env::remove_var("RELAY_RATE_LIMIT");
-    std::env::remove_var("RELAY_BLOB_TTL_SECS");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_MAX_CONNECTIONS") };
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_RATE_LIMIT") };
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_BLOB_TTL_SECS") };
 
     assert!(
         warnings.iter().any(|w| w.contains("RELAY_MAX_CONNECTIONS")),
@@ -651,9 +679,11 @@ fn test_parse_warnings_multiple_invalid_vars() {
 #[test]
 fn test_from_env_wrapper_still_works() {
     // Even with a bad env var, from_env() must not panic — it discards warnings silently.
-    std::env::set_var("RELAY_MAX_CONNECTIONS", "not_a_number");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_MAX_CONNECTIONS", "not_a_number") };
     let config = RelayConfig::from_env();
-    std::env::remove_var("RELAY_MAX_CONNECTIONS");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_MAX_CONNECTIONS") };
 
     assert_eq!(
         config.network.max_connections,
@@ -665,9 +695,11 @@ fn test_from_env_wrapper_still_works() {
 /// Warning message format: must include env var name, bad value, and default.
 #[test]
 fn test_warning_message_format() {
-    std::env::set_var("RELAY_MAX_CONNECTIONS", "bad_val");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("RELAY_MAX_CONNECTIONS", "bad_val") };
     let (_config, warnings) = RelayConfig::from_env_with_warnings();
-    std::env::remove_var("RELAY_MAX_CONNECTIONS");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("RELAY_MAX_CONNECTIONS") };
 
     let warning = warnings
         .iter()

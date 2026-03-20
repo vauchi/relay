@@ -14,7 +14,7 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 /// A stored device sync message.
 #[derive(Debug, Clone)]

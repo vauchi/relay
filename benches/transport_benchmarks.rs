@@ -4,10 +4,10 @@
 
 //! Criterion benchmarks for relay transport, integrity, and padding hot paths.
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use vauchi_relay::integrity::{compute_integrity_hash, verify_integrity_hash};
 use vauchi_relay::noise_key::generate_relay_keypair;
-use vauchi_relay::noise_transport::{NoiseResponder, NoiseTransport, NOISE_PATTERN};
+use vauchi_relay::noise_transport::{NOISE_PATTERN, NoiseResponder, NoiseTransport};
 use vauchi_relay::padding::{pad, unpad};
 
 /// Performs a full NK handshake (initiator built manually since test_handshake

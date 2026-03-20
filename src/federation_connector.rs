@@ -14,12 +14,12 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
 use crate::config::RelayConfig;
-use crate::federation_protocol::{self, FederationPayload, FEDERATION_PROTOCOL_VERSION};
+use crate::federation_protocol::{self, FEDERATION_PROTOCOL_VERSION, FederationPayload};
 use crate::forwarding_hints::{ForwardingHint, ForwardingHintStore};
 use crate::integrity;
 use crate::metrics::RelayMetrics;
@@ -349,10 +349,10 @@ where
                         if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
                             // Use the sender channel
                             let peers = peer_registry.connected_peers();
-                            if let Some(peer) = peers.iter().find(|p| p.relay_id == peer_relay_id) {
-                                if let Some(ref sender) = peer.sender {
-                                    let _ = sender.send(data).await;
-                                }
+                            if let Some(peer) = peers.iter().find(|p| p.relay_id == peer_relay_id)
+                                && let Some(ref sender) = peer.sender
+                            {
+                                let _ = sender.send(data).await;
                             }
                         }
                     }

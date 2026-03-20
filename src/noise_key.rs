@@ -7,8 +7,8 @@
 //! Generates, persists, and loads the relay's static X25519 keypair
 //! used for Noise NK inner transport encryption.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use std::path::Path;
 use vauchi_protocol as protocol;
 use zeroize::Zeroize;
@@ -104,16 +104,15 @@ pub fn load_keypair(data_dir: &Path) -> std::io::Result<RelayKeypair> {
 /// 3. Generate new keypair and save to file
 pub fn load_or_generate_keypair(data_dir: &Path) -> RelayKeypair {
     // 1. Check env var override (base64url-encoded 64 bytes: private + public)
-    if let Ok(key_b64) = std::env::var("RELAY_NOISE_STATIC_KEY") {
-        if let Ok(key_bytes) = URL_SAFE_NO_PAD.decode(&key_b64) {
-            if key_bytes.len() == KEY_FILE_SIZE {
-                let mut private = [0u8; 32];
-                let mut public = [0u8; 32];
-                private.copy_from_slice(&key_bytes[..32]);
-                public.copy_from_slice(&key_bytes[32..]);
-                return RelayKeypair { private, public };
-            }
-        }
+    if let Ok(key_b64) = std::env::var("RELAY_NOISE_STATIC_KEY")
+        && let Ok(key_bytes) = URL_SAFE_NO_PAD.decode(&key_b64)
+        && key_bytes.len() == KEY_FILE_SIZE
+    {
+        let mut private = [0u8; 32];
+        let mut public = [0u8; 32];
+        private.copy_from_slice(&key_bytes[..32]);
+        public.copy_from_slice(&key_bytes[32..]);
+        return RelayKeypair { private, public };
     }
 
     // 2. Try loading from file
@@ -244,7 +243,8 @@ mod tests {
     #[test]
     fn test_load_or_generate_is_stable() {
         // Ensure no env var interference from parallel tests
-        std::env::remove_var("RELAY_NOISE_STATIC_KEY");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("RELAY_NOISE_STATIC_KEY") };
 
         let dir = tempdir().unwrap();
         let kp1 = load_or_generate_keypair(dir.path());
@@ -267,10 +267,12 @@ mod tests {
         env_key_bytes.extend_from_slice(&env_kp.private);
         env_key_bytes.extend_from_slice(&env_kp.public);
         let env_key_b64 = URL_SAFE_NO_PAD.encode(&env_key_bytes);
-        std::env::set_var("RELAY_NOISE_STATIC_KEY", &env_key_b64);
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("RELAY_NOISE_STATIC_KEY", &env_key_b64) };
 
         let loaded = load_or_generate_keypair(dir.path());
-        std::env::remove_var("RELAY_NOISE_STATIC_KEY");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("RELAY_NOISE_STATIC_KEY") };
 
         assert_eq!(loaded.private, env_kp.private);
         assert_ne!(loaded.private, file_kp.private);

@@ -9,12 +9,12 @@
 use std::sync::OnceLock;
 
 use axum::{
+    Json, Router,
     extract::State,
-    http::{header, Request, StatusCode},
+    http::{Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
 use subtle::ConstantTimeEq;
 
@@ -57,33 +57,33 @@ async fn metrics_auth_middleware(
     next: Next,
 ) -> Response {
     // Only check auth for /metrics endpoint
-    if request.uri().path() == "/metrics" {
-        if let Some(ref expected_token) = state.metrics_token {
-            // Check Authorization header
-            let auth_header = request.headers().get(header::AUTHORIZATION);
-            let is_authorized = auth_header.is_some_and(|h| {
-                h.to_str()
-                    .map(|s| {
-                        s.strip_prefix("Bearer ").is_some_and(|token| {
-                            // R-C4: Use constant-time comparison to prevent timing attacks
-                            token
-                                .as_bytes()
-                                .ct_eq(expected_token.as_bytes())
-                                .unwrap_u8()
-                                == 1
-                        })
+    if request.uri().path() == "/metrics"
+        && let Some(ref expected_token) = state.metrics_token
+    {
+        // Check Authorization header
+        let auth_header = request.headers().get(header::AUTHORIZATION);
+        let is_authorized = auth_header.is_some_and(|h| {
+            h.to_str()
+                .map(|s| {
+                    s.strip_prefix("Bearer ").is_some_and(|token| {
+                        // R-C4: Use constant-time comparison to prevent timing attacks
+                        token
+                            .as_bytes()
+                            .ct_eq(expected_token.as_bytes())
+                            .unwrap_u8()
+                            == 1
                     })
-                    .unwrap_or(false)
-            });
+                })
+                .unwrap_or(false)
+        });
 
-            if !is_authorized {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    [(header::WWW_AUTHENTICATE, "Bearer")],
-                    "Unauthorized",
-                )
-                    .into_response();
-            }
+        if !is_authorized {
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, "Bearer")],
+                "Unauthorized",
+            )
+                .into_response();
         }
     }
 

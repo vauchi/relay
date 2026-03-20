@@ -185,16 +185,16 @@ impl PeerRegistry {
         last_seen_secs: u64,
     ) -> bool {
         // Validate URL against SSRF blocklist (Tracker #133)
-        if !self.allow_private_urls {
-            if let Err(e) = crate::url_validation::validate_federation_url(url) {
-                tracing::warn!(
-                    "Rejecting discovered peer {} with blocked URL {}: {}",
-                    relay_id,
-                    url,
-                    e
-                );
-                return false;
-            }
+        if !self.allow_private_urls
+            && let Err(e) = crate::url_validation::validate_federation_url(url)
+        {
+            tracing::warn!(
+                "Rejecting discovered peer {} with blocked URL {}: {}",
+                relay_id,
+                url,
+                e
+            );
+            return false;
         }
 
         let mut peers = self.peers.write();
@@ -497,7 +497,7 @@ pub mod gossip {
     use super::PeerRegistry;
     use crate::config::RelayConfig;
     use crate::federation_protocol::{
-        create_federation_envelope, encode_federation_message, AdvertisedPeer, FederationPayload,
+        AdvertisedPeer, FederationPayload, create_federation_envelope, encode_federation_message,
     };
 
     /// Runs the periodic gossip advertisement task.

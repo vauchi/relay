@@ -6,8 +6,8 @@
 //!
 //! Enforces maximum concurrent connections to prevent resource exhaustion.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Connection limiter that tracks and enforces connection limits.
 #[derive(Clone)]
@@ -140,13 +140,14 @@ mod tests {
             let barrier = barrier.clone();
             handles.push(thread::spawn(move || {
                 barrier.wait(); // Synchronize all threads to start together (CC-06)
-                if let Some(guard) = limiter.try_acquire() {
-                    // Hold guard briefly via yield, not sleep
-                    thread::yield_now();
-                    drop(guard);
-                    true
-                } else {
-                    false
+                match limiter.try_acquire() {
+                    Some(guard) => {
+                        // Hold guard briefly via yield, not sleep
+                        thread::yield_now();
+                        drop(guard);
+                        true
+                    }
+                    _ => false,
                 }
             }));
         }

@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 /// A stored recovery proof.
 #[derive(Debug, Clone)]

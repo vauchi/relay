@@ -11,7 +11,7 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 /// A forwarding hint pointing a client to a peer relay holding their offloaded blob.
 #[derive(Debug, Clone)]

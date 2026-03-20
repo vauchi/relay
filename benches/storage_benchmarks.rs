@@ -4,7 +4,7 @@
 
 //! Criterion benchmarks for relay storage and rate limiting hot paths.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::time::Duration;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};

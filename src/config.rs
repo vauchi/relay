@@ -448,22 +448,22 @@ impl RelayConfig {
         }
 
         // Federation mTLS configuration
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_CERT") {
-            if !val.is_empty() {
-                config.federation.tls_cert_path = Some(val);
-            }
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_CERT")
+            && !val.is_empty()
+        {
+            config.federation.tls_cert_path = Some(val);
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_KEY") {
-            if !val.is_empty() {
-                config.federation.tls_key_path = Some(val);
-            }
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_KEY")
+            && !val.is_empty()
+        {
+            config.federation.tls_key_path = Some(val);
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_CA") {
-            if !val.is_empty() {
-                config.federation.tls_ca_path = Some(val);
-            }
+        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_CA")
+            && !val.is_empty()
+        {
+            config.federation.tls_ca_path = Some(val);
         }
 
         if let Ok(val) = std::env::var("RELAY_FEDERATION_MTLS_ADDR") {
@@ -602,10 +602,10 @@ pub struct ConfigWarning {
 /// 3. Generate new UUID and write to file
 pub fn load_relay_id(data_dir: &Path) -> String {
     // 1. Check env var first
-    if let Ok(val) = std::env::var("RELAY_FEDERATION_RELAY_ID") {
-        if !val.is_empty() {
-            return val;
-        }
+    if let Ok(val) = std::env::var("RELAY_FEDERATION_RELAY_ID")
+        && !val.is_empty()
+    {
+        return val;
     }
 
     // 2. Try reading from file

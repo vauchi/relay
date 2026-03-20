@@ -27,7 +27,7 @@ use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::federation_connector::OffloadManager;
 use vauchi_relay::federation_handler::{self, FederationDeps};
 use vauchi_relay::federation_protocol::{
-    self, FederationEnvelope, FederationPayload, FEDERATION_PROTOCOL_VERSION,
+    self, FEDERATION_PROTOCOL_VERSION, FederationEnvelope, FederationPayload,
 };
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};

@@ -23,20 +23,20 @@ use tracing::{error, info};
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_limit::ConnectionLimiter;
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::{create_device_sync_store, DeviceSyncStore};
+use vauchi_relay::device_sync_storage::{DeviceSyncStore, create_device_sync_store};
 use vauchi_relay::federation_connector::{self, OffloadManager};
 use vauchi_relay::federation_handler::{self, FederationDeps};
 use vauchi_relay::federation_tls;
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
 use vauchi_relay::handler;
-use vauchi_relay::http::{create_router, HttpState};
+use vauchi_relay::http::{HttpState, create_router};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key;
-use vauchi_relay::peer_registry::gossip;
 use vauchi_relay::peer_registry::PeerRegistry;
+use vauchi_relay::peer_registry::gossip;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::{RecoveryProofStore, SqliteRecoveryProofStore};
-use vauchi_relay::storage::{create_blob_store, BlobStore, StorageBackend};
+use vauchi_relay::storage::{BlobStore, StorageBackend, create_blob_store};
 
 #[tokio::main]
 async fn main() {
@@ -555,7 +555,7 @@ async fn main() {
     tokio::spawn(async move {
         #[cfg(unix)]
         {
-            use tokio::signal::unix::{signal, SignalKind};
+            use tokio::signal::unix::{SignalKind, signal};
             let mut sigterm =
                 signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
             tokio::select! {
