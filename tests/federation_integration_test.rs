@@ -234,10 +234,10 @@ async fn start_federation_server(deps: FederationDeps) -> String {
     let url = format!("ws://127.0.0.1:{}", addr.port());
 
     tokio::spawn(async move {
-        if let Ok((stream, _)) = listener.accept().await {
-            if let Ok(ws) = accept_async(stream).await {
-                federation_handler::handle_federation_connection(ws, deps).await;
-            }
+        if let Ok((stream, _)) = listener.accept().await
+            && let Ok(ws) = accept_async(stream).await
+        {
+            federation_handler::handle_federation_connection(ws, deps).await;
         }
     });
 
@@ -252,10 +252,10 @@ async fn start_client_server(deps: ConnectionDeps) -> String {
     let url = format!("ws://127.0.0.1:{}", addr.port());
 
     tokio::spawn(async move {
-        if let Ok((stream, _)) = listener.accept().await {
-            if let Ok(ws) = accept_async(stream).await {
-                handler::handle_connection(ws, deps).await;
-            }
+        if let Ok((stream, _)) = listener.accept().await
+            && let Ok(ws) = accept_async(stream).await
+        {
+            handler::handle_connection(ws, deps).await;
         }
     });
 

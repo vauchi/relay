@@ -612,12 +612,11 @@ async fn test_delivery_notification_latency() {
     // Sender: wait for Delivered ack
     let delivered = timeout(Duration::from_secs(2), async {
         loop {
-            if let Some(msg) = try_recv(&mut sender_ws).await {
-                if msg["payload"]["type"] == "Acknowledgment"
-                    && msg["payload"]["status"] == "Delivered"
-                {
-                    return msg;
-                }
+            if let Some(msg) = try_recv(&mut sender_ws).await
+                && msg["payload"]["type"] == "Acknowledgment"
+                && msg["payload"]["status"] == "Delivered"
+            {
+                return msg;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

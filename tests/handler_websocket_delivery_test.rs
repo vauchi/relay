@@ -193,17 +193,17 @@ async fn test_delivered_ack_to_sender() {
 
     // Spawn both servers
     tokio::spawn(async move {
-        if let Ok((stream, _)) = listener1.accept().await {
-            if let Ok(ws) = accept_async(stream).await {
-                handler::handle_connection(ws, deps1).await;
-            }
+        if let Ok((stream, _)) = listener1.accept().await
+            && let Ok(ws) = accept_async(stream).await
+        {
+            handler::handle_connection(ws, deps1).await;
         }
     });
     tokio::spawn(async move {
-        if let Ok((stream, _)) = listener2.accept().await {
-            if let Ok(ws) = accept_async(stream).await {
-                handler::handle_connection(ws, deps2).await;
-            }
+        if let Ok((stream, _)) = listener2.accept().await
+            && let Ok(ws) = accept_async(stream).await
+        {
+            handler::handle_connection(ws, deps2).await;
         }
     });
 
@@ -243,12 +243,11 @@ async fn test_delivered_ack_to_sender() {
     // 4. Sender should receive Delivered ack via registry
     let delivered = timeout(Duration::from_secs(2), async {
         loop {
-            if let Some(msg) = try_recv(&mut sender_ws).await {
-                if msg["payload"]["type"] == "Acknowledgment"
-                    && msg["payload"]["status"] == "Delivered"
-                {
-                    return msg;
-                }
+            if let Some(msg) = try_recv(&mut sender_ws).await
+                && msg["payload"]["type"] == "Acknowledgment"
+                && msg["payload"]["status"] == "Delivered"
+            {
+                return msg;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
@@ -326,17 +325,17 @@ async fn test_suppress_presence_no_delivered_ack() {
     };
 
     tokio::spawn(async move {
-        if let Ok((stream, _)) = listener1.accept().await {
-            if let Ok(ws) = accept_async(stream).await {
-                handler::handle_connection(ws, deps1).await;
-            }
+        if let Ok((stream, _)) = listener1.accept().await
+            && let Ok(ws) = accept_async(stream).await
+        {
+            handler::handle_connection(ws, deps1).await;
         }
     });
     tokio::spawn(async move {
-        if let Ok((stream, _)) = listener2.accept().await {
-            if let Ok(ws) = accept_async(stream).await {
-                handler::handle_connection(ws, deps2).await;
-            }
+        if let Ok((stream, _)) = listener2.accept().await
+            && let Ok(ws) = accept_async(stream).await
+        {
+            handler::handle_connection(ws, deps2).await;
         }
     });
 
@@ -522,12 +521,11 @@ async fn test_received_by_recipient_after_delivered_not_forwarded() {
     // Sender should get Delivered ack (via registry)
     let delivered = timeout(Duration::from_secs(2), async {
         loop {
-            if let Some(msg) = try_recv(&mut sender_ws).await {
-                if msg["payload"]["type"] == "Acknowledgment"
-                    && msg["payload"]["status"] == "Delivered"
-                {
-                    return msg;
-                }
+            if let Some(msg) = try_recv(&mut sender_ws).await
+                && msg["payload"]["type"] == "Acknowledgment"
+                && msg["payload"]["status"] == "Delivered"
+            {
+                return msg;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

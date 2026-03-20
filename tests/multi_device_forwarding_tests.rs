@@ -142,10 +142,10 @@ async fn spawn_handler(deps: ConnectionDeps) -> String {
     let addr = listener.local_addr().unwrap();
     let url = format!("ws://127.0.0.1:{}", addr.port());
     tokio::spawn(async move {
-        if let Ok((stream, _)) = listener.accept().await {
-            if let Ok(ws) = accept_async(stream).await {
-                handler::handle_connection(ws, deps).await;
-            }
+        if let Ok((stream, _)) = listener.accept().await
+            && let Ok(ws) = accept_async(stream).await
+        {
+            handler::handle_connection(ws, deps).await;
         }
     });
     url
@@ -460,12 +460,11 @@ async fn test_registry_forwards_ack_to_all_sender_devices() {
     // 5. BOTH sender devices should receive the Delivered ack
     let delivered1 = timeout(Duration::from_secs(2), async {
         loop {
-            if let Some(msg) = try_recv(&mut sender1_ws).await {
-                if msg["payload"]["type"] == "Acknowledgment"
-                    && msg["payload"]["status"] == "Delivered"
-                {
-                    return msg;
-                }
+            if let Some(msg) = try_recv(&mut sender1_ws).await
+                && msg["payload"]["type"] == "Acknowledgment"
+                && msg["payload"]["status"] == "Delivered"
+            {
+                return msg;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
@@ -474,12 +473,11 @@ async fn test_registry_forwards_ack_to_all_sender_devices() {
 
     let delivered2 = timeout(Duration::from_secs(2), async {
         loop {
-            if let Some(msg) = try_recv(&mut sender2_ws).await {
-                if msg["payload"]["type"] == "Acknowledgment"
-                    && msg["payload"]["status"] == "Delivered"
-                {
-                    return msg;
-                }
+            if let Some(msg) = try_recv(&mut sender2_ws).await
+                && msg["payload"]["type"] == "Acknowledgment"
+                && msg["payload"]["status"] == "Delivered"
+            {
+                return msg;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

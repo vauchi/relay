@@ -1060,10 +1060,10 @@ async fn test_concurrent_federation_connections() {
                     timeout(Duration::from_secs(5), ws.next()).await
                 {
                     let resp = decode_fed(&data);
-                    if let FederationPayload::PeerHandshakeAck { accepted, .. } = resp.payload {
-                        if accepted {
-                            counter.fetch_add(1, Ordering::Relaxed);
-                        }
+                    if let FederationPayload::PeerHandshakeAck { accepted, .. } = resp.payload
+                        && accepted
+                    {
+                        counter.fetch_add(1, Ordering::Relaxed);
                     }
                 }
 
