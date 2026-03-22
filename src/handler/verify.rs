@@ -90,9 +90,7 @@ pub(super) mod protocol {
     // =========================================================================
 
     /// Creates a handshake acknowledgment envelope.
-    ///
-    /// `negotiated_version` is the result of version negotiation with the client.
-    pub fn create_handshake_ack(is_noise_session: bool, negotiated_version: u8) -> MessageEnvelope {
+    pub fn create_handshake_ack(is_noise_session: bool) -> MessageEnvelope {
         let mut features = vec![
             "routing_token".to_string(),
             "suppress_presence".to_string(),
@@ -114,7 +112,7 @@ pub(super) mod protocol {
                 .unwrap()
                 .as_secs(),
             payload: MessagePayload::HandshakeAck(HandshakeAck {
-                protocol_version: negotiated_version,
+                protocol_version: PROTOCOL_VERSION,
                 // R-SA1: Don't leak exact build version to clients — use major.minor only
                 server_version: {
                     let full = env!("CARGO_PKG_VERSION");
@@ -125,7 +123,6 @@ pub(super) mod protocol {
                     }
                 },
                 features,
-                supported_versions: Some(vec![PROTOCOL_VERSION]),
             }),
         }
     }

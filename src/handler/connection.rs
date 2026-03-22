@@ -130,7 +130,7 @@ async fn perform_handshake(
     };
 
     // Parse the Handshake message (same for v1 and v2)
-    let (client_id, device_id, routing_token, suppress_presence, client_supported_versions) =
+    let (client_id, device_id, routing_token, suppress_presence) =
         match protocol::decode_message(&handshake_data) {
             Ok(envelope) => {
                 if let protocol::MessagePayload::Handshake(hs) = envelope.payload {
@@ -178,7 +178,6 @@ async fn perform_handshake(
                         hs.device_id,
                         hs.routing_token,
                         hs.suppress_presence,
-                        hs.supported_versions,
                     )
                 } else {
                     warn!(
@@ -205,24 +204,8 @@ async fn perform_handshake(
         noise_session.is_some()
     );
 
-    // Version negotiation: pick the highest version both sides support.
-    // Server currently supports [PROTOCOL_VERSION] only.
-    let server_versions = [protocol::PROTOCOL_VERSION];
-    let negotiated =
-        protocol::negotiate_version(client_supported_versions.as_deref(), &server_versions);
-    let negotiated_version = match negotiated {
-        Some(v) => v,
-        None => {
-            warn!(
-                "[{}] Version negotiation failed (client: {:?}, server: {:?})",
-                session, client_supported_versions, server_versions
-            );
-            return None;
-        }
-    };
-
     // Send HandshakeAck with server version and supported features
-    let hs_ack = protocol::create_handshake_ack(noise_session.is_some(), negotiated_version);
+    let hs_ack = protocol::create_handshake_ack(noise_session.is_some());
     if let Ok(ack_data) = protocol::encode_message(&hs_ack) {
         let send_data = if let Some(ref mut ns) = noise_session {
             match ns.encrypt(&ack_data) {

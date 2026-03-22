@@ -38,7 +38,6 @@ fn test_handshake_serialization_without_routing_token() {
         nonce: None,
         signature: None,
         timestamp: None,
-        supported_versions: None,
     };
     let json = serde_json::to_string(&hs).unwrap();
     let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
@@ -58,7 +57,6 @@ fn test_handshake_serialization_with_routing_token() {
         nonce: None,
         signature: None,
         timestamp: None,
-        supported_versions: None,
     };
     let json = serde_json::to_string(&hs).unwrap();
     let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
@@ -77,7 +75,6 @@ fn test_handshake_serialization_suppress_presence() {
         nonce: None,
         signature: None,
         timestamp: None,
-        supported_versions: None,
     };
     let json = serde_json::to_string(&hs).unwrap();
     let parsed: protocol::Handshake = serde_json::from_str(&json).unwrap();
@@ -146,41 +143,12 @@ fn test_handshake_ack_creation() {
         protocol_version: protocol::PROTOCOL_VERSION,
         server_version: "0.3.0".to_string(),
         features: vec!["device_sync".to_string()],
-        supported_versions: None,
     };
     let json = serde_json::to_string(&ack).unwrap();
     let parsed: protocol::HandshakeAck = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.protocol_version, protocol::PROTOCOL_VERSION);
     assert_eq!(parsed.server_version, "0.3.0");
     assert_eq!(parsed.features, vec!["device_sync"]);
-}
-
-#[test]
-fn test_handshake_ack_roundtrip() {
-    let ack = protocol::HandshakeAck {
-        protocol_version: 2,
-        server_version: "0.3.0".to_string(),
-        features: vec![],
-        supported_versions: Some(vec![1, 2]),
-    };
-    let json = serde_json::to_string(&ack).unwrap();
-    let parsed: protocol::HandshakeAck = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed.protocol_version, 2);
-    assert_eq!(parsed.supported_versions, Some(vec![1, 2]));
-}
-
-#[test]
-fn test_handshake_ack_includes_supported_versions() {
-    let ack = protocol::HandshakeAck {
-        protocol_version: protocol::PROTOCOL_VERSION,
-        server_version: "0.3.0".to_string(),
-        features: vec![],
-        supported_versions: Some(vec![1, 2]),
-    };
-    let json = serde_json::to_string(&ack).unwrap();
-    assert!(json.contains("supported_versions"));
-    let parsed: protocol::HandshakeAck = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed.supported_versions, Some(vec![1, 2]));
 }
 
 #[test]
