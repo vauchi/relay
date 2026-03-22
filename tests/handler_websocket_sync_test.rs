@@ -8,10 +8,6 @@ mod common;
 
 use std::time::Duration;
 
-use futures_util::SinkExt;
-use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::Message;
-
 use vauchi_relay::device_sync_storage::{DeviceSyncStore, StoredDeviceSyncMessage};
 use vauchi_relay::handler::QuotaLimits;
 use vauchi_relay::storage::{BlobStore, StoredBlob};
@@ -25,57 +21,55 @@ use common::ws_helpers::*;
 // @scenario: device_management:Device sync messages stored and acknowledged
 #[tokio::test]
 async fn test_device_sync_store_and_ack() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
     let device_id = common::generate_test_client_id(10);
 
     // Handshake with device_id
     let hs = make_handshake_full(&client_id, Some(&device_id), None, false);
-    let ack = send_recv(&mut ws, &hs).await;
+    let ack = client.send_recv(&hs).await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
     // Send a device sync message to another device
     let target_device = common::generate_test_client_id(11);
     let sync_msg = make_device_sync(&client_id, &target_device, &device_id, &[1, 2, 3], 1);
-    let response = send_recv(&mut ws, &sync_msg).await;
+    let response = client.send_recv(&sync_msg).await;
     assert_eq!(response["payload"]["type"], "Acknowledgment");
     assert_eq!(response["payload"]["status"], "Stored");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: security:Device sync identity mismatch rejected
 #[tokio::test]
 async fn test_device_sync_identity_mismatch_rejected() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
     let device_id = common::generate_test_client_id(10);
 
     let hs = make_handshake_full(&client_id, Some(&device_id), None, false);
-    let _ack = send_recv(&mut ws, &hs).await;
+    let _ack = client.send_recv(&hs).await;
 
     // Send device sync with mismatched identity_id
     let wrong_identity = common::generate_test_client_id(99);
     let target_device = common::generate_test_client_id(11);
     let sync_msg = make_device_sync(&wrong_identity, &target_device, &device_id, &[1], 1);
-    ws.send(Message::Binary(encode_envelope(&sync_msg)))
-        .await
-        .unwrap();
+    client.send_envelope(&sync_msg).await;
 
     // Should NOT get a Stored ack (identity mismatch is silently dropped with warning)
-    let msg = try_recv(&mut ws).await;
+    let msg = client.try_recv().await;
     assert!(
         msg.is_none(),
         "Should not receive ack for mismatched identity"
     );
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // ============================================================================
@@ -85,7 +79,7 @@ async fn test_device_sync_identity_mismatch_rejected() {
 // @scenario: sync_updates:Pending device sync delivered on connect
 #[tokio::test]
 async fn test_pending_device_sync_delivered_on_connect() {
-    let (deps, _, _, device_sync_storage) = test_deps_custom(
+    let (deps, relay_pub, _, _, device_sync_storage) = test_deps_custom(
         60,
         10,
         1_048_576,
@@ -116,32 +110,30 @@ async fn test_pending_device_sync_delivered_on_connect() {
     ));
 
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     // Handshake with device_id
     let hs = make_handshake_full(&client_id, Some(&device_id), None, false);
-    ws.send(Message::Binary(encode_envelope(&hs)))
-        .await
-        .unwrap();
+    client.send_envelope(&hs).await;
 
     // Receive HandshakeAck
-    let ack = recv(&mut ws).await;
+    let ack = client.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
     // Receive 2 pending device sync messages
-    let sync1 = recv(&mut ws).await;
+    let sync1 = client.recv().await;
     assert_eq!(sync1["payload"]["type"], "DeviceSyncMessage");
 
-    let sync2 = recv(&mut ws).await;
+    let sync2 = client.recv().await;
     assert_eq!(sync2["payload"]["type"], "DeviceSyncMessage");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: device_management:Device sync requires device identifier
 #[tokio::test]
 async fn test_device_sync_not_delivered_without_device_id() {
-    let (deps, _, _, device_sync_storage) = test_deps_custom(
+    let (deps, relay_pub, _, _, device_sync_storage) = test_deps_custom(
         60,
         10,
         1_048_576,
@@ -165,23 +157,23 @@ async fn test_device_sync_not_delivered_without_device_id() {
     ));
 
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     // Handshake WITHOUT device_id
-    let ack = do_handshake(&mut ws, &client_id).await;
+    let ack = client.do_handshake(&client_id).await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
     // No device sync messages should be delivered
-    let msg = try_recv(&mut ws).await;
+    let msg = client.try_recv().await;
     assert!(msg.is_none(), "No device sync messages without device_id");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: sync_updates:Device sync acknowledged and removed
 #[tokio::test]
 async fn test_device_sync_ack_removes_message() {
-    let (deps, _, _, device_sync_storage) = test_deps_custom(
+    let (deps, relay_pub, _, _, device_sync_storage) = test_deps_custom(
         60,
         10,
         1_048_576,
@@ -207,26 +199,22 @@ async fn test_device_sync_ack_removes_message() {
     device_sync_storage.store(msg);
 
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     // Handshake with device_id
     let hs = make_handshake_full(&client_id, Some(&device_id), None, false);
-    ws.send(Message::Binary(encode_envelope(&hs)))
-        .await
-        .unwrap();
+    client.send_envelope(&hs).await;
 
     // Receive HandshakeAck
-    let _ack = recv(&mut ws).await;
+    let _ack = client.recv().await;
 
     // Receive the pending device sync message
-    let delivered = recv(&mut ws).await;
+    let delivered = client.recv().await;
     assert_eq!(delivered["payload"]["type"], "DeviceSyncMessage");
 
     // Send DeviceSyncAck
     let ack_msg = make_device_sync_ack(&msg_id, 1);
-    ws.send(Message::Binary(encode_envelope(&ack_msg)))
-        .await
-        .unwrap();
+    client.send_envelope(&ack_msg).await;
 
     // Poll until handler processes the ack (CC-06: no bare sleeps)
     tokio::time::timeout(Duration::from_secs(2), async {
@@ -240,13 +228,13 @@ async fn test_device_sync_ack_removes_message() {
     .await
     .expect("Timed out: DeviceSyncAck should remove message from storage");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: device_management:Device sync ack ignored without device id
 #[tokio::test]
 async fn test_device_sync_ack_without_device_id_ignored() {
-    let (deps, _, _, device_sync_storage) = test_deps_custom(
+    let (deps, relay_pub, _, _, device_sync_storage) = test_deps_custom(
         60,
         10,
         1_048_576,
@@ -272,16 +260,14 @@ async fn test_device_sync_ack_without_device_id_ignored() {
     device_sync_storage.store(msg);
 
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     // Handshake WITHOUT device_id
-    let _ack = do_handshake(&mut ws, &client_id).await;
+    let _ack = client.do_handshake(&client_id).await;
 
     // Send DeviceSyncAck anyway — should be ignored
     let ack_msg = make_device_sync_ack(&msg_id, 1);
-    ws.send(Message::Binary(encode_envelope(&ack_msg)))
-        .await
-        .unwrap();
+    client.send_envelope(&ack_msg).await;
 
     // Give handler time to process — use short yield instead of bare sleep (CC-06)
     // This is a negative assertion: we verify the message is NOT removed.
@@ -297,7 +283,7 @@ async fn test_device_sync_ack_without_device_id_ignored() {
         "DeviceSyncAck without device_id should be ignored"
     );
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // ============================================================================
@@ -307,7 +293,7 @@ async fn test_device_sync_ack_without_device_id_ignored() {
 // @scenario: relay_network:Client purges stored data
 #[tokio::test]
 async fn test_purge_with_device_sync_deletes_both() {
-    let (deps, storage, _, device_sync_storage) = test_deps_custom(
+    let (deps, relay_pub, storage, _, device_sync_storage) = test_deps_custom(
         60,
         10,
         1_048_576,
@@ -335,33 +321,31 @@ async fn test_purge_with_device_sync_deletes_both() {
     ));
 
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     // Handshake (which will deliver pending blobs)
     let hs = make_handshake(&client_id);
-    ws.send(Message::Binary(encode_envelope(&hs)))
-        .await
-        .unwrap();
+    client.send_envelope(&hs).await;
 
     // Drain HandshakeAck + 2 pending blobs
     for _ in 0..3 {
-        let _ = recv(&mut ws).await;
+        let _ = client.recv().await;
     }
 
     // Purge with include_device_sync=true
     let purge = make_purge_request(true);
-    let response = send_recv(&mut ws, &purge).await;
+    let response = client.send_recv(&purge).await;
     assert_eq!(response["payload"]["type"], "PurgeResponse");
     assert_eq!(response["payload"]["blobs_deleted"], 2);
     assert_eq!(response["payload"]["device_sync_deleted"], 1);
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: relay_network:Client purges stored data
 #[tokio::test]
 async fn test_purge_without_device_sync_preserves_sync() {
-    let (deps, storage, _, device_sync_storage) = test_deps_custom(
+    let (deps, relay_pub, storage, _, device_sync_storage) = test_deps_custom(
         60,
         10,
         1_048_576,
@@ -388,22 +372,20 @@ async fn test_purge_without_device_sync_preserves_sync() {
     ));
 
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     // Handshake (delivers pending blob)
     let hs = make_handshake(&client_id);
-    ws.send(Message::Binary(encode_envelope(&hs)))
-        .await
-        .unwrap();
+    client.send_envelope(&hs).await;
 
     // Drain HandshakeAck + 1 pending blob
     for _ in 0..2 {
-        let _ = recv(&mut ws).await;
+        let _ = client.recv().await;
     }
 
     // Purge with include_device_sync=false
     let purge = make_purge_request(false);
-    let response = send_recv(&mut ws, &purge).await;
+    let response = client.send_recv(&purge).await;
     assert_eq!(response["payload"]["type"], "PurgeResponse");
     assert_eq!(response["payload"]["blobs_deleted"], 1);
     assert_eq!(response["payload"]["device_sync_deleted"], 0);
@@ -416,5 +398,5 @@ async fn test_purge_without_device_sync_preserves_sync() {
         "Device sync should not be deleted when include_device_sync=false"
     );
 
-    ws.close(None).await.ok();
+    client.close().await;
 }

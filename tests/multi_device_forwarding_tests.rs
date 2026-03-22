@@ -12,97 +12,40 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
-use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::time::timeout;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{accept_async, connect_async};
 
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
+use vauchi_relay::noise_key::generate_relay_keypair;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
 
-// ============================================================================
-// Protocol helpers (same as handler_websocket_test.rs)
-// ============================================================================
-
-const FRAME_HEADER_SIZE: usize = 4;
-
-fn encode_envelope(envelope: &Value) -> Vec<u8> {
-    let json = serde_json::to_vec(envelope).unwrap();
-    let len = json.len() as u32;
-    let mut frame = Vec::with_capacity(FRAME_HEADER_SIZE + json.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&json);
-    frame
-}
-
-fn decode_envelope(data: &[u8]) -> Value {
-    assert!(data.len() >= FRAME_HEADER_SIZE, "Frame too short");
-    let json = &data[FRAME_HEADER_SIZE..];
-    serde_json::from_slice(json).unwrap()
-}
-
-fn make_handshake(client_id: &str) -> Value {
-    json!({
-        "version": 1,
-        "message_id": uuid::Uuid::new_v4().to_string(),
-        "timestamp": 1000,
-        "payload": {
-            "type": "Handshake",
-            "client_id": client_id
-        }
-    })
-}
-
-fn make_encrypted_update(recipient_id: &str, ciphertext: &[u8]) -> Value {
-    json!({
-        "version": 1,
-        "message_id": uuid::Uuid::new_v4().to_string(),
-        "timestamp": 1000,
-        "payload": {
-            "type": "EncryptedUpdate",
-            "recipient_id": recipient_id,
-            "ciphertext": ciphertext.to_vec()
-        }
-    })
-}
-
-fn make_ack(message_id: &str, status: &str) -> Value {
-    json!({
-        "version": 1,
-        "message_id": uuid::Uuid::new_v4().to_string(),
-        "timestamp": 1000,
-        "payload": {
-            "type": "Acknowledgment",
-            "message_id": message_id,
-            "status": status
-        }
-    })
-}
+use common::ws_helpers::{
+    NoiseClient, connect_noise, make_ack, make_encrypted_update, make_handshake,
+};
 
 // ============================================================================
 // Test infrastructure
 // ============================================================================
 
-type WsStream =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 /// Creates shared deps for multi-connection tests.
+/// Returns (storage, registry, blob_sender_map, noise_private_key, noise_public_key).
 fn shared_deps() -> (
     Arc<SqliteBlobStore>,
     Arc<ConnectionRegistry>,
     handler::BlobSenderMap,
+    [u8; 32],
+    [u8; 32],
 ) {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let registry = Arc::new(ConnectionRegistry::new());
     let blob_sender_map = handler::new_blob_sender_map();
-    (storage, registry, blob_sender_map)
+    let kp = generate_relay_keypair();
+    (storage, registry, blob_sender_map, kp.private, kp.public)
 }
 
 /// Creates ConnectionDeps from shared components.
@@ -110,6 +53,7 @@ fn make_deps(
     storage: Arc<SqliteBlobStore>,
     registry: Arc<ConnectionRegistry>,
     blob_sender_map: handler::BlobSenderMap,
+    noise_private_key: [u8; 32],
 ) -> ConnectionDeps {
     ConnectionDeps {
         storage: storage as Arc<dyn BlobStore>,
@@ -126,8 +70,7 @@ fn make_deps(
             max_bytes: 0,
         },
         hint_store: None,
-        noise_static_key: None,
-        require_noise_encryption: false,
+        noise_static_key: Some(noise_private_key),
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
@@ -138,6 +81,7 @@ fn make_deps(
 
 /// Spawns a single-connection test server and returns its URL.
 async fn spawn_handler(deps: ConnectionDeps) -> String {
+    use tokio_tungstenite::accept_async;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let url = format!("ws://127.0.0.1:{}", addr.port());
@@ -151,39 +95,6 @@ async fn spawn_handler(deps: ConnectionDeps) -> String {
     url
 }
 
-/// Sends a binary frame and receives the next binary response.
-async fn send_recv(ws: &mut WsStream, msg: &Value) -> Value {
-    let frame = encode_envelope(msg);
-    ws.send(Message::Binary(frame)).await.unwrap();
-    recv(ws).await
-}
-
-/// Receives the next binary message as JSON.
-async fn recv(ws: &mut WsStream) -> Value {
-    let msg = timeout(Duration::from_secs(3), ws.next())
-        .await
-        .expect("Timeout waiting for message")
-        .expect("Stream ended")
-        .expect("WebSocket error");
-    match msg {
-        Message::Binary(data) => decode_envelope(&data),
-        other => panic!("Expected Binary message, got {:?}", other),
-    }
-}
-
-/// Try to receive a message with a short timeout.
-async fn try_recv(ws: &mut WsStream) -> Option<Value> {
-    match timeout(Duration::from_millis(300), ws.next()).await {
-        Ok(Some(Ok(Message::Binary(data)))) => Some(decode_envelope(&data)),
-        _ => None,
-    }
-}
-
-/// Perform handshake and return the HandshakeAck.
-async fn do_handshake(ws: &mut WsStream, client_id: &str) -> Value {
-    send_recv(ws, &make_handshake(client_id)).await
-}
-
 // ============================================================================
 // Tests: Multi-device blob delivery
 // ============================================================================
@@ -191,7 +102,7 @@ async fn do_handshake(ws: &mut WsStream, client_id: &str) -> Value {
 // @scenario: message_delivery.feature:Message delivered to all registered devices
 #[tokio::test]
 async fn test_message_forwarded_to_all_connected_devices() {
-    let (storage, registry, sender_map) = shared_deps();
+    let (storage, registry, sender_map, noise_priv, noise_pub) = shared_deps();
 
     let sender_id = common::generate_test_client_id(1);
     let recipient_id = common::generate_test_client_id(2);
@@ -201,43 +112,42 @@ async fn test_message_forwarded_to_all_connected_devices() {
         storage.clone(),
         registry.clone(),
         sender_map.clone(),
+        noise_priv,
     ))
     .await;
     let device1_url = spawn_handler(make_deps(
         storage.clone(),
         registry.clone(),
         sender_map.clone(),
+        noise_priv,
     ))
     .await;
     let device2_url = spawn_handler(make_deps(
         storage.clone(),
         registry.clone(),
         sender_map.clone(),
+        noise_priv,
     ))
     .await;
 
     // 1. Connect sender and store a blob for recipient
-    let (mut sender_ws, _) = connect_async(&sender_url).await.unwrap();
-    let _ack = do_handshake(&mut sender_ws, &sender_id).await;
+    let mut sender = connect_noise(&sender_url, &noise_pub).await;
+    let _ack = sender.do_handshake(&sender_id).await;
 
     let update = make_encrypted_update(&recipient_id, &[10, 20, 30]);
-    let stored_ack = send_recv(&mut sender_ws, &update).await;
+    let stored_ack = sender.send_recv(&update).await;
     assert_eq!(
         stored_ack["payload"]["status"], "Stored",
         "Sender should receive Stored ack"
     );
 
     // 2. Connect device-1 with recipient's routing_id → should get the blob
-    let (mut device1_ws, _) = connect_async(&device1_url).await.unwrap();
-    device1_ws
-        .send(Message::Binary(encode_envelope(&make_handshake(
-            &recipient_id,
-        ))))
-        .await
-        .unwrap();
-    let ack1 = recv(&mut device1_ws).await;
+    let mut device1: NoiseClient = connect_noise(&device1_url, &noise_pub).await;
+    let hs = make_handshake(&recipient_id);
+    device1.send_envelope(&hs).await;
+    let ack1 = device1.recv().await;
     assert_eq!(ack1["payload"]["type"], "HandshakeAck");
-    let blob1 = recv(&mut device1_ws).await;
+    let blob1 = device1.recv().await;
     assert_eq!(
         blob1["payload"]["type"], "EncryptedUpdate",
         "Device-1 should receive the pending blob"
@@ -245,16 +155,12 @@ async fn test_message_forwarded_to_all_connected_devices() {
 
     // 3. Connect device-2 with SAME routing_id → should also get the blob
     //    (blob stays in storage until acknowledged)
-    let (mut device2_ws, _) = connect_async(&device2_url).await.unwrap();
-    device2_ws
-        .send(Message::Binary(encode_envelope(&make_handshake(
-            &recipient_id,
-        ))))
-        .await
-        .unwrap();
-    let ack2 = recv(&mut device2_ws).await;
+    let mut device2: NoiseClient = connect_noise(&device2_url, &noise_pub).await;
+    let hs = make_handshake(&recipient_id);
+    device2.send_envelope(&hs).await;
+    let ack2 = device2.recv().await;
     assert_eq!(ack2["payload"]["type"], "HandshakeAck");
-    let blob2 = recv(&mut device2_ws).await;
+    let blob2 = device2.recv().await;
     assert_eq!(
         blob2["payload"]["type"], "EncryptedUpdate",
         "Device-2 should also receive the pending blob (not yet acknowledged)"
@@ -266,15 +172,15 @@ async fn test_message_forwarded_to_all_connected_devices() {
         "Both devices should receive identical ciphertext"
     );
 
-    sender_ws.close(None).await.ok();
-    device1_ws.close(None).await.ok();
-    device2_ws.close(None).await.ok();
+    sender.close().await;
+    device1.close().await;
+    device2.close().await;
 }
 
 // @scenario: message_delivery.feature:Partial delivery tracked per device
 #[tokio::test]
 async fn test_partial_delivery_when_one_device_offline() {
-    let (storage, registry, sender_map) = shared_deps();
+    let (storage, registry, sender_map, noise_priv, noise_pub) = shared_deps();
 
     let sender_id = common::generate_test_client_id(3);
     let recipient_id = common::generate_test_client_id(4);
@@ -284,32 +190,30 @@ async fn test_partial_delivery_when_one_device_offline() {
         storage.clone(),
         registry.clone(),
         sender_map.clone(),
+        noise_priv,
     ))
     .await;
     let device1_url = spawn_handler(make_deps(
         storage.clone(),
         registry.clone(),
         sender_map.clone(),
+        noise_priv,
     ))
     .await;
 
     // 1. Sender stores blob
-    let (mut sender_ws, _) = connect_async(&sender_url).await.unwrap();
-    let _ack = do_handshake(&mut sender_ws, &sender_id).await;
+    let mut sender = connect_noise(&sender_url, &noise_pub).await;
+    let _ack = sender.do_handshake(&sender_id).await;
     let update = make_encrypted_update(&recipient_id, &[40, 50, 60]);
-    let stored = send_recv(&mut sender_ws, &update).await;
+    let stored = sender.send_recv(&update).await;
     assert_eq!(stored["payload"]["status"], "Stored");
 
     // 2. Device-1 connects and receives the blob
-    let (mut device1_ws, _) = connect_async(&device1_url).await.unwrap();
-    device1_ws
-        .send(Message::Binary(encode_envelope(&make_handshake(
-            &recipient_id,
-        ))))
-        .await
-        .unwrap();
-    let _ack = recv(&mut device1_ws).await;
-    let blob = recv(&mut device1_ws).await;
+    let mut device1: NoiseClient = connect_noise(&device1_url, &noise_pub).await;
+    let hs = make_handshake(&recipient_id);
+    device1.send_envelope(&hs).await;
+    let _ack = device1.recv().await;
+    let blob = device1.recv().await;
     assert_eq!(
         blob["payload"]["type"], "EncryptedUpdate",
         "Online device should receive the blob"
@@ -323,14 +227,14 @@ async fn test_partial_delivery_when_one_device_offline() {
         "Blob should remain in storage until acknowledged (offline device can still retrieve it)"
     );
 
-    sender_ws.close(None).await.ok();
-    device1_ws.close(None).await.ok();
+    sender.close().await;
+    device1.close().await;
 }
 
 // @scenario: message_delivery.feature:All-delivered only when every device acknowledges
 #[tokio::test]
 async fn test_blob_removed_only_after_device_acknowledges() {
-    let (storage, registry, sender_map) = shared_deps();
+    let (storage, registry, sender_map, noise_priv, noise_pub) = shared_deps();
 
     let sender_id = common::generate_test_client_id(5);
     let recipient_id = common::generate_test_client_id(6);
@@ -339,32 +243,30 @@ async fn test_blob_removed_only_after_device_acknowledges() {
         storage.clone(),
         registry.clone(),
         sender_map.clone(),
+        noise_priv,
     ))
     .await;
     let device1_url = spawn_handler(make_deps(
         storage.clone(),
         registry.clone(),
         sender_map.clone(),
+        noise_priv,
     ))
     .await;
 
     // 1. Sender stores blob
-    let (mut sender_ws, _) = connect_async(&sender_url).await.unwrap();
-    let _ack = do_handshake(&mut sender_ws, &sender_id).await;
+    let mut sender = connect_noise(&sender_url, &noise_pub).await;
+    let _ack = sender.do_handshake(&sender_id).await;
     let update = make_encrypted_update(&recipient_id, &[70, 80, 90]);
-    let stored = send_recv(&mut sender_ws, &update).await;
+    let stored = sender.send_recv(&update).await;
     assert_eq!(stored["payload"]["status"], "Stored");
 
     // 2. Device-1 connects and gets the blob
-    let (mut device1_ws, _) = connect_async(&device1_url).await.unwrap();
-    device1_ws
-        .send(Message::Binary(encode_envelope(&make_handshake(
-            &recipient_id,
-        ))))
-        .await
-        .unwrap();
-    let _ack = recv(&mut device1_ws).await;
-    let blob = recv(&mut device1_ws).await;
+    let mut device1: NoiseClient = connect_noise(&device1_url, &noise_pub).await;
+    let hs = make_handshake(&recipient_id);
+    device1.send_envelope(&hs).await;
+    let _ack = device1.recv().await;
+    let blob = device1.recv().await;
     assert_eq!(blob["payload"]["type"], "EncryptedUpdate");
 
     // Extract the blob_id from the delivery envelope's message_id
@@ -382,13 +284,19 @@ async fn test_blob_removed_only_after_device_acknowledges() {
 
     // 4. Device-1 sends ReceivedByRecipient acknowledgment
     let ack_msg = make_ack(&blob_id, "ReceivedByRecipient");
-    device1_ws
-        .send(Message::Binary(encode_envelope(&ack_msg)))
-        .await
-        .unwrap();
+    device1.send_envelope(&ack_msg).await;
 
-    // Short delay for async processing
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Poll until handler processes the ack (CC-06: no bare sleeps)
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if storage.peek(&recipient_id).is_empty() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Timed out: blob should be removed after device acknowledges");
 
     // 5. After acknowledgment: blob removed from storage
     assert_eq!(
@@ -397,8 +305,8 @@ async fn test_blob_removed_only_after_device_acknowledges() {
         "Blob should be removed after device acknowledges"
     );
 
-    sender_ws.close(None).await.ok();
-    device1_ws.close(None).await.ok();
+    sender.close().await;
+    device1.close().await;
 }
 
 // ============================================================================
@@ -408,7 +316,7 @@ async fn test_blob_removed_only_after_device_acknowledges() {
 // @scenario: message_delivery.feature:Delivery notifications reach all sender devices
 #[tokio::test]
 async fn test_registry_forwards_ack_to_all_sender_devices() {
-    let (storage, registry, sender_map) = shared_deps();
+    let (storage, registry, sender_map, noise_priv, noise_pub) = shared_deps();
 
     let sender_id = common::generate_test_client_id(7);
     let recipient_id = common::generate_test_client_id(8);
@@ -418,49 +326,48 @@ async fn test_registry_forwards_ack_to_all_sender_devices() {
         storage.clone(),
         registry.clone(),
         sender_map.clone(),
+        noise_priv,
     ))
     .await;
     let sender_dev2_url = spawn_handler(make_deps(
         storage.clone(),
         registry.clone(),
         sender_map.clone(),
+        noise_priv,
     ))
     .await;
     let recipient_url = spawn_handler(make_deps(
         storage.clone(),
         registry.clone(),
         sender_map.clone(),
+        noise_priv,
     ))
     .await;
 
     // 1. Connect sender device-1
-    let (mut sender1_ws, _) = connect_async(&sender_dev1_url).await.unwrap();
-    let _ack = do_handshake(&mut sender1_ws, &sender_id).await;
+    let mut sender1 = connect_noise(&sender_dev1_url, &noise_pub).await;
+    let _ack = sender1.do_handshake(&sender_id).await;
 
     // 2. Connect sender device-2 (same identity/routing_id)
-    let (mut sender2_ws, _) = connect_async(&sender_dev2_url).await.unwrap();
-    let _ack = do_handshake(&mut sender2_ws, &sender_id).await;
+    let mut sender2 = connect_noise(&sender_dev2_url, &noise_pub).await;
+    let _ack = sender2.do_handshake(&sender_id).await;
 
     // 3. Sender device-1 stores a blob for recipient
     let update = make_encrypted_update(&recipient_id, &[1, 2, 3]);
-    let stored = send_recv(&mut sender1_ws, &update).await;
+    let stored = sender1.send_recv(&update).await;
     assert_eq!(stored["payload"]["status"], "Stored");
 
     // 4. Recipient connects → receives blob → triggers Delivered ack to sender
-    let (mut recipient_ws, _) = connect_async(&recipient_url).await.unwrap();
-    recipient_ws
-        .send(Message::Binary(encode_envelope(&make_handshake(
-            &recipient_id,
-        ))))
-        .await
-        .unwrap();
-    let _ack = recv(&mut recipient_ws).await; // HandshakeAck
-    let _blob = recv(&mut recipient_ws).await; // Blob delivery
+    let mut recipient = connect_noise(&recipient_url, &noise_pub).await;
+    let hs = make_handshake(&recipient_id);
+    recipient.send_envelope(&hs).await;
+    let _ack = recipient.recv().await; // HandshakeAck
+    let _blob = recipient.recv().await; // Blob delivery
 
     // 5. BOTH sender devices should receive the Delivered ack
     let delivered1 = timeout(Duration::from_secs(2), async {
         loop {
-            if let Some(msg) = try_recv(&mut sender1_ws).await
+            if let Some(msg) = sender1.try_recv().await
                 && msg["payload"]["type"] == "Acknowledgment"
                 && msg["payload"]["status"] == "Delivered"
             {
@@ -473,7 +380,7 @@ async fn test_registry_forwards_ack_to_all_sender_devices() {
 
     let delivered2 = timeout(Duration::from_secs(2), async {
         loop {
-            if let Some(msg) = try_recv(&mut sender2_ws).await
+            if let Some(msg) = sender2.try_recv().await
                 && msg["payload"]["type"] == "Acknowledgment"
                 && msg["payload"]["status"] == "Delivered"
             {
@@ -493,7 +400,7 @@ async fn test_registry_forwards_ack_to_all_sender_devices() {
         "Sender device-2 should also receive Delivered ack (registry fan-out)"
     );
 
-    sender1_ws.close(None).await.ok();
-    sender2_ws.close(None).await.ok();
-    recipient_ws.close(None).await.ok();
+    sender1.close().await;
+    sender2.close().await;
+    recipient.close().await;
 }

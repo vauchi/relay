@@ -146,11 +146,7 @@ async fn main() {
         &noise_keypair.private,
     ));
     info!("Relay signing key: {}", relay_signing_key.public_key_hex());
-    if config.security.require_noise_encryption {
-        info!("Noise encryption: REQUIRED (v1 connections will be rejected)");
-    } else {
-        info!("Noise encryption: Available (v1 connections accepted)");
-    }
+    info!("Noise encryption: REQUIRED (Noise NK mandatory since v0.1)");
 
     // Initialize metrics
     let metrics = RelayMetrics::new();
@@ -779,7 +775,6 @@ async fn main() {
                                     None
                                 },
                                 noise_static_key,
-                                require_noise_encryption: config.security.require_noise_encryption,
                                 nonce_tracker,
                                 delivery_jitter_min_ms: config.security.delivery_jitter_min_ms,
                                 delivery_jitter_max_ms: config.security.delivery_jitter_max_ms,

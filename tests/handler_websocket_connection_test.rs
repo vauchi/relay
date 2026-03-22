@@ -8,9 +8,7 @@ mod common;
 
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
 use tokio::time::timeout;
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 use vauchi_relay::handler::QuotaLimits;
@@ -24,12 +22,12 @@ use common::ws_helpers::*;
 // @scenario: relay_network:Client connects to relay via WebSocket
 #[tokio::test]
 async fn test_handshake_returns_ack_with_version() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let ack = do_handshake(&mut ws, &client_id).await;
+    let ack = client.do_handshake(&client_id).await;
 
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
     assert_eq!(ack["payload"]["protocol_version"], 1);
@@ -38,26 +36,23 @@ async fn test_handshake_returns_ack_with_version() {
     assert!(features.iter().any(|f| f == "routing_token"));
     assert!(features.iter().any(|f| f == "purge"));
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: relay_network:Relay rejects invalid client identifiers
 #[tokio::test]
 async fn test_handshake_invalid_client_id_disconnects() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     // Send handshake with invalid (too short) client_id
     let hs = make_handshake("abcd1234");
-    let frame = encode_envelope(&hs);
-    ws.send(Message::Binary(frame)).await.unwrap();
+    client.send_envelope(&hs).await;
 
-    // Server should close the connection
-    // The handler drops the WebSocket without sending a Close frame, so we may get
-    // ResetWithoutClosingHandshake (Ok(Some(Err(_)))) which is valid disconnection.
-    let msg = timeout(Duration::from_secs(2), ws.next()).await;
-    match msg {
+    // Server should close the Noise session — we'll get a WS close or error
+    let result = timeout(Duration::from_secs(2), client.next_raw_ws()).await;
+    match result {
         Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
             // Expected: close frame, stream end, timeout, or reset
         }
@@ -68,17 +63,16 @@ async fn test_handshake_invalid_client_id_disconnects() {
 // @scenario: relay_network:Relay rejects non-handshake first message
 #[tokio::test]
 async fn test_handshake_non_handshake_message_disconnects() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
-    // Send an EncryptedUpdate instead of Handshake
+    // Send an EncryptedUpdate instead of Handshake (over Noise)
     let msg = make_encrypted_update(&common::generate_test_client_id(2), &[1, 2, 3]);
-    let frame = encode_envelope(&msg);
-    ws.send(Message::Binary(frame)).await.unwrap();
+    client.send_envelope(&msg).await;
 
     // Server should close the connection
-    let result = timeout(Duration::from_secs(2), ws.next()).await;
+    let result = timeout(Duration::from_secs(2), client.next_raw_ws()).await;
     match result {
         Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {}
         other => panic!("Expected close/disconnect, got {:?}", other),
@@ -92,18 +86,18 @@ async fn test_handshake_non_handshake_message_disconnects() {
 // @scenario: relay_network:Client gracefully disconnects
 #[tokio::test]
 async fn test_clean_close() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let _ack = do_handshake(&mut ws, &client_id).await;
+    let _ack = client.do_handshake(&client_id).await;
 
     // Send close frame
-    ws.close(None).await.unwrap();
+    client.close().await;
 
     // Stream should end
-    let result = timeout(Duration::from_secs(2), ws.next()).await;
+    let result = timeout(Duration::from_secs(2), client.next_raw_ws()).await;
     match result {
         Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {} // OK
         other => panic!("Expected clean shutdown, got {:?}", other),
@@ -113,25 +107,25 @@ async fn test_clean_close() {
 // @scenario: relay_network:WebSocket ping-pong keepalive
 #[tokio::test]
 async fn test_ping_pong() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let _ack = do_handshake(&mut ws, &client_id).await;
+    let _ack = client.do_handshake(&client_id).await;
 
     // Send ping
-    ws.send(Message::Ping(vec![1, 2, 3])).await.unwrap();
+    client.send_raw_ws(Message::Ping(vec![1, 2, 3])).await;
 
     // Should get pong back
-    let msg = timeout(Duration::from_secs(2), ws.next())
+    let msg = timeout(Duration::from_secs(2), client.next_raw_ws())
         .await
         .unwrap()
         .unwrap()
         .unwrap();
     assert_eq!(msg, Message::Pong(vec![1, 2, 3]));
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // ============================================================================
@@ -141,7 +135,7 @@ async fn test_ping_pong() {
 // @scenario: relay_network:Relay disconnects idle clients
 #[tokio::test]
 async fn test_idle_timeout_disconnects_client() {
-    let (deps, _, _, _) = test_deps_custom(
+    let (deps, relay_pub, _, _, _) = test_deps_custom(
         60,
         10,
         1_048_576,
@@ -152,14 +146,14 @@ async fn test_idle_timeout_disconnects_client() {
         },
     );
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let _ack = do_handshake(&mut ws, &client_id).await;
+    let _ack = client.do_handshake(&client_id).await;
 
     // Poll for server-initiated close after idle timeout (CC-06: no bare sleeps)
     // Server timeout is 500ms; we give up to 5s for the close to arrive
-    let msg = timeout(Duration::from_secs(5), ws.next()).await;
+    let msg = timeout(Duration::from_secs(5), client.next_raw_ws()).await;
     match msg {
         Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
             // Expected: connection closed
@@ -171,7 +165,7 @@ async fn test_idle_timeout_disconnects_client() {
 // @scenario: relay_network:Relay disconnects clients without handshake
 #[tokio::test]
 async fn test_handshake_timeout_disconnects() {
-    let (deps, _, _, _) = test_deps_custom(
+    let (deps, relay_pub, _, _, _) = test_deps_custom(
         60,
         10,
         1_048_576,
@@ -182,11 +176,11 @@ async fn test_handshake_timeout_disconnects() {
         },
     );
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
-    // Don't send handshake — poll for server-initiated close (CC-06: no bare sleeps)
+    // Don't send protocol handshake — poll for server-initiated close (CC-06: no bare sleeps)
     // Server timeout is 300ms; we give up to 5s for the close to arrive
-    let msg = timeout(Duration::from_secs(5), ws.next()).await;
+    let msg = timeout(Duration::from_secs(5), client.next_raw_ws()).await;
     match msg {
         Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
             // Expected: connection closed due to handshake timeout
@@ -201,49 +195,48 @@ async fn test_handshake_timeout_disconnects() {
 // @scenario: relay_network:Relay ignores text WebSocket frames
 #[tokio::test]
 async fn test_text_message_ignored_connection_stays() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let _ack = do_handshake(&mut ws, &client_id).await;
+    let _ack = client.do_handshake(&client_id).await;
 
     // Send a text frame (handler ignores text)
-    ws.send(Message::Text("hello world".to_string()))
-        .await
-        .unwrap();
+    client
+        .send_raw_ws(Message::Text("hello world".to_string()))
+        .await;
 
     // No response expected
-    let msg = try_recv(&mut ws).await;
+    let msg = client.try_recv().await;
     assert!(msg.is_none(), "Text message should not produce a response");
 
     // Binary still works
     let recipient_id = common::generate_test_client_id(2);
     let update = make_encrypted_update(&recipient_id, &[1]);
-    let response = send_recv(&mut ws, &update).await;
+    let response = client.send_recv(&update).await;
     assert_eq!(response["payload"]["status"], "Stored");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: relay_network:Relay ignores duplicate handshake
 #[tokio::test]
 async fn test_duplicate_handshake_ignored() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let ack = do_handshake(&mut ws, &client_id).await;
+    let ack = client.do_handshake(&client_id).await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
     // Send a second handshake — should be silently ignored
     let hs2 = make_handshake(&client_id);
-    let frame = encode_envelope(&hs2);
-    ws.send(Message::Binary(frame)).await.unwrap();
+    client.send_envelope(&hs2).await;
 
     // No second HandshakeAck
-    let msg = try_recv(&mut ws).await;
+    let msg = client.try_recv().await;
     assert!(
         msg.is_none(),
         "Duplicate handshake should not produce a response"
@@ -252,10 +245,10 @@ async fn test_duplicate_handshake_ignored() {
     // Connection should still work
     let recipient_id = common::generate_test_client_id(2);
     let update = make_encrypted_update(&recipient_id, &[1]);
-    let response = send_recv(&mut ws, &update).await;
+    let response = client.send_recv(&update).await;
     assert_eq!(response["payload"]["status"], "Stored");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // ============================================================================
@@ -265,19 +258,17 @@ async fn test_duplicate_handshake_ignored() {
 // @scenario: relay_network:Relay rejects invalid client identifiers
 #[tokio::test]
 async fn test_invalid_routing_token_format_disconnects() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     // Handshake with invalid routing_token (too short)
     let client_id = common::generate_test_client_id(1);
     let hs = make_handshake_full(&client_id, None, Some("abcd1234"), false);
-    ws.send(Message::Binary(encode_envelope(&hs)))
-        .await
-        .unwrap();
+    client.send_envelope(&hs).await;
 
     // Server should disconnect
-    let msg = timeout(Duration::from_secs(2), ws.next()).await;
+    let msg = timeout(Duration::from_secs(2), client.next_raw_ws()).await;
     match msg {
         Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
             // Expected: disconnection
@@ -292,19 +283,17 @@ async fn test_invalid_routing_token_format_disconnects() {
 // @scenario: relay_network:Relay rejects invalid client identifiers
 #[tokio::test]
 async fn test_invalid_device_id_format_disconnects() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     // Handshake with invalid device_id (too short)
     let client_id = common::generate_test_client_id(1);
     let hs = make_handshake_full(&client_id, Some("short"), None, false);
-    ws.send(Message::Binary(encode_envelope(&hs)))
-        .await
-        .unwrap();
+    client.send_envelope(&hs).await;
 
     // Server should disconnect
-    let msg = timeout(Duration::from_secs(2), ws.next()).await;
+    let msg = timeout(Duration::from_secs(2), client.next_raw_ws()).await;
     match msg {
         Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
             // Expected: disconnection

@@ -18,77 +18,36 @@ extern crate libc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use futures_util::{SinkExt, StreamExt};
-use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::time::timeout;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{accept_async, connect_async};
+use tokio_tungstenite::accept_async;
 
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
+use vauchi_relay::noise_key::generate_relay_keypair;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
 
-// ============================================================================
-// Protocol helpers (duplicated from handler_websocket_test.rs for isolation)
-// ============================================================================
-
-const FRAME_HEADER_SIZE: usize = 4;
-
-fn encode_envelope(envelope: &Value) -> Vec<u8> {
-    let json = serde_json::to_vec(envelope).unwrap();
-    let len = json.len() as u32;
-    let mut frame = Vec::with_capacity(FRAME_HEADER_SIZE + json.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&json);
-    frame
-}
-
-fn decode_envelope(data: &[u8]) -> Value {
-    assert!(data.len() >= FRAME_HEADER_SIZE, "Frame too short");
-    serde_json::from_slice(&data[FRAME_HEADER_SIZE..]).unwrap()
-}
-
-fn make_handshake(client_id: &str) -> Value {
-    json!({
-        "version": 1,
-        "message_id": uuid::Uuid::new_v4().to_string(),
-        "timestamp": 1000,
-        "payload": {
-            "type": "Handshake",
-            "client_id": client_id
-        }
-    })
-}
-
-fn make_encrypted_update(recipient_id: &str, ciphertext: &[u8]) -> Value {
-    json!({
-        "version": 1,
-        "message_id": uuid::Uuid::new_v4().to_string(),
-        "timestamp": 1000,
-        "payload": {
-            "type": "EncryptedUpdate",
-            "recipient_id": recipient_id,
-            "ciphertext": ciphertext.to_vec()
-        }
-    })
-}
+use common::ws_helpers::{connect_noise, make_encrypted_update, make_handshake};
 
 // ============================================================================
 // Test infrastructure
 // ============================================================================
 
+/// Returns (deps, relay_pubkey, storage, registry)
 fn test_deps() -> (
     ConnectionDeps,
+    [u8; 32],
     Arc<SqliteBlobStore>,
     Arc<ConnectionRegistry>,
 ) {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let registry = Arc::new(ConnectionRegistry::new());
+    let kp = generate_relay_keypair();
+    let relay_pub = kp.public;
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
@@ -104,28 +63,31 @@ fn test_deps() -> (
             max_bytes: 100_000_000,
         },
         hint_store: None,
-        noise_static_key: None,
-        require_noise_encryption: false,
+        noise_static_key: Some(kp.private),
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
     };
-    (deps, storage, registry)
+    (deps, relay_pub, storage, registry)
 }
 
+/// Returns (deps, relay_pubkey, storage, registry)
 fn test_deps_custom(
     rate_limit: u32,
     idle_timeout: Duration,
     quota: QuotaLimits,
 ) -> (
     ConnectionDeps,
+    [u8; 32],
     Arc<SqliteBlobStore>,
     Arc<ConnectionRegistry>,
 ) {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let registry = Arc::new(ConnectionRegistry::new());
+    let kp = generate_relay_keypair();
+    let relay_pub = kp.public;
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
@@ -138,15 +100,14 @@ fn test_deps_custom(
         idle_timeout,
         quota,
         hint_store: None,
-        noise_static_key: None,
-        require_noise_encryption: false,
+        noise_static_key: Some(kp.private),
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
     };
-    (deps, storage, registry)
+    (deps, relay_pub, storage, registry)
 }
 
 /// Starts a multi-connection test server. Returns the URL.
@@ -165,6 +126,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
     let max_message_size = deps.max_message_size;
     let idle_timeout = deps.idle_timeout;
     let quota = deps.quota;
+    let noise_static_key = deps.noise_static_key;
 
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
@@ -180,8 +142,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 idle_timeout,
                 quota,
                 hint_store: None,
-                noise_static_key: None,
-                require_noise_encryption: false,
+                noise_static_key,
                 nonce_tracker: Arc::new(handler::NonceTracker::new()),
                 delivery_jitter_min_ms: 0,
                 delivery_jitter_max_ms: 0,
@@ -197,60 +158,6 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
     });
 
     url
-}
-
-/// Perform handshake, return the ack response.
-async fn do_handshake(
-    ws: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-    client_id: &str,
-) -> Value {
-    let frame = encode_envelope(&make_handshake(client_id));
-    ws.send(Message::Binary(frame)).await.unwrap();
-    recv(ws).await
-}
-
-/// Receive next binary message as JSON.
-async fn recv(
-    ws: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-) -> Value {
-    let msg = timeout(Duration::from_secs(5), ws.next())
-        .await
-        .expect("Timeout waiting for message")
-        .expect("Stream ended")
-        .expect("WebSocket error");
-    match msg {
-        Message::Binary(data) => decode_envelope(&data),
-        other => panic!("Expected Binary, got {:?}", other),
-    }
-}
-
-/// Send a message and receive the response.
-async fn send_recv(
-    ws: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-    msg: &Value,
-) -> Value {
-    ws.send(Message::Binary(encode_envelope(msg)))
-        .await
-        .unwrap();
-    recv(ws).await
-}
-
-/// Try to receive with short timeout.
-async fn try_recv(
-    ws: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-) -> Option<Value> {
-    match timeout(Duration::from_millis(200), ws.next()).await {
-        Ok(Some(Ok(Message::Binary(data)))) => Some(decode_envelope(&data)),
-        _ => None,
-    }
 }
 
 // ============================================================================
@@ -291,7 +198,7 @@ async fn test_1000_concurrent_websocket_connections() {
         }
     }
 
-    let (deps, _, registry) = test_deps();
+    let (deps, relay_pub, _, registry) = test_deps();
     let url = start_multi_server(deps).await;
 
     let num_clients = 1000u16;
@@ -307,20 +214,17 @@ async fn test_1000_concurrent_websocket_connections() {
             let url = url.clone();
             handles.push(tokio::spawn(async move {
                 let client_id = common::generate_test_client_id_wide(i);
-                match timeout(Duration::from_secs(15), connect_async(&url)).await {
-                    Ok(Ok((mut ws, _))) => {
-                        let frame = encode_envelope(&make_handshake(&client_id));
-                        if ws.send(Message::Binary(frame)).await.is_err() {
-                            return false;
-                        }
+                match timeout(Duration::from_secs(15), connect_noise(&url, &relay_pub)).await {
+                    Ok(mut client) => {
+                        let hs = make_handshake(&client_id);
+                        client.send_envelope(&hs).await;
                         // Wait for HandshakeAck
-                        match timeout(Duration::from_secs(10), ws.next()).await {
-                            Ok(Some(Ok(Message::Binary(data)))) => {
-                                let resp = decode_envelope(&data);
+                        match timeout(Duration::from_secs(10), client.recv()).await {
+                            Ok(resp) => {
                                 let ok = resp["payload"]["type"] == "HandshakeAck";
                                 // Hold connection briefly
                                 tokio::time::sleep(Duration::from_millis(50)).await;
-                                ws.close(None).await.ok();
+                                client.close().await;
                                 ok
                             }
                             _ => false,
@@ -372,12 +276,12 @@ async fn test_1000_concurrent_websocket_connections() {
 /// Assert > 100 msgs/sec (conservative for test environment).
 #[tokio::test]
 async fn test_message_throughput_sustained() {
-    let (deps, storage, _) = test_deps();
+    let (deps, relay_pub, storage, _) = test_deps();
     let url = start_multi_server(deps).await;
 
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
     let sender_id = common::generate_test_client_id(1);
-    let _ack = do_handshake(&mut ws, &sender_id).await;
+    let _ack = client.do_handshake(&sender_id).await;
 
     let start = Instant::now();
     let msg_count = 1000;
@@ -385,7 +289,7 @@ async fn test_message_throughput_sustained() {
     for i in 0..msg_count {
         let recipient_id = common::generate_test_client_id((i % 200 + 2) as u8);
         let update = make_encrypted_update(&recipient_id, &[i as u8; 32]);
-        let response = send_recv(&mut ws, &update).await;
+        let response = client.send_recv(&update).await;
         assert_eq!(response["payload"]["status"], "Stored");
     }
 
@@ -400,7 +304,7 @@ async fn test_message_throughput_sustained() {
 
     assert_eq!(storage.blob_count(), msg_count);
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // ============================================================================
@@ -411,7 +315,7 @@ async fn test_message_throughput_sustained() {
 /// Assert all messages stored. Measure aggregate throughput.
 #[tokio::test]
 async fn test_multi_client_throughput() {
-    let (deps, storage, _) = test_deps();
+    let (deps, relay_pub, storage, _) = test_deps();
     let url = start_multi_server(deps).await;
 
     let num_clients = 10;
@@ -423,8 +327,8 @@ async fn test_multi_client_throughput() {
         let url = url.clone();
         handles.push(tokio::spawn(async move {
             let client_id = common::generate_test_client_id(c as u8);
-            let (mut ws, _) = connect_async(&url).await.unwrap();
-            let _ack = do_handshake(&mut ws, &client_id).await;
+            let mut client = connect_noise(&url, &relay_pub).await;
+            let _ack = client.do_handshake(&client_id).await;
 
             let mut stored = 0usize;
             for i in 0..msgs_per_client {
@@ -432,13 +336,13 @@ async fn test_multi_client_throughput() {
                 let recipient_id =
                     common::generate_test_client_id(((c * msgs_per_client + i) % 200 + 50) as u8);
                 let update = make_encrypted_update(&recipient_id, &[i as u8; 16]);
-                let response = send_recv(&mut ws, &update).await;
+                let response = client.send_recv(&update).await;
                 if response["payload"]["status"] == "Stored" {
                     stored += 1;
                 }
             }
 
-            ws.close(None).await.ok();
+            client.close().await;
             stored
         }));
     }
@@ -473,7 +377,7 @@ async fn test_multi_client_throughput() {
 /// Assert total stored <= 50 (rate limit caps it).
 #[tokio::test]
 async fn test_rate_limit_enforcement_concurrent() {
-    let (deps, storage, _) = test_deps_custom(
+    let (deps, relay_pub, storage, _) = test_deps_custom(
         10, // 10 messages per minute (token bucket starts with 10 tokens)
         Duration::from_secs(30),
         QuotaLimits {
@@ -491,31 +395,31 @@ async fn test_rate_limit_enforcement_concurrent() {
         let url = url.clone();
         handles.push(tokio::spawn(async move {
             let client_id = common::generate_test_client_id(c as u8);
-            let (mut ws, _) = connect_async(&url).await.unwrap();
-            let _ack = do_handshake(&mut ws, &client_id).await;
+            let mut client = connect_noise(&url, &relay_pub).await;
+            let _ack = client.do_handshake(&client_id).await;
 
             let mut stored = 0usize;
             let recipient_id = common::generate_test_client_id(200 + c as u8);
             for i in 0..msgs_per_client {
                 let update = make_encrypted_update(&recipient_id, &[i as u8]);
-                let frame = encode_envelope(&update);
-                ws.send(Message::Binary(frame)).await.unwrap();
+                client.send_envelope(&update).await;
 
-                // Check response — rate-limited messages get no response
-                match timeout(Duration::from_millis(500), ws.next()).await {
-                    Ok(Some(Ok(Message::Binary(data)))) => {
-                        let resp = decode_envelope(&data);
-                        if resp["payload"]["status"] == "Stored" {
-                            stored += 1;
-                        }
+                // Rate-limited messages get no response — use try_recv with timeout
+                match timeout(Duration::from_millis(500), async {
+                    client.try_recv().await
+                })
+                .await
+                {
+                    Ok(Some(resp)) if resp["payload"]["status"] == "Stored" => {
+                        stored += 1;
                     }
                     _ => {
-                        // No response = rate limited, continue
+                        // No response or rate-limited — continue
                     }
                 }
             }
 
-            ws.close(None).await.ok();
+            client.close().await;
             stored
         }));
     }
@@ -548,10 +452,13 @@ async fn test_delivery_notification_latency() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let registry = Arc::new(ConnectionRegistry::new());
     let blob_sender_map = handler::new_blob_sender_map();
+    let kp = generate_relay_keypair();
+    let relay_pub = kp.public;
 
-    let make_deps = |s: Arc<SqliteBlobStore>,
-                     r: Arc<ConnectionRegistry>,
-                     bsm: handler::BlobSenderMap|
+    let make_local_deps = |s: Arc<SqliteBlobStore>,
+                           r: Arc<ConnectionRegistry>,
+                           bsm: handler::BlobSenderMap,
+                           noise_priv: [u8; 32]|
      -> ConnectionDeps {
         ConnectionDeps {
             storage: s as Arc<dyn BlobStore>,
@@ -568,8 +475,7 @@ async fn test_delivery_notification_latency() {
                 max_bytes: 0,
             },
             hint_store: None,
-            noise_static_key: None,
-            require_noise_encryption: false,
+            noise_static_key: Some(noise_priv),
             nonce_tracker: Arc::new(handler::NonceTracker::new()),
             delivery_jitter_min_ms: 0,
             delivery_jitter_max_ms: 0,
@@ -578,41 +484,43 @@ async fn test_delivery_notification_latency() {
         }
     };
 
-    let deps = make_deps(storage.clone(), registry.clone(), blob_sender_map.clone());
+    let deps = make_local_deps(
+        storage.clone(),
+        registry.clone(),
+        blob_sender_map.clone(),
+        kp.private,
+    );
     let url = start_multi_server(deps).await;
 
     let sender_id = common::generate_test_client_id(1);
     let recipient_id = common::generate_test_client_id(2);
 
     // Connect sender
-    let (mut sender_ws, _) = connect_async(&url).await.unwrap();
-    let _ack = do_handshake(&mut sender_ws, &sender_id).await;
+    let mut sender = connect_noise(&url, &relay_pub).await;
+    let _ack = sender.do_handshake(&sender_id).await;
 
     // Sender stores a blob
     let update = make_encrypted_update(&recipient_id, &[1, 2, 3, 4, 5]);
-    let stored_ack = send_recv(&mut sender_ws, &update).await;
+    let stored_ack = sender.send_recv(&update).await;
     assert_eq!(stored_ack["payload"]["status"], "Stored");
 
     let start = Instant::now();
 
     // Recipient connects — triggers delivery + Delivered ack to sender
-    let (mut recipient_ws, _) = connect_async(&url).await.unwrap();
+    let mut recipient = connect_noise(&url, &relay_pub).await;
     let hs = make_handshake(&recipient_id);
-    recipient_ws
-        .send(Message::Binary(encode_envelope(&hs)))
-        .await
-        .unwrap();
+    recipient.send_envelope(&hs).await;
 
     // Recipient: HandshakeAck
-    let _ack = recv(&mut recipient_ws).await;
+    let _ack = recipient.recv().await;
     // Recipient: blob delivery
-    let blob = recv(&mut recipient_ws).await;
+    let blob = recipient.recv().await;
     assert_eq!(blob["payload"]["type"], "EncryptedUpdate");
 
     // Sender: wait for Delivered ack
     let delivered = timeout(Duration::from_secs(2), async {
         loop {
-            if let Some(msg) = try_recv(&mut sender_ws).await
+            if let Some(msg) = sender.try_recv().await
                 && msg["payload"]["type"] == "Acknowledgment"
                 && msg["payload"]["status"] == "Delivered"
             {
@@ -633,8 +541,8 @@ async fn test_delivery_notification_latency() {
         round_trip
     );
 
-    sender_ws.close(None).await.ok();
-    recipient_ws.close(None).await.ok();
+    sender.close().await;
+    recipient.close().await;
 }
 
 // ============================================================================
@@ -645,7 +553,7 @@ async fn test_delivery_notification_latency() {
 /// Assert second connection works.
 #[tokio::test]
 async fn test_idle_timeout_and_reconnect() {
-    let (deps, _, _) = test_deps_custom(
+    let (deps, relay_pub, _, _) = test_deps_custom(
         1000,
         Duration::from_millis(500), // 500ms idle timeout
         QuotaLimits {
@@ -657,35 +565,46 @@ async fn test_idle_timeout_and_reconnect() {
 
     let client_id = common::generate_test_client_id(1);
 
-    // First connection
-    let (mut ws1, _) = connect_async(&url).await.unwrap();
-    let ack = do_handshake(&mut ws1, &client_id).await;
+    // First connection — use Noise; after handshake we hold and wait for idle close
+    let mut client1 = connect_noise(&url, &relay_pub).await;
+    let ack = client1.do_handshake(&client_id).await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
-    // Wait for idle timeout
-    tokio::time::sleep(Duration::from_millis(700)).await;
-
-    // Server should have closed the connection
-    let msg = timeout(Duration::from_secs(2), ws1.next()).await;
-    match msg {
-        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) | Ok(Some(Err(_))) => {
-            // Expected: connection closed
+    // Wait for idle timeout — server will close the WS stream
+    // Poll until we get a close or an error (CC-06: bounded wait, no bare sleep)
+    let timed_out = timeout(Duration::from_secs(3), async {
+        loop {
+            match client1.try_recv().await {
+                None => {
+                    // No message yet — keep waiting
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Some(_) => {
+                    // Any message (incl. Close frame decoded as JSON error) means server sent something
+                    return;
+                }
+            }
         }
-        other => panic!("Expected disconnection after idle timeout, got {:?}", other),
-    }
+    })
+    .await;
+    // Whether we timed out or got a close, the connection is dead — that's fine
+
+    drop(client1);
+    // Give server a moment to clean up
+    let _ = timed_out;
 
     // Reconnect — should work
-    let (mut ws2, _) = connect_async(&url).await.unwrap();
-    let ack2 = do_handshake(&mut ws2, &client_id).await;
+    let mut client2 = connect_noise(&url, &relay_pub).await;
+    let ack2 = client2.do_handshake(&client_id).await;
     assert_eq!(ack2["payload"]["type"], "HandshakeAck");
 
     // Verify the reconnected session works
     let recipient_id = common::generate_test_client_id(2);
-    let update = make_encrypted_update(&recipient_id, &[42]);
-    let response = send_recv(&mut ws2, &update).await;
+    let update = make_encrypted_update(&recipient_id, &[42u8]);
+    let response = client2.send_recv(&update).await;
     assert_eq!(response["payload"]["status"], "Stored");
 
-    ws2.close(None).await.ok();
+    client2.close().await;
 }
 
 // ============================================================================

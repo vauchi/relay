@@ -18,9 +18,9 @@ use super::verify::{protocol, verify_signed_handshake};
 use crate::connection_registry::RegistryMessage;
 use crate::noise_transport::{self, NoiseResponder, NoiseTransport};
 
-/// Performs the WebSocket + Noise handshake, returning the parsed handshake data.
+/// Performs the WebSocket + Noise NK handshake, returning the parsed handshake data.
 ///
-/// Reads the first WebSocket message, negotiates Noise NK if requested,
+/// Reads the first WebSocket message, performs the Noise NK handshake (mandatory since v0.1),
 /// decodes and validates the protocol-level Handshake, and sends the HandshakeAck.
 ///
 /// Returns `(client_id, device_id, routing_id, suppress_presence, noise_session)` on success,
@@ -32,7 +32,7 @@ async fn perform_handshake(
     deps: &ConnectionDeps,
     session: &str,
 ) -> Option<(String, Option<String>, String, bool, Option<NoiseTransport>)> {
-    // Read the first WebSocket message — could be v1 Handshake or v2 Noise handshake
+    // Read the first WebSocket message — must be a Noise NK handshake
     let first_msg = match timeout(deps.idle_timeout, read.next()).await {
         Ok(Some(Ok(Message::Binary(data)))) => data,
         Ok(Some(Ok(_))) => {
@@ -53,84 +53,80 @@ async fn perform_handshake(
         }
     };
 
-    // Detect v2 (Noise) or v1 (plaintext) connection
-    let mut noise_session: Option<NoiseTransport> = None;
+    // Reject non-Noise connections — Noise NK is mandatory since v0.1
+    if first_msg.len() < noise_transport::V2_MAGIC.len()
+        || first_msg[..noise_transport::V2_MAGIC.len()] != noise_transport::V2_MAGIC
+    {
+        warn!(
+            "[{}] Plaintext connections rejected — Noise NK mandatory since v0.1",
+            session
+        );
+        return None;
+    }
 
-    let handshake_data = if noise_transport::is_noise_v2_handshake(&first_msg) {
-        // --- v2 Noise NK handshake ---
-        let noise_key = match deps.noise_static_key {
-            Some(key) => key,
-            None => {
-                warn!(
-                    "[{}] v2 handshake received but Noise is not configured",
-                    session
-                );
-                return None;
-            }
-        };
-
-        // Extract handshake bytes (skip 3-byte magic)
-        let handshake_bytes = &first_msg[noise_transport::V2_MAGIC.len()..];
-
-        // Process NK handshake (-> e, es)
-        let responder = match NoiseResponder::new(&noise_key) {
-            Ok(r) => r,
-            Err(e) => {
-                warn!("[{}] Failed to create Noise responder: {}", session, e);
-                return None;
-            }
-        };
-
-        let (transport, response) = match responder.process_handshake(handshake_bytes) {
-            Ok(r) => r,
-            Err(e) => {
-                warn!("[{}] Noise handshake failed: {}", session, e);
-                return None;
-            }
-        };
-
-        // Send NK response (<- e, ee) with V2 magic prefix
-        let mut response_msg = Vec::with_capacity(noise_transport::V2_MAGIC.len() + response.len());
-        response_msg.extend_from_slice(&noise_transport::V2_MAGIC);
-        response_msg.extend_from_slice(&response);
-        if write.send(Message::Binary(response_msg)).await.is_err() {
-            warn!("[{}] Failed to send Noise handshake response", session);
-            return None;
-        }
-
-        noise_session = Some(transport);
-
-        debug!("[{}] Noise NK handshake completed", session);
-
-        // Read the next message — the encrypted Handshake
-        match timeout(deps.idle_timeout, read.next()).await {
-            Ok(Some(Ok(Message::Binary(encrypted_data)))) => {
-                match noise_session.as_mut().unwrap().decrypt(&encrypted_data) {
-                    Ok(decrypted) => decrypted,
-                    Err(e) => {
-                        warn!("[{}] Failed to decrypt Handshake: {}", session, e);
-                        return None;
-                    }
-                }
-            }
-            _ => {
-                warn!(
-                    "[{}] Expected encrypted Handshake after Noise setup",
-                    session
-                );
-                return None;
-            }
-        }
-    } else {
-        // --- v1 plaintext connection ---
-        if deps.require_noise_encryption {
+    // --- Noise NK handshake ---
+    let noise_key = match deps.noise_static_key {
+        Some(key) => key,
+        None => {
             warn!(
-                "[{}] Plaintext connection rejected (require_noise_encryption=true)",
+                "[{}] Noise handshake received but Noise is not configured",
                 session
             );
             return None;
         }
-        first_msg
+    };
+
+    // Extract handshake bytes (skip 3-byte magic)
+    let handshake_bytes = &first_msg[noise_transport::V2_MAGIC.len()..];
+
+    // Process NK handshake (-> e, es)
+    let responder = match NoiseResponder::new(&noise_key) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("[{}] Failed to create Noise responder: {}", session, e);
+            return None;
+        }
+    };
+
+    let (transport, response) = match responder.process_handshake(handshake_bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("[{}] Noise handshake failed: {}", session, e);
+            return None;
+        }
+    };
+
+    // Send NK response (<- e, ee) with V2 magic prefix
+    let mut response_msg = Vec::with_capacity(noise_transport::V2_MAGIC.len() + response.len());
+    response_msg.extend_from_slice(&noise_transport::V2_MAGIC);
+    response_msg.extend_from_slice(&response);
+    if write.send(Message::Binary(response_msg)).await.is_err() {
+        warn!("[{}] Failed to send Noise handshake response", session);
+        return None;
+    }
+
+    let mut noise_session: Option<NoiseTransport> = Some(transport);
+
+    debug!("[{}] Noise NK handshake completed", session);
+
+    // Read the next message — the encrypted Handshake
+    let handshake_data = match timeout(deps.idle_timeout, read.next()).await {
+        Ok(Some(Ok(Message::Binary(encrypted_data)))) => {
+            match noise_session.as_mut().unwrap().decrypt(&encrypted_data) {
+                Ok(decrypted) => decrypted,
+                Err(e) => {
+                    warn!("[{}] Failed to decrypt Handshake: {}", session, e);
+                    return None;
+                }
+            }
+        }
+        _ => {
+            warn!(
+                "[{}] Expected encrypted Handshake after Noise setup",
+                session
+            );
+            return None;
+        }
     };
 
     // Parse the Handshake message (same for v1 and v2)
@@ -237,7 +233,7 @@ async fn perform_handshake(
                 }
             }
         } else {
-            ack_data
+            unreachable!("Noise NK is mandatory since v0.1")
         };
         if write.send(Message::Binary(send_data)).await.is_err() {
             warn!("[{}] Failed to send HandshakeAck", session);
@@ -286,7 +282,7 @@ async fn deliver_pending(
                         }
                     }
                 } else {
-                    data
+                    unreachable!("Noise NK is mandatory since v0.1")
                 };
                 if write.send(Message::Binary(send_data)).await.is_err() {
                     warn!("[{}] Failed to send pending blob", ctx.session);
@@ -362,7 +358,7 @@ async fn deliver_pending(
                         }
                     }
                 } else {
-                    data
+                    unreachable!("Noise NK is mandatory since v0.1")
                 };
                 if write.send(Message::Binary(send_data)).await.is_err() {
                     warn!("[{}] Failed to send forwarding hints", ctx.session);
@@ -397,7 +393,7 @@ async fn deliver_pending(
                             }
                         }
                     } else {
-                        data
+                        unreachable!("Noise NK is mandatory since v0.1")
                     };
                     if write.send(Message::Binary(send_data)).await.is_err() {
                         warn!("[{}] Failed to send pending device sync", ctx.session);
@@ -440,7 +436,7 @@ async fn noise_encrypt_and_send(
             }
         }
     } else {
-        data
+        unreachable!("Noise NK is mandatory since v0.1")
     };
     write.send(Message::Binary(send_data)).await.map_err(|_| ())
 }
@@ -549,7 +545,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         Err(_) => continue,
                     }
                 } else {
-                    registry_msg.data
+                    unreachable!("Noise NK is mandatory since v0.1")
                 };
                 let _ = write.send(Message::Binary(send_data)).await;
                 continue;
@@ -568,7 +564,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                         }
                     }
                 } else {
-                    data
+                    unreachable!("Noise NK is mandatory since v0.1")
                 };
 
                 // Check message size (after decryption)

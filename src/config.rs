@@ -153,7 +153,7 @@ impl Default for FederationConfig {
     }
 }
 
-/// Security-related configuration (rate limiting, encryption, jitter).
+/// Security-related configuration (rate limiting, jitter).
 #[derive(Debug, Clone)]
 pub struct SecurityConfig {
     /// Rate limit (messages per minute per client).
@@ -161,9 +161,6 @@ pub struct SecurityConfig {
     /// Recovery proof rate limit (queries per minute per client).
     /// Stricter than general rate limit to prevent key hash enumeration.
     pub recovery_rate_limit_per_min: u32,
-    /// Whether to require Noise NK inner encryption for all connections.
-    /// When true, plaintext (v1) connections are rejected.
-    pub require_noise_encryption: bool,
     /// Minimum delivery jitter delay in milliseconds (traffic analysis resistance).
     pub delivery_jitter_min_ms: u64,
     /// Maximum delivery jitter delay in milliseconds (traffic analysis resistance).
@@ -175,7 +172,6 @@ impl Default for SecurityConfig {
         SecurityConfig {
             rate_limit_per_min: 60,
             recovery_rate_limit_per_min: 10, // 10 recovery queries per minute (anti-enumeration)
-            require_noise_encryption: true,
             delivery_jitter_min_ms: crate::jitter::DEFAULT_JITTER_MIN_MS,
             delivery_jitter_max_ms: crate::jitter::DEFAULT_JITTER_MAX_MS,
         }
@@ -335,8 +331,13 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_REQUIRE_NOISE_ENCRYPTION") {
-            config.security.require_noise_encryption = val == "true" || val == "1";
+        if std::env::var("RELAY_REQUIRE_NOISE_ENCRYPTION").is_ok() {
+            // SP-33: removed — Noise NK is now mandatory for all connections since v0.1.
+            // Log a warning at startup; the value is ignored.
+            eprintln!(
+                "WARNING: RELAY_REQUIRE_NOISE_ENCRYPTION is deprecated — \
+                 Noise NK is now mandatory for all connections"
+            );
         }
 
         if let Ok(val) = std::env::var("RELAY_DELIVERY_JITTER_MIN_MS") {

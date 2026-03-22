@@ -2,17 +2,18 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Fuzz target for Noise v2 handshake detection.
+//! Fuzz target for Noise V2 magic byte prefix detection.
 //!
-//! Tests `is_noise_v2_handshake()` with arbitrary byte input to find
-//! panics in magic byte and size checking. Trivial function but guards
-//! the security-critical protocol upgrade path.
+//! Tests V2_MAGIC prefix checking with arbitrary byte input to ensure
+//! the guard never panics on any input. This mirrors the logic in
+//! `handler::connection::perform_handshake` which rejects non-Noise connections.
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use vauchi_relay::noise_transport::is_noise_v2_handshake;
+use vauchi_relay::noise_transport::V2_MAGIC;
 
 fuzz_target!(|data: &[u8]| {
-    let _ = is_noise_v2_handshake(data);
+    // Mirror the guard in perform_handshake: check magic prefix without panicking
+    let _is_noise = data.len() >= V2_MAGIC.len() && data[..V2_MAGIC.len()] == V2_MAGIC;
 });

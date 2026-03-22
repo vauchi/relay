@@ -4,8 +4,8 @@
 
 //! Noise Encryption Enforcement Tests
 //!
-//! CRIT-07: Verifies that the relay rejects plaintext (v1) connections
-//! when `require_noise_encryption = true`.
+//! CRIT-07: Verifies that the relay rejects all plaintext (non-Noise) connections.
+//! Since v0.1, Noise NK is mandatory — there is no opt-out flag.
 //!
 //! security.feature: Noise NK inner encryption
 
@@ -48,7 +48,7 @@ fn encode_envelope(envelope: &serde_json::Value) -> Vec<u8> {
 // Test helpers
 // ============================================================================
 
-fn make_deps(require_noise: bool) -> ConnectionDeps {
+fn make_deps() -> ConnectionDeps {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let registry = Arc::new(ConnectionRegistry::new());
     ConnectionDeps {
@@ -67,7 +67,6 @@ fn make_deps(require_noise: bool) -> ConnectionDeps {
         },
         hint_store: None,
         noise_static_key: None,
-        require_noise_encryption: require_noise,
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
@@ -96,18 +95,17 @@ async fn start_test_server(deps: ConnectionDeps) -> String {
 // Tests
 // ============================================================================
 
-/// When `require_noise_encryption = true`, a plaintext (v1) handshake should
-/// be rejected: the server closes the connection without sending a HandshakeAck.
-// @scenario: noise_protocol:Plaintext rejected when noise encryption required
-// @scenario: noise_protocol.feature:Relay optionally requires Noise for v2+ clients
+/// Plaintext (v1) connections are always rejected — Noise NK is mandatory since v0.1.
+// @scenario: noise_protocol:Plaintext rejected — Noise NK mandatory since v0.1
+// @scenario: noise_protocol.feature:Relay rejects all non-Noise connections
 #[tokio::test]
-async fn test_plaintext_rejected_when_noise_required() {
-    let deps = make_deps(true);
+async fn test_plaintext_always_rejected() {
+    let deps = make_deps();
     let url = start_test_server(deps).await;
 
     let (mut ws, _) = connect_async(&url).await.unwrap();
 
-    // Send a valid v1 plaintext Handshake
+    // Send a valid v1 plaintext Handshake (no Noise magic prefix)
     let client_id = common::generate_test_client_id(1);
     let handshake = json!({
         "version": 1,
@@ -121,14 +119,14 @@ async fn test_plaintext_rejected_when_noise_required() {
     let frame = encode_envelope(&handshake);
     ws.send(Message::Binary(frame)).await.unwrap();
 
-    // The server should close the connection without a HandshakeAck.
+    // The server must close the connection without sending a HandshakeAck.
     let result = timeout(Duration::from_secs(2), ws.next()).await;
     match result {
         Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) => {
             // Connection closed or timed out — correct behavior
         }
         Ok(Some(Ok(Message::Binary(data)))) => {
-            // If we got a response, it must NOT be a successful HandshakeAck
+            // If we got a binary response, it must NOT be a HandshakeAck
             if data.len() >= FRAME_HEADER_SIZE {
                 let json: serde_json::Value =
                     serde_json::from_slice(&data[FRAME_HEADER_SIZE..]).unwrap_or_default();
@@ -139,7 +137,7 @@ async fn test_plaintext_rejected_when_noise_required() {
                     .unwrap_or("");
                 assert_ne!(
                     payload_type, "HandshakeAck",
-                    "Plaintext connection must NOT receive HandshakeAck when noise is required"
+                    "Plaintext connection must NEVER receive HandshakeAck (Noise NK mandatory)"
                 );
             }
         }
@@ -147,60 +145,36 @@ async fn test_plaintext_rejected_when_noise_required() {
             // WebSocket error — connection was dropped, correct behavior
         }
         other => {
-            panic!("Unexpected response when noise required: {:?}", other);
+            panic!("Unexpected response to plaintext handshake: {:?}", other);
         }
     }
 }
 
-/// When `require_noise_encryption = false`, a plaintext (v1) handshake should
-/// succeed normally with a HandshakeAck response.
-// @scenario: noise_protocol:Plaintext accepted when noise not required
-// @scenario: noise_protocol.feature:Client connects to relay without Noise support
+/// Raw binary data without the Noise V2 magic prefix is rejected.
+// @scenario: noise_protocol:Arbitrary binary without magic prefix rejected
 #[tokio::test]
-async fn test_plaintext_accepted_when_noise_not_required() {
-    let deps = make_deps(false);
+async fn test_arbitrary_binary_without_noise_magic_rejected() {
+    let deps = make_deps();
     let url = start_test_server(deps).await;
 
     let (mut ws, _) = connect_async(&url).await.unwrap();
 
-    // Send a valid v1 plaintext Handshake
-    let client_id = common::generate_test_client_id(2);
-    let handshake = json!({
-        "version": 1,
-        "message_id": uuid::Uuid::new_v4().to_string(),
-        "timestamp": 1000,
-        "payload": {
-            "type": "Handshake",
-            "client_id": client_id
-        }
-    });
-    let frame = encode_envelope(&handshake);
-    ws.send(Message::Binary(frame)).await.unwrap();
+    // Send arbitrary binary data that doesn't start with V2 magic
+    let garbage = vec![0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01, 0x02, 0x03];
+    ws.send(Message::Binary(garbage)).await.unwrap();
 
-    // Should receive a HandshakeAck
+    // The server must close the connection
     let result = timeout(Duration::from_secs(2), ws.next()).await;
     match result {
-        Ok(Some(Ok(Message::Binary(data)))) => {
-            assert!(data.len() >= FRAME_HEADER_SIZE, "Response frame too short");
-            let json: serde_json::Value =
-                serde_json::from_slice(&data[FRAME_HEADER_SIZE..]).unwrap();
-            let payload_type = json
-                .get("payload")
-                .and_then(|p| p.get("type"))
-                .and_then(|t| t.as_str())
-                .unwrap_or("");
-            assert_eq!(
-                payload_type, "HandshakeAck",
-                "Plaintext connection should receive HandshakeAck when noise not required"
-            );
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) => {
+            // Connection closed — correct behavior
         }
-        other => {
-            panic!(
-                "Expected HandshakeAck for plaintext connection, got: {:?}",
-                other
-            );
+        Ok(Some(Err(_))) => {
+            // WebSocket error on close — acceptable
+        }
+        Ok(Some(Ok(msg))) => {
+            // Any other message type means the server accepted garbage — wrong
+            panic!("Server should reject non-Noise binary data, got: {:?}", msg);
         }
     }
-
-    ws.close(None).await.ok();
 }

@@ -55,16 +55,17 @@ use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintSt
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::integrity;
 use vauchi_relay::metrics::RelayMetrics;
+use vauchi_relay::noise_key::generate_relay_keypair;
 use vauchi_relay::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus, gossip};
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
 
+use common::ws_helpers::connect_noise;
+
 // ============================================================================
 // Protocol helpers
 // ============================================================================
-
-const FRAME_HEADER_SIZE: usize = 4;
 
 /// Encodes a FederationEnvelope to wire format.
 fn encode_fed(envelope: &FederationEnvelope) -> Vec<u8> {
@@ -74,22 +75,6 @@ fn encode_fed(envelope: &FederationEnvelope) -> Vec<u8> {
 /// Decodes wire bytes to FederationEnvelope.
 fn decode_fed(data: &[u8]) -> FederationEnvelope {
     federation_protocol::decode_federation_message(data).unwrap()
-}
-
-/// Encodes a client protocol JSON value to wire format.
-fn encode_client(envelope: &serde_json::Value) -> Vec<u8> {
-    let json = serde_json::to_vec(envelope).unwrap();
-    let len = json.len() as u32;
-    let mut frame = Vec::with_capacity(FRAME_HEADER_SIZE + json.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&json);
-    frame
-}
-
-/// Decodes client protocol wire bytes to JSON.
-fn decode_client(data: &[u8]) -> serde_json::Value {
-    assert!(data.len() >= FRAME_HEADER_SIZE, "Frame too short");
-    serde_json::from_slice(&data[FRAME_HEADER_SIZE..]).unwrap()
 }
 
 /// Creates a PeerHandshake message.
@@ -184,6 +169,8 @@ struct SimulatedRelay {
     config: Arc<RelayConfig>,
     federation_url: String,
     client_url: String,
+    /// Public key for Noise NK client connections.
+    relay_pub_key: [u8; 32],
 }
 
 /// Creates a test RelayConfig for federation.
@@ -208,11 +195,12 @@ fn make_fed_config(relay_id: &str, max_storage: usize, offload_threshold: f64) -
     })
 }
 
-/// Creates client ConnectionDeps.
+/// Creates client ConnectionDeps with Noise NK key.
 fn make_client_deps(
     storage: Arc<dyn BlobStore>,
     registry: Arc<ConnectionRegistry>,
     hint_store: Option<Arc<dyn ForwardingHintStore>>,
+    noise_priv: [u8; 32],
 ) -> ConnectionDeps {
     ConnectionDeps {
         storage,
@@ -229,8 +217,7 @@ fn make_client_deps(
             max_bytes: 100_000_000,
         },
         hint_store,
-        noise_static_key: None,
-        require_noise_encryption: false,
+        noise_static_key: Some(noise_priv),
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
@@ -290,6 +277,7 @@ async fn start_client_server(deps: ConnectionDeps) -> String {
     let idle_timeout = deps.idle_timeout;
     let quota = deps.quota;
     let hint_store = deps.hint_store;
+    let noise_static_key = deps.noise_static_key;
 
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
@@ -305,8 +293,7 @@ async fn start_client_server(deps: ConnectionDeps) -> String {
                 idle_timeout,
                 quota,
                 hint_store: hint_store.clone(),
-                noise_static_key: None,
-                require_noise_encryption: false,
+                noise_static_key,
                 nonce_tracker: Arc::new(handler::NonceTracker::new()),
                 delivery_jitter_min_ms: 0,
                 delivery_jitter_max_ms: 0,
@@ -335,6 +322,8 @@ async fn create_relay(
     let peer_registry = Arc::new(PeerRegistry::new_allow_private(0.95));
     let config = make_fed_config(relay_id, max_storage, offload_threshold);
     let connection_registry = Arc::new(ConnectionRegistry::new());
+    let kp = generate_relay_keypair();
+    let relay_pub_key = kp.public;
 
     let federation_url = start_federation_server(FederationDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
@@ -350,6 +339,7 @@ async fn create_relay(
         storage.clone() as Arc<dyn BlobStore>,
         connection_registry,
         Some(hint_store.clone() as Arc<dyn ForwardingHintStore>),
+        kp.private,
     ))
     .await;
 
@@ -361,6 +351,7 @@ async fn create_relay(
         config,
         federation_url,
         client_url,
+        relay_pub_key,
     }
 }
 
@@ -504,12 +495,12 @@ async fn test_federation_1000_users_across_3_relays() {
 
         for user_id in batch_start..batch_end {
             // Determine which relay this user connects to
-            let relay_url = if user_id < 334 {
-                relay_a.client_url.clone()
+            let (relay_url, relay_pub) = if user_id < 334 {
+                (relay_a.client_url.clone(), relay_a.relay_pub_key)
             } else if user_id < 667 {
-                relay_b.client_url.clone()
+                (relay_b.client_url.clone(), relay_b.relay_pub_key)
             } else {
-                relay_c.client_url.clone()
+                (relay_c.client_url.clone(), relay_c.relay_pub_key)
             };
 
             let conn_counter = successful_connections.clone();
@@ -518,22 +509,20 @@ async fn test_federation_1000_users_across_3_relays() {
             handles.push(tokio::spawn(async move {
                 let client_id = common::generate_test_client_id_wide(user_id);
 
-                if let Ok(Ok((mut ws, _))) =
-                    timeout(Duration::from_secs(10), connect_async(&relay_url)).await
+                if let Ok(mut client) = timeout(
+                    Duration::from_secs(10),
+                    connect_noise(&relay_url, &relay_pub),
+                )
+                .await
                 {
                     // Handshake
                     let hs = make_client_handshake(&client_id);
-                    if ws.send(Message::Binary(encode_client(&hs))).await.is_err() {
-                        return;
-                    }
+                    client.send_envelope(&hs).await;
 
                     // Wait for HandshakeAck
-                    let Ok(Some(Ok(Message::Binary(data)))) =
-                        timeout(Duration::from_secs(5), ws.next()).await
-                    else {
+                    let Ok(resp) = timeout(Duration::from_secs(5), client.recv()).await else {
                         return;
                     };
-                    let resp = decode_client(&data);
                     if resp["payload"]["type"] != "HandshakeAck" {
                         return;
                     }
@@ -544,23 +533,15 @@ async fn test_federation_1000_users_across_3_relays() {
                     let recipient_id = common::generate_test_client_id_wide(target_user);
                     let update = make_encrypted_update(&recipient_id, &[user_id as u8; 32]);
 
-                    if ws
-                        .send(Message::Binary(encode_client(&update)))
-                        .await
-                        .is_ok()
+                    client.send_envelope(&update).await;
+                    // Wait for Stored ack
+                    if let Ok(resp) = timeout(Duration::from_secs(5), client.recv()).await
+                        && resp["payload"]["status"] == "Stored"
                     {
-                        // Wait for Stored ack
-                        if let Ok(Some(Ok(Message::Binary(data)))) =
-                            timeout(Duration::from_secs(5), ws.next()).await
-                        {
-                            let resp = decode_client(&data);
-                            if resp["payload"]["status"] == "Stored" {
-                                send_counter.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
+                        send_counter.fetch_add(1, Ordering::Relaxed);
                     }
 
-                    ws.close(None).await.ok();
+                    client.close().await;
                 }
             }));
         }

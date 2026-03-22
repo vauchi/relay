@@ -124,7 +124,6 @@ fn test_nested_security_config_defaults() {
     let config = RelayConfig::default();
     assert_eq!(config.security.rate_limit_per_min, 60);
     assert_eq!(config.security.recovery_rate_limit_per_min, 10);
-    assert!(config.security.require_noise_encryption);
     assert_eq!(config.security.delivery_jitter_min_ms, 50);
     assert_eq!(config.security.delivery_jitter_max_ms, 500);
 }
@@ -171,7 +170,6 @@ fn test_nested_config_construction_with_overrides() {
         },
         security: SecurityConfig {
             rate_limit_per_min: 120,
-            require_noise_encryption: false,
             ..Default::default()
         },
     };
@@ -183,7 +181,6 @@ fn test_nested_config_construction_with_overrides() {
     assert_eq!(config.federation.peers.len(), 1);
     assert!((config.federation.offload_threshold - 0.70).abs() < f64::EPSILON);
     assert_eq!(config.security.rate_limit_per_min, 120);
-    assert!(!config.security.require_noise_encryption);
 }
 
 /// RelayConfig delegate: idle_timeout()

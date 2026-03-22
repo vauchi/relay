@@ -24,9 +24,6 @@ pub const NOISE_PATTERN: &str = "Noise_NK_25519_ChaChaPoly_BLAKE2s";
 /// First byte is 0x00 (invalid JSON start), followed by "V2".
 pub const V2_MAGIC: [u8; 3] = [0x00, b'V', b'2'];
 
-/// Minimum size of a v2 handshake message: 3-byte magic + 48-byte NK handshake.
-pub const V2_HANDSHAKE_MIN_SIZE: usize = V2_MAGIC.len() + 48;
-
 /// Noise NK responder (relay side).
 ///
 /// Processes the client's handshake message (-> e, es), generates a response
@@ -128,14 +125,6 @@ impl NoiseTransport {
         buf.truncate(len);
         Ok(buf)
     }
-}
-
-/// Checks if a WebSocket message is a Noise v2 handshake.
-///
-/// Returns true if the data starts with `\x00V2` magic bytes and has
-/// minimum handshake length.
-pub fn is_noise_v2_handshake(data: &[u8]) -> bool {
-    data.len() >= V2_HANDSHAKE_MIN_SIZE && data[..3] == V2_MAGIC
 }
 
 // INLINE_TEST_REQUIRED: test_handshake helper + tests need private access to NoiseTransport internals and constants
@@ -253,28 +242,6 @@ mod tests {
         // Corrupt a byte
         ct[5] ^= 0xff;
         assert!(relay_transport.decrypt(&ct).is_err());
-    }
-
-    #[test]
-    fn test_is_noise_v2_handshake_detection() {
-        // Valid v2 handshake (magic + 48 bytes minimum)
-        let mut valid = vec![0x00, b'V', b'2'];
-        valid.extend_from_slice(&[0u8; 48]);
-        assert!(is_noise_v2_handshake(&valid));
-
-        // Too short
-        let short = vec![0x00, b'V', b'2', 0x00];
-        assert!(!is_noise_v2_handshake(&short));
-
-        // Wrong magic (starts with '{' like JSON)
-        let mut json_like = vec![b'{', b'"', b'v'];
-        json_like.extend_from_slice(&[0u8; 48]);
-        assert!(!is_noise_v2_handshake(&json_like));
-
-        // v1 frame (starts with length prefix — second byte not 'V')
-        let mut v1 = vec![0x00, 0x00, 0x00, 0x10];
-        v1.extend_from_slice(&[0u8; 48]);
-        assert!(!is_noise_v2_handshake(&v1));
     }
 
     #[test]

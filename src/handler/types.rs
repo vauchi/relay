@@ -50,10 +50,7 @@ pub struct ConnectionDeps {
     /// Forwarding hint store for federation. None if federation is disabled.
     pub hint_store: Option<Arc<dyn ForwardingHintStore>>,
     /// Relay's static Noise key for inner transport encryption.
-    /// None disables Noise support (v1-only mode).
     pub noise_static_key: Option<[u8; 32]>,
-    /// When true, reject plaintext (v1) connections.
-    pub require_noise_encryption: bool,
     /// Nonce tracker for handshake replay prevention. Shared across all connections.
     pub nonce_tracker: Arc<NonceTracker>,
     /// Minimum delivery jitter delay in milliseconds (traffic analysis resistance).

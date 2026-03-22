@@ -24,9 +24,12 @@ use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
+use vauchi_relay::noise_key::generate_relay_keypair;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
+
+use common::ws_helpers::connect_noise;
 
 // ============================================================================
 // Test infrastructure: full server with peek routing
@@ -37,16 +40,19 @@ use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
 /// 2. HTTP GET → writes response + shutdown
 /// 3. WebSocket upgrade → accept_async → handle_connection
 ///
-/// Returns (url, connection_limiter) so tests can inspect limits.
+/// Returns (url, connection_limiter, storage, relay_pubkey).
 async fn start_full_server(
     max_connections: usize,
-) -> (String, ConnectionLimiter, Arc<SqliteBlobStore>) {
+) -> (String, ConnectionLimiter, Arc<SqliteBlobStore>, [u8; 32]) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let url = format!("ws://127.0.0.1:{}", addr.port());
 
     let limiter = ConnectionLimiter::new(max_connections);
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let kp = generate_relay_keypair();
+    let relay_pub = kp.public;
+    let noise_priv = kp.private;
 
     let limiter_clone = limiter.clone();
     let storage_clone = storage.clone();
@@ -156,8 +162,7 @@ async fn start_full_server(
                                 max_bytes: 0,
                             },
                             hint_store: None,
-                            noise_static_key: None,
-                            require_noise_encryption: false,
+                            noise_static_key: Some(noise_priv),
                             nonce_tracker: Arc::new(handler::NonceTracker::new()),
                             delivery_jitter_min_ms: 0,
                             delivery_jitter_max_ms: 0,
@@ -174,7 +179,7 @@ async fn start_full_server(
         }
     });
 
-    (url, limiter, storage)
+    (url, limiter, storage, relay_pub)
 }
 
 /// Sends a raw HTTP GET request over TCP and reads the full response.
@@ -218,7 +223,7 @@ async fn raw_http_get(addr: &str, path: &str) -> String {
 // @scenario: relay_network:Health endpoint returns server status
 #[tokio::test]
 async fn test_health_endpoint_returns_json() {
-    let (url, _, _) = start_full_server(100).await;
+    let (url, _, _, _) = start_full_server(100).await;
     // Give server time to be ready
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -237,7 +242,7 @@ async fn test_health_endpoint_returns_json() {
 // @scenario: relay_network:Health endpoint returns server status
 #[tokio::test]
 async fn test_up_endpoint_returns_json() {
-    let (url, _, _) = start_full_server(100).await;
+    let (url, _, _, _) = start_full_server(100).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let response = raw_http_get(&url, "/up").await;
@@ -253,7 +258,7 @@ async fn test_up_endpoint_returns_json() {
 // @scenario: relay_network:Health endpoint returns server status
 #[tokio::test]
 async fn test_ready_endpoint_returns_json() {
-    let (url, _, _) = start_full_server(100).await;
+    let (url, _, _, _) = start_full_server(100).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let response = raw_http_get(&url, "/ready").await;
@@ -269,7 +274,7 @@ async fn test_ready_endpoint_returns_json() {
 // @scenario: relay_network:Unknown HTTP paths return error
 #[tokio::test]
 async fn test_unknown_http_path_returns_error() {
-    let (url, _, _) = start_full_server(100).await;
+    let (url, _, _, _) = start_full_server(100).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let response = raw_http_get(&url, "/unknown").await;
@@ -289,49 +294,16 @@ async fn test_unknown_http_path_returns_error() {
 // @scenario: relay_network:Client connects to relay via WebSocket
 #[tokio::test]
 async fn test_websocket_upgrade_works_through_peek() {
-    let (url, _, _) = start_full_server(100).await;
+    let (url, _, _, relay_pub) = start_full_server(100).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let (mut ws, _) = connect_async(&url).await.unwrap();
-
-    // Perform a handshake to verify the full pipeline works
+    // Perform a full Noise NK handshake to verify the full pipeline works
+    let mut client = connect_noise(&url, &relay_pub).await;
     let client_id = common::generate_test_client_id(1);
-    let hs = serde_json::json!({
-        "version": 1,
-        "message_id": uuid::Uuid::new_v4().to_string(),
-        "timestamp": 1000,
-        "payload": {
-            "type": "Handshake",
-            "client_id": client_id
-        }
-    });
-    let json = serde_json::to_vec(&hs).unwrap();
-    let len = json.len() as u32;
-    let mut frame = Vec::with_capacity(4 + json.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&json);
+    let ack = client.do_handshake(&client_id).await;
+    assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::tungstenite::Message;
-
-    ws.send(Message::Binary(frame)).await.unwrap();
-
-    let msg = timeout(Duration::from_secs(3), ws.next())
-        .await
-        .expect("Timeout")
-        .expect("Stream ended")
-        .expect("WebSocket error");
-
-    match msg {
-        Message::Binary(data) => {
-            assert!(data.len() > 4);
-            let json_data: serde_json::Value = serde_json::from_slice(&data[4..]).unwrap();
-            assert_eq!(json_data["payload"]["type"], "HandshakeAck");
-        }
-        other => panic!("Expected Binary message, got {:?}", other),
-    }
-
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // ============================================================================
@@ -341,10 +313,10 @@ async fn test_websocket_upgrade_works_through_peek() {
 // @scenario: relay_network:Relay enforces connection limits
 #[tokio::test]
 async fn test_connection_limit_rejects_excess() {
-    let (url, limiter, _) = start_full_server(2).await;
+    let (url, limiter, _, _) = start_full_server(2).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Open 2 connections (at limit)
+    // Open 2 connections (at limit) — raw WS connect without Noise protocol
     let (ws1, _) = connect_async(&url).await.unwrap();
     let (ws2, _) = connect_async(&url).await.unwrap();
 
@@ -384,42 +356,19 @@ async fn test_connection_limit_rejects_excess() {
 // @scenario: relay_network:Relay enforces connection limits
 #[tokio::test]
 async fn test_connection_limit_releases_on_disconnect() {
-    let (url, limiter, _) = start_full_server(1).await;
+    let (url, limiter, _, relay_pub) = start_full_server(1).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // First connection
     {
-        let (mut ws, _) = connect_async(&url).await.unwrap();
-
-        // Perform handshake so we know the connection is fully established
+        let mut client = connect_noise(&url, &relay_pub).await;
         let client_id = common::generate_test_client_id(1);
-        let hs = serde_json::json!({
-            "version": 1,
-            "message_id": uuid::Uuid::new_v4().to_string(),
-            "timestamp": 1000,
-            "payload": {
-                "type": "Handshake",
-                "client_id": client_id
-            }
-        });
-        let json = serde_json::to_vec(&hs).unwrap();
-        let len = json.len() as u32;
-        let mut frame = Vec::with_capacity(4 + json.len());
-        frame.extend_from_slice(&len.to_be_bytes());
-        frame.extend_from_slice(&json);
-
-        use futures_util::SinkExt;
-        use tokio_tungstenite::tungstenite::Message;
-        ws.send(Message::Binary(frame)).await.unwrap();
-
-        // Receive HandshakeAck
-        use futures_util::StreamExt;
-        let _ = timeout(Duration::from_secs(3), ws.next()).await;
+        let _ack = client.do_handshake(&client_id).await;
 
         assert_eq!(limiter.active_count(), 1);
 
         // Close the connection
-        ws.close(None).await.ok();
+        client.close().await;
     }
 
     // Wait for server to process the disconnect and release the guard
@@ -431,7 +380,7 @@ async fn test_connection_limit_releases_on_disconnect() {
         "Connection slot should be released after disconnect"
     );
 
-    // Second connection should succeed
+    // Second connection should succeed (raw WS — just testing TCP is accepted)
     let result = timeout(Duration::from_secs(2), connect_async(&url)).await;
     assert!(
         result.is_ok() && result.unwrap().is_ok(),
@@ -446,7 +395,7 @@ async fn test_connection_limit_releases_on_disconnect() {
 // @scenario: relay_network:Non-HTTP non-WS traffic handled
 #[tokio::test]
 async fn test_non_http_non_ws_falls_through() {
-    let (url, _, _) = start_full_server(100).await;
+    let (url, _, _, _) = start_full_server(100).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let port: u16 = url

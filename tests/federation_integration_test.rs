@@ -33,16 +33,17 @@ use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintSt
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::integrity;
 use vauchi_relay::metrics::RelayMetrics;
+use vauchi_relay::noise_key::generate_relay_keypair;
 use vauchi_relay::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
 
+use common::ws_helpers::connect_noise;
+
 // ============================================================================
 // Protocol helpers
 // ============================================================================
-
-const FRAME_HEADER_SIZE: usize = 4;
 
 /// Encodes a FederationEnvelope to wire format (4-byte BE length prefix + JSON).
 fn encode_fed(envelope: &FederationEnvelope) -> Vec<u8> {
@@ -52,22 +53,6 @@ fn encode_fed(envelope: &FederationEnvelope) -> Vec<u8> {
 /// Decodes wire bytes to FederationEnvelope.
 fn decode_fed(data: &[u8]) -> FederationEnvelope {
     federation_protocol::decode_federation_message(data).unwrap()
-}
-
-/// Encodes a client protocol JSON value to wire format.
-fn encode_client(envelope: &serde_json::Value) -> Vec<u8> {
-    let json = serde_json::to_vec(envelope).unwrap();
-    let len = json.len() as u32;
-    let mut frame = Vec::with_capacity(FRAME_HEADER_SIZE + json.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&json);
-    frame
-}
-
-/// Decodes client protocol wire bytes to JSON.
-fn decode_client(data: &[u8]) -> serde_json::Value {
-    assert!(data.len() >= FRAME_HEADER_SIZE, "Frame too short");
-    serde_json::from_slice(&data[FRAME_HEADER_SIZE..]).unwrap()
 }
 
 /// Creates a PeerHandshake message.
@@ -306,42 +291,15 @@ async fn fed_send_recv(
     }
 }
 
-/// Receives the next client protocol message.
-async fn recv_client(
-    ws: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-) -> serde_json::Value {
-    let msg = timeout(Duration::from_secs(3), ws.next())
-        .await
-        .expect("Timeout")
-        .expect("Stream ended")
-        .expect("WS error");
-
-    match msg {
-        Message::Binary(data) => decode_client(&data),
-        other => panic!("Expected Binary, got {:?}", other),
-    }
-}
-
-/// Try to receive a client message with short timeout.
-async fn try_recv_client(
-    ws: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-) -> Option<serde_json::Value> {
-    match timeout(Duration::from_millis(300), ws.next()).await {
-        Ok(Some(Ok(Message::Binary(data)))) => Some(decode_client(&data)),
-        _ => None,
-    }
-}
-
 /// Creates client ConnectionDeps with an optional hint store.
+/// Returns (deps, relay_pubkey) — callers must use connect_noise with the pubkey.
 fn make_client_deps(
     storage: Arc<dyn BlobStore>,
     hint_store: Option<Arc<dyn ForwardingHintStore>>,
-) -> ConnectionDeps {
-    ConnectionDeps {
+) -> (ConnectionDeps, [u8; 32]) {
+    let kp = generate_relay_keypair();
+    let relay_pub = kp.public;
+    let deps = ConnectionDeps {
         storage,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
         device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
@@ -356,14 +314,14 @@ fn make_client_deps(
             max_bytes: 10_000_000,
         },
         hint_store,
-        noise_static_key: None,
-        require_noise_encryption: false,
+        noise_static_key: Some(kp.private),
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
-    }
+    };
+    (deps, relay_pub)
 }
 
 // ============================================================================
@@ -957,20 +915,20 @@ async fn test_client_receives_forwarding_hints_on_connect() {
         expires_at_secs: 9999999999,
     });
 
-    let deps = make_client_deps(
+    let (deps, relay_pub) = make_client_deps(
         storage as Arc<dyn BlobStore>,
         Some(hint_store as Arc<dyn ForwardingHintStore>),
     );
 
     let url = start_client_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
-    // Send handshake
+    // Handshake
     let hs = make_client_handshake(&client_id);
-    ws.send(Message::Binary(encode_client(&hs))).await.unwrap();
+    client.send_envelope(&hs).await;
 
     // Receive HandshakeAck
-    let ack = recv_client(&mut ws).await;
+    let ack = client.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
     let features = ack["payload"]["features"].as_array().unwrap();
     assert!(
@@ -979,14 +937,14 @@ async fn test_client_receives_forwarding_hints_on_connect() {
     );
 
     // Receive ForwardingHints message
-    let hints_msg = recv_client(&mut ws).await;
+    let hints_msg = client.recv().await;
     assert_eq!(hints_msg["payload"]["type"], "ForwardingHints");
     let hints = hints_msg["payload"]["hints"].as_array().unwrap();
     assert_eq!(hints.len(), 1);
     assert_eq!(hints[0]["blob_id"], "offloaded-blob-1");
     assert_eq!(hints[0]["relay_url"], "ws://peer-relay:8080");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: relay_network:No forwarding hints when none stored
@@ -999,23 +957,23 @@ async fn test_client_no_hints_no_forwarding_message() {
 
     // No hints stored for this client
 
-    let deps = make_client_deps(
+    let (deps, relay_pub) = make_client_deps(
         storage as Arc<dyn BlobStore>,
         Some(hint_store as Arc<dyn ForwardingHintStore>),
     );
 
     let url = start_client_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let hs = make_client_handshake(&client_id);
-    ws.send(Message::Binary(encode_client(&hs))).await.unwrap();
+    client.send_envelope(&hs).await;
 
     // Receive HandshakeAck
-    let ack = recv_client(&mut ws).await;
+    let ack = client.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
     // Should NOT receive a ForwardingHints message
-    let next = try_recv_client(&mut ws).await;
+    let next = client.try_recv().await;
     if let Some(msg) = next {
         // If we do receive a message, it shouldn't be ForwardingHints
         assert_ne!(
@@ -1024,7 +982,7 @@ async fn test_client_no_hints_no_forwarding_message() {
         );
     }
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: relay_network:No hints sent when hint store disabled
@@ -1032,25 +990,25 @@ async fn test_client_no_hints_no_forwarding_message() {
 async fn test_hint_store_none_no_hints_sent() {
     // With hint_store=None (federation disabled), no hints are sent
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
-    let deps = make_client_deps(storage as Arc<dyn BlobStore>, None);
+    let (deps, relay_pub) = make_client_deps(storage as Arc<dyn BlobStore>, None);
 
     let url = start_client_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(3);
     let hs = make_client_handshake(&client_id);
-    ws.send(Message::Binary(encode_client(&hs))).await.unwrap();
+    client.send_envelope(&hs).await;
 
-    let ack = recv_client(&mut ws).await;
+    let ack = client.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
     // No ForwardingHints message expected
-    let next = try_recv_client(&mut ws).await;
+    let next = client.try_recv().await;
     if let Some(msg) = next {
         assert_ne!(msg["payload"]["type"], "ForwardingHints");
     }
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // ============================================================================
@@ -1079,38 +1037,36 @@ async fn test_purge_request_deletes_forwarding_hints() {
     // Also store a blob so there's something to purge
     storage.store(routing_id, StoredBlob::new(vec![1, 2, 3]));
 
-    let deps = make_client_deps(
+    let (deps, relay_pub) = make_client_deps(
         storage.clone() as Arc<dyn BlobStore>,
         Some(hint_store.clone() as Arc<dyn ForwardingHintStore>),
     );
 
     let url = start_client_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     // Handshake
     let hs = make_client_handshake(&client_id);
-    ws.send(Message::Binary(encode_client(&hs))).await.unwrap();
+    client.send_envelope(&hs).await;
 
     // Receive HandshakeAck
-    let ack = recv_client(&mut ws).await;
+    let ack = client.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
     // Receive pending blobs (1 blob)
-    let blob_msg = recv_client(&mut ws).await;
+    let blob_msg = client.recv().await;
     assert_eq!(blob_msg["payload"]["type"], "EncryptedUpdate");
 
     // Receive ForwardingHints
-    let hints_msg = recv_client(&mut ws).await;
+    let hints_msg = client.recv().await;
     assert_eq!(hints_msg["payload"]["type"], "ForwardingHints");
 
     // Send PurgeRequest
     let purge = make_client_purge();
-    ws.send(Message::Binary(encode_client(&purge)))
-        .await
-        .unwrap();
+    client.send_envelope(&purge).await;
 
     // Receive PurgeResponse
-    let purge_resp = recv_client(&mut ws).await;
+    let purge_resp = client.recv().await;
     assert_eq!(purge_resp["payload"]["type"], "PurgeResponse");
 
     // Wait for processing
@@ -1120,7 +1076,7 @@ async fn test_purge_request_deletes_forwarding_hints() {
     assert_eq!(hint_store.hint_count(), 0);
     assert!(hint_store.get_hints(routing_id).is_empty());
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // ============================================================================
@@ -1183,23 +1139,20 @@ async fn test_end_to_end_offload_and_retrieval() {
     assert_eq!(stored_blobs[0].hop_count, 1);
 
     // --- Client connects to Relay B and retrieves the blob ---
-    let client_deps = make_client_deps(relay_b_storage.clone(), None);
+    let (client_deps, client_relay_pub) = make_client_deps(relay_b_storage.clone(), None);
     let client_url = start_client_server(client_deps).await;
-    let (mut client_ws, _) = connect_async(&client_url).await.unwrap();
+    let mut client = connect_noise(&client_url, &client_relay_pub).await;
 
     // Client handshake (use client_id — routing_id will be the same since no routing_token)
     let hs = make_client_handshake(&client_id);
-    client_ws
-        .send(Message::Binary(encode_client(&hs)))
-        .await
-        .unwrap();
+    client.send_envelope(&hs).await;
 
     // Receive HandshakeAck
-    let client_ack = recv_client(&mut client_ws).await;
+    let client_ack = client.recv().await;
     assert_eq!(client_ack["payload"]["type"], "HandshakeAck");
 
     // Receive the offloaded blob
-    let blob_msg = recv_client(&mut client_ws).await;
+    let blob_msg = client.recv().await;
     assert_eq!(blob_msg["payload"]["type"], "EncryptedUpdate");
     let received_data: Vec<u8> = blob_msg["payload"]["ciphertext"]
         .as_array()
@@ -1210,7 +1163,7 @@ async fn test_end_to_end_offload_and_retrieval() {
     assert_eq!(received_data, blob_data);
 
     fed_ws.close(None).await.ok();
-    client_ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: relay_network:End-to-end offload with forwarding hints
@@ -1272,28 +1225,28 @@ async fn test_end_to_end_offload_with_forwarding_hints() {
     assert_eq!(hints[0].target_relay, "ws://relay-b:8080");
 
     // Client connects to Relay A and should receive forwarding hints
-    let client_deps = make_client_deps(
+    let (client_deps, client_relay_pub) = make_client_deps(
         relay_a_storage as Arc<dyn BlobStore>,
         Some(relay_a_hints as Arc<dyn ForwardingHintStore>),
     );
     let url = start_client_server(client_deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &client_relay_pub).await;
 
     let hs = make_client_handshake(&client_id);
-    ws.send(Message::Binary(encode_client(&hs))).await.unwrap();
+    client.send_envelope(&hs).await;
 
     // HandshakeAck
-    let ack = recv_client(&mut ws).await;
+    let ack = client.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
     // ForwardingHints (no pending blobs since they were offloaded)
-    let hints_msg = recv_client(&mut ws).await;
+    let hints_msg = client.recv().await;
     assert_eq!(hints_msg["payload"]["type"], "ForwardingHints");
     let hint_array = hints_msg["payload"]["hints"].as_array().unwrap();
     assert_eq!(hint_array.len(), 1);
     assert_eq!(hint_array[0]["relay_url"], "ws://relay-b:8080");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // ============================================================================

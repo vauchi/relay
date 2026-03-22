@@ -8,9 +8,6 @@ mod common;
 
 use std::time::Duration;
 
-use futures_util::SinkExt;
-use tokio_tungstenite::connect_async;
-
 use vauchi_relay::storage::{BlobStore, StoredBlob};
 
 use common::ws_helpers::*;
@@ -22,17 +19,17 @@ use common::ws_helpers::*;
 // @scenario: message_delivery:Messages persist until acknowledged
 #[tokio::test]
 async fn test_store_blob_returns_stored_ack() {
-    let (deps, storage, _) = test_deps();
+    let (deps, relay_pub, storage, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let _ack = do_handshake(&mut ws, &client_id).await;
+    let _ack = client.do_handshake(&client_id).await;
 
     // Send an encrypted update
     let recipient_id = common::generate_test_client_id(2);
     let update = make_encrypted_update(&recipient_id, &[10, 20, 30]);
-    let response = send_recv(&mut ws, &update).await;
+    let response = client.send_recv(&update).await;
 
     assert_eq!(response["payload"]["type"], "Acknowledgment");
     assert_eq!(response["payload"]["status"], "Stored");
@@ -42,28 +39,28 @@ async fn test_store_blob_returns_stored_ack() {
     assert_eq!(blobs.len(), 1);
     assert_eq!(blobs[0].data, vec![10, 20, 30]);
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: message_delivery:Messages persist until acknowledged
 #[tokio::test]
 async fn test_store_multiple_blobs() {
-    let (deps, storage, _) = test_deps();
+    let (deps, relay_pub, storage, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let _ack = do_handshake(&mut ws, &client_id).await;
+    let _ack = client.do_handshake(&client_id).await;
 
     let recipient_id = common::generate_test_client_id(2);
     for i in 0..5u8 {
         let update = make_encrypted_update(&recipient_id, &[i]);
-        let response = send_recv(&mut ws, &update).await;
+        let response = client.send_recv(&update).await;
         assert_eq!(response["payload"]["status"], "Stored");
     }
 
     assert_eq!(storage.peek(&recipient_id).len(), 5);
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // ============================================================================
@@ -74,7 +71,7 @@ async fn test_store_multiple_blobs() {
 // @scenario: sync_updates.feature:Relay stores updates for offline contacts
 #[tokio::test]
 async fn test_pending_blobs_delivered_on_connect() {
-    let (deps, storage, _) = test_deps();
+    let (deps, relay_pub, storage, _) = test_deps();
     let recipient_id = common::generate_test_client_id(5);
 
     // Pre-store blobs for the recipient
@@ -82,45 +79,41 @@ async fn test_pending_blobs_delivered_on_connect() {
     storage.store(&recipient_id, StoredBlob::new(vec![4, 5, 6]));
 
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
-    // Handshake → HandshakeAck
+    // Send protocol Handshake over Noise
     let hs = make_handshake(&recipient_id);
-    let frame = encode_envelope(&hs);
-    ws.send(tokio_tungstenite::tungstenite::Message::Binary(frame))
-        .await
-        .unwrap();
+    client.send_envelope(&hs).await;
 
     // Receive HandshakeAck
-    let ack = recv(&mut ws).await;
+    let ack = client.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
     // Receive 2 pending blobs
-    let blob1 = recv(&mut ws).await;
+    let blob1 = client.recv().await;
     assert_eq!(blob1["payload"]["type"], "EncryptedUpdate");
 
-    let blob2 = recv(&mut ws).await;
+    let blob2 = client.recv().await;
     assert_eq!(blob2["payload"]["type"], "EncryptedUpdate");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: sync_updates:Pending updates delivered on connect
 #[tokio::test]
 async fn test_no_pending_blobs_no_delivery() {
-    let (deps, _, _) = test_deps();
+    let (deps, relay_pub, _, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let _ack = do_handshake(&mut ws, &client_id).await;
+    let _ack = client.do_handshake(&client_id).await;
 
-    // No pending blobs — sending an update should be the next interaction
-    // Verify no extra messages arrive
-    let extra = try_recv(&mut ws).await;
+    // No pending blobs — verify no extra messages arrive
+    let extra = client.try_recv().await;
     assert!(extra.is_none(), "Should not receive any pending blobs");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // ============================================================================
@@ -130,36 +123,28 @@ async fn test_no_pending_blobs_no_delivery() {
 // @scenario: message_delivery:Client acknowledges message receipt
 #[tokio::test]
 async fn test_acknowledge_removes_blob() {
-    let (deps, storage, _) = test_deps();
+    let (deps, relay_pub, storage, _) = test_deps();
     let client_id = common::generate_test_client_id(5);
     let blob = StoredBlob::new(vec![99]);
     let blob_id = blob.id.clone();
     storage.store(&client_id, blob);
 
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
-    // Handshake
+    // Send protocol Handshake
     let hs = make_handshake(&client_id);
-    ws.send(tokio_tungstenite::tungstenite::Message::Binary(
-        encode_envelope(&hs),
-    ))
-    .await
-    .unwrap();
+    client.send_envelope(&hs).await;
 
     // Receive HandshakeAck
-    let _ack = recv(&mut ws).await;
+    let _ack = client.recv().await;
     // Receive the pending blob
-    let delivered = recv(&mut ws).await;
+    let delivered = client.recv().await;
     assert_eq!(delivered["payload"]["type"], "EncryptedUpdate");
 
     // Send acknowledgment
     let ack_msg = make_ack(&blob_id, "ReceivedByRecipient");
-    ws.send(tokio_tungstenite::tungstenite::Message::Binary(
-        encode_envelope(&ack_msg),
-    ))
-    .await
-    .unwrap();
+    client.send_envelope(&ack_msg).await;
 
     // Poll until handler processes the ack (CC-06: no bare sleeps)
     let removed = tokio::time::timeout(Duration::from_secs(2), async {
@@ -175,22 +160,22 @@ async fn test_acknowledge_removes_blob() {
 
     assert!(removed, "Blob should be removed from storage after ack");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: message_delivery:Messages persist until acknowledged
 #[tokio::test]
 async fn test_zero_length_ciphertext_stored() {
-    let (deps, storage, _) = test_deps();
+    let (deps, relay_pub, storage, _) = test_deps();
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let _ack = do_handshake(&mut ws, &client_id).await;
+    let _ack = client.do_handshake(&client_id).await;
 
     let recipient_id = common::generate_test_client_id(2);
     let update = make_encrypted_update(&recipient_id, &[]);
-    let response = send_recv(&mut ws, &update).await;
+    let response = client.send_recv(&update).await;
     assert_eq!(response["payload"]["type"], "Acknowledgment");
     assert_eq!(response["payload"]["status"], "Stored");
 
@@ -198,5 +183,5 @@ async fn test_zero_length_ciphertext_stored() {
     assert_eq!(blobs.len(), 1);
     assert!(blobs[0].data.is_empty());
 
-    ws.close(None).await.ok();
+    client.close().await;
 }

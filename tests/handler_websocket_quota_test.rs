@@ -9,12 +9,11 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio_tungstenite::connect_async;
-
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
+use vauchi_relay::noise_key::generate_relay_keypair;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
@@ -26,6 +25,8 @@ use common::ws_helpers::*;
 async fn test_quota_blob_count_exceeded() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let registry = Arc::new(ConnectionRegistry::new());
+    let kp = generate_relay_keypair();
+    let relay_pub = kp.public;
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
@@ -41,8 +42,7 @@ async fn test_quota_blob_count_exceeded() {
             max_bytes: 0, // Unlimited bytes
         },
         hint_store: None,
-        noise_static_key: None,
-        require_noise_encryption: false,
+        noise_static_key: Some(kp.private),
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
@@ -51,33 +51,35 @@ async fn test_quota_blob_count_exceeded() {
     };
 
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let _ack = do_handshake(&mut ws, &client_id).await;
+    let _ack = client.do_handshake(&client_id).await;
 
     let recipient_id = common::generate_test_client_id(2);
 
     // Store 3 blobs (at limit)
     for _ in 0..3 {
         let update = make_encrypted_update(&recipient_id, &[1]);
-        let response = send_recv(&mut ws, &update).await;
+        let response = client.send_recv(&update).await;
         assert_eq!(response["payload"]["status"], "Stored");
     }
 
     // 4th should be rejected
     let update = make_encrypted_update(&recipient_id, &[1]);
-    let response = send_recv(&mut ws, &update).await;
+    let response = client.send_recv(&update).await;
     assert_eq!(response["payload"]["type"], "Acknowledgment");
     assert_eq!(response["payload"]["status"], "Failed");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }
 
 // @scenario: relay_network:Relay enforces storage quotas
 #[tokio::test]
 async fn test_quota_byte_limit_exceeded() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let kp = generate_relay_keypair();
+    let relay_pub = kp.public;
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
@@ -93,8 +95,7 @@ async fn test_quota_byte_limit_exceeded() {
             max_bytes: 200, // Very low byte limit
         },
         hint_store: None,
-        noise_static_key: None,
-        require_noise_encryption: false,
+        noise_static_key: Some(kp.private),
         nonce_tracker: Arc::new(handler::NonceTracker::new()),
         delivery_jitter_min_ms: 0,
         delivery_jitter_max_ms: 0,
@@ -103,22 +104,22 @@ async fn test_quota_byte_limit_exceeded() {
     };
 
     let url = start_test_server(deps).await;
-    let (mut ws, _) = connect_async(&url).await.unwrap();
+    let mut client = connect_noise(&url, &relay_pub).await;
 
     let client_id = common::generate_test_client_id(1);
-    let _ack = do_handshake(&mut ws, &client_id).await;
+    let _ack = client.do_handshake(&client_id).await;
 
     let recipient_id = common::generate_test_client_id(2);
 
     // First blob: 100 bytes — should succeed
     let update = make_encrypted_update(&recipient_id, &[0u8; 100]);
-    let response = send_recv(&mut ws, &update).await;
+    let response = client.send_recv(&update).await;
     assert_eq!(response["payload"]["status"], "Stored");
 
     // Second blob: 100 bytes — should push over the limit
     let update = make_encrypted_update(&recipient_id, &[0u8; 100]);
-    let response = send_recv(&mut ws, &update).await;
+    let response = client.send_recv(&update).await;
     assert_eq!(response["payload"]["status"], "Failed");
 
-    ws.close(None).await.ok();
+    client.close().await;
 }

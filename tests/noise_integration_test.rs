@@ -13,9 +13,7 @@
 
 use snow::Builder;
 use vauchi_relay::noise_key::generate_relay_keypair;
-use vauchi_relay::noise_transport::{
-    NOISE_PATTERN, NoiseResponder, V2_MAGIC, is_noise_v2_handshake,
-};
+use vauchi_relay::noise_transport::{NOISE_PATTERN, NoiseResponder, V2_MAGIC};
 
 /// Simulates a core client's NoiseInitiator: creates an NK initiator
 /// and generates the handshake message (-> e, es).
@@ -50,9 +48,13 @@ fn test_client_to_relay_full_noise_handshake() {
     let (mut initiator, handshake_msg) = simulate_client_initiator(&relay_kp.public);
     assert_eq!(handshake_msg.len(), 48, "NK message 1 should be 48 bytes");
 
-    // Verify V2 wire format
+    // Build V2 wire message (magic + handshake bytes)
     let v2_msg = build_v2_wire_message(&handshake_msg);
-    assert!(is_noise_v2_handshake(&v2_msg));
+    assert_eq!(
+        &v2_msg[..V2_MAGIC.len()],
+        &V2_MAGIC,
+        "Wire message must start with V2 magic"
+    );
 
     // Relay responder processes handshake (strips magic first, as handler.rs does)
     let responder = NoiseResponder::new(&relay_kp.private).unwrap();
