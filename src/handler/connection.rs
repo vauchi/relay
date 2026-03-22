@@ -4,6 +4,7 @@
 
 //! WebSocket connection lifecycle: handshake, pending delivery, and message loop.
 
+use aws_lc_rs::digest;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -23,15 +24,26 @@ use crate::noise_transport::{self, NoiseResponder, NoiseTransport};
 /// Reads the first WebSocket message, performs the Noise NK handshake (mandatory since v0.1),
 /// decodes and validates the protocol-level Handshake, and sends the HandshakeAck.
 ///
-/// Returns `(client_id, device_id, routing_id, suppress_presence, noise_session)` on success,
-/// or `None` if the handshake failed (connection is dropped).
+/// Returns `(client_id, device_id, routing_id, auth_id_hash, suppress_presence, noise_session)`
+/// on success, or `None` if the handshake failed (connection is dropped).
+///
+/// `auth_id_hash` is a SHA-256 hex digest of the client's signing public key when a signed
+/// handshake is present, or falls back to `routing_id` for legacy unauthenticated clients.
+/// Rate limiting keys on `auth_id_hash` (stable across daily token rotation).
 #[allow(clippy::type_complexity)]
 async fn perform_handshake(
     write: &mut futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
     read: &mut futures_util::stream::SplitStream<WebSocketStream<TcpStream>>,
     deps: &ConnectionDeps,
     session: &str,
-) -> Option<(String, Option<String>, String, bool, Option<NoiseTransport>)> {
+) -> Option<(
+    String,
+    Option<String>,
+    String,
+    String,
+    bool,
+    Option<NoiseTransport>,
+)> {
     // Read the first WebSocket message — must be a Noise NK handshake
     let first_msg = match timeout(deps.idle_timeout, read.next()).await {
         Ok(Some(Ok(Message::Binary(data)))) => data,
@@ -130,7 +142,7 @@ async fn perform_handshake(
     };
 
     // Parse the Handshake message (same for v1 and v2)
-    let (client_id, device_id, routing_token, suppress_presence) =
+    let (client_id, device_id, routing_token, auth_id_hash_opt, suppress_presence) =
         match protocol::decode_message(&handshake_data) {
             Ok(envelope) => {
                 if let protocol::MessagePayload::Handshake(hs) = envelope.payload {
@@ -154,7 +166,8 @@ async fn perform_handshake(
                         return None;
                     }
                     // Verify signed handshake if auth fields are present.
-                    if let (Some(pk), Some(nonce), Some(sig), Some(ts)) = (
+                    // Compute auth_id_hash from the signing key for stable rate-limit keying.
+                    let auth_id_hash_opt = if let (Some(pk), Some(nonce), Some(sig), Some(ts)) = (
                         &hs.identity_public_key,
                         &hs.nonce,
                         &hs.signature,
@@ -166,17 +179,35 @@ async fn perform_handshake(
                                     warn!("[{}] Authenticated client_id mismatch", session);
                                     return None;
                                 }
+                                // pk is hex-encoded public key bytes; decode and SHA-256 it
+                                match hex::decode(pk) {
+                                    Ok(pk_bytes) => {
+                                        let h = digest::digest(&digest::SHA256, &pk_bytes);
+                                        Some(hex::encode(h.as_ref()))
+                                    }
+                                    Err(_) => {
+                                        // Already validated by verify_signed_handshake
+                                        warn!(
+                                            "[{}] Failed to decode public key for auth hash",
+                                            session
+                                        );
+                                        return None;
+                                    }
+                                }
                             }
                             Err(reason) => {
                                 warn!("[{}] Handshake auth failed: {}", session, reason);
                                 return None;
                             }
                         }
-                    }
+                    } else {
+                        None
+                    };
                     (
                         hs.client_id,
                         hs.device_id,
                         hs.routing_token,
+                        auth_id_hash_opt,
                         hs.suppress_presence,
                     )
                 } else {
@@ -196,12 +227,17 @@ async fn perform_handshake(
     // Compute the routing ID: use routing_token if provided, otherwise client_id.
     let routing_id = routing_token.unwrap_or_else(|| client_id.clone());
 
+    // Stable rate-limit key: SHA-256(signing_key) when authenticated, routing_id otherwise.
+    // Keying on the signing key prevents evasion via daily-rotating mailbox tokens (SP-33).
+    let auth_id_hash = auth_id_hash_opt.unwrap_or_else(|| routing_id.clone());
+
     debug!(
-        "[{}] Client connected (has_device_id: {}, suppress_presence: {}, noise: {})",
+        "[{}] Client connected (has_device_id: {}, suppress_presence: {}, noise: {}, authenticated: {})",
         session,
         device_id.is_some(),
         suppress_presence,
-        noise_session.is_some()
+        noise_session.is_some(),
+        auth_id_hash != routing_id,
     );
 
     // Send HandshakeAck with server version and supported features
@@ -228,6 +264,7 @@ async fn perform_handshake(
         client_id,
         device_id,
         routing_id,
+        auth_id_hash,
         suppress_presence,
         noise_session,
     ))
@@ -426,7 +463,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
     let (mut write, mut read) = ws_stream.split();
 
     // Perform handshake (Noise NK negotiation + protocol Handshake + validation)
-    let (client_id, device_id, routing_id, suppress_presence, mut noise_session) =
+    let (client_id, device_id, routing_id, auth_id_hash, suppress_presence, mut noise_session) =
         match perform_handshake(&mut write, &mut read, &deps, session).await {
             Some(result) => result,
             None => return,
@@ -513,8 +550,9 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     continue;
                 }
 
-                // Rate limit check
-                if !deps.rate_limiter.consume(&routing_id) {
+                // Rate limit check: key on stable auth identity hash (signing key SHA-256),
+                // not the rotating routing token — prevents evasion after midnight rotation.
+                if !deps.rate_limiter.consume(&auth_id_hash) {
                     warn!("[{}] Rate limited", session);
                     deps.metrics.rate_limited.inc();
                     deps.metrics.messages_rejected.inc();

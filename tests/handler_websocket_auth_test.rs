@@ -364,6 +364,217 @@ async fn test_unauthenticated_handshake_still_accepted() {
     client.close().await;
 }
 
+// ============================================================================
+// Tests: Auth hash rate limiting (SP-33)
+// ============================================================================
+
+/// Builds a signed handshake for a given keypair, using a specific routing_token.
+/// Returns the handshake envelope.
+fn make_signed_handshake_with_routing_token(
+    key_pair: &aws_lc_rs::signature::Ed25519KeyPair,
+    routing_token: &str,
+) -> serde_json::Value {
+    use aws_lc_rs::signature::KeyPair;
+
+    let public_key = key_pair.public_key().as_ref();
+    let client_id: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
+    let pk_hex = client_id.clone();
+
+    // Use a unique nonce per call (include routing_token bytes to ensure uniqueness)
+    let mut nonce = [0u8; 32];
+    let rt_bytes = routing_token.as_bytes();
+    let copy_len = rt_bytes.len().min(32);
+    nonce[..copy_len].copy_from_slice(&rt_bytes[..copy_len]);
+    let nonce_hex: String = nonce.iter().map(|b| format!("{:02x}", b)).collect();
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut sign_data = Vec::with_capacity(40);
+    sign_data.extend_from_slice(&nonce);
+    sign_data.extend_from_slice(&timestamp.to_be_bytes());
+
+    let signature = key_pair.sign(&sign_data);
+    let sig_hex: String = signature
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+
+    serde_json::json!({
+        "version": 1,
+        "message_id": uuid::Uuid::new_v4().to_string(),
+        "timestamp": 1000,
+        "payload": {
+            "type": "Handshake",
+            "client_id": client_id,
+            "identity_public_key": pk_hex,
+            "nonce": nonce_hex,
+            "signature": sig_hex,
+            "timestamp": timestamp,
+            "routing_token": routing_token,
+        }
+    })
+}
+
+// @scenario: security:Rate limiting uses stable auth hash, not rotating token
+// Two connections using the SAME signing key but DIFFERENT routing tokens share
+// the same rate-limit bucket (keyed on SHA-256(signing_key)).
+#[tokio::test]
+async fn test_rate_limit_keys_on_auth_hash_not_routing_id() {
+    use std::sync::Arc;
+
+    use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
+
+    use vauchi_relay::connection_registry::ConnectionRegistry;
+    use vauchi_relay::handler::{self, ConnectionDeps, NonceTracker, QuotaLimits};
+    use vauchi_relay::metrics::RelayMetrics;
+    use vauchi_relay::noise_key::generate_relay_keypair;
+    use vauchi_relay::rate_limit::RateLimiter;
+    use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
+    use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
+
+    // Rate limit of 1 message per minute: first message passes, second is rejected.
+    let rate_limit = 1u32;
+
+    let kp = generate_relay_keypair();
+    let relay_pub = kp.public;
+    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
+    let registry = Arc::new(ConnectionRegistry::new());
+    let shared_rate_limiter = Arc::new(RateLimiter::new(rate_limit));
+    let nonce_tracker = Arc::new(NonceTracker::new());
+
+    // Generate ONE signing keypair (same auth identity)
+    let rng = aws_lc_rs::rand::SystemRandom::new();
+    let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+    let client_id: String = key_pair
+        .public_key()
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+
+    // Two different routing tokens for the same identity
+    let routing_token_1 = common::generate_test_client_id(10);
+    let routing_token_2 = common::generate_test_client_id(20);
+
+    let make_deps = |nonce_tracker: Arc<NonceTracker>| ConnectionDeps {
+        storage: storage.clone() as Arc<dyn BlobStore>,
+        recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
+        rate_limiter: shared_rate_limiter.clone(),
+        recovery_rate_limiter: Arc::new(vauchi_relay::rate_limit::RateLimiter::new(10)),
+        registry: registry.clone(),
+        blob_sender_map: handler::new_blob_sender_map(),
+        max_message_size: 1_048_576,
+        idle_timeout: std::time::Duration::from_secs(5),
+        quota: QuotaLimits {
+            max_blobs: 100,
+            max_bytes: 0,
+        },
+        hint_store: None,
+        noise_static_key: Some(kp.private),
+        nonce_tracker,
+        delivery_jitter_min_ms: 0,
+        delivery_jitter_max_ms: 0,
+        relay_signing_key: None,
+        metrics: RelayMetrics::new(),
+    };
+
+    // Connection 1: routing_token_1 with signed handshake — sends one blob (consumes the token)
+    {
+        let hs1 = make_signed_handshake_with_routing_token(&key_pair, &routing_token_1);
+        let deps1 = make_deps(nonce_tracker.clone());
+        let url1 = start_multi_server(deps1).await;
+        let mut client1 = connect_noise(&url1, &relay_pub).await;
+
+        let ack = client1.send_recv(&hs1).await;
+        assert_eq!(
+            ack["payload"]["type"], "HandshakeAck",
+            "Connection 1 handshake failed"
+        );
+
+        // First message — should succeed (rate limit token consumed)
+        let recipient_id = common::generate_test_client_id(99);
+        let update = make_encrypted_update(&recipient_id, &[1, 2, 3]);
+        let resp = client1.send_recv(&update).await;
+        assert_eq!(
+            resp["payload"]["status"], "Stored",
+            "First message should be stored"
+        );
+
+        client1.close().await;
+    }
+
+    // Connection 2: routing_token_2 (different token, SAME signing key) — should be rate-limited
+    // The nonce for the second handshake uses routing_token_2 bytes so it's unique.
+    {
+        let hs2 = make_signed_handshake_with_routing_token(&key_pair, &routing_token_2);
+        let deps2 = make_deps(nonce_tracker.clone());
+        let url2 = start_multi_server(deps2).await;
+        let mut client2 = connect_noise(&url2, &relay_pub).await;
+
+        let ack2 = client2.send_recv(&hs2).await;
+        assert_eq!(
+            ack2["payload"]["type"], "HandshakeAck",
+            "Connection 2 handshake failed"
+        );
+
+        // Second message with same auth identity — rate limited because bucket is shared
+        let recipient_id = common::generate_test_client_id(98);
+        let update = make_encrypted_update(&recipient_id, &[4, 5, 6]);
+        // No response expected (rate limited, connection stays open but message rejected)
+        client2.send_envelope(&update).await;
+        let resp = client2.try_recv().await;
+        // The rate limiter rejects silently (continue in the loop) — no Ack arrives
+        assert!(
+            resp.is_none(),
+            "Rate-limited message should produce no response; got: {:?}",
+            resp
+        );
+
+        // Verify blob was NOT stored (rate limited before storage)
+        assert_eq!(
+            storage.peek(&recipient_id).len(),
+            0,
+            "Rate-limited message should not be stored"
+        );
+
+        client2.close().await;
+    }
+
+    // Sanity check: a client with a DIFFERENT signing key should NOT be rate-limited
+    {
+        let rng2 = aws_lc_rs::rand::SystemRandom::new();
+        let pkcs8_2 = Ed25519KeyPair::generate_pkcs8(&rng2).unwrap();
+        let key_pair2 = Ed25519KeyPair::from_pkcs8(pkcs8_2.as_ref()).unwrap();
+
+        let routing_token_3 = common::generate_test_client_id(30);
+        let hs3 = make_signed_handshake_with_routing_token(&key_pair2, &routing_token_3);
+        let deps3 = make_deps(nonce_tracker.clone());
+        let url3 = start_multi_server(deps3).await;
+        let mut client3 = connect_noise(&url3, &relay_pub).await;
+
+        let ack3 = client3.send_recv(&hs3).await;
+        assert_eq!(
+            ack3["payload"]["type"], "HandshakeAck",
+            "Connection 3 handshake failed"
+        );
+
+        let recipient_id2 = common::generate_test_client_id(97);
+        let update3 = make_encrypted_update(&recipient_id2, &[7, 8, 9]);
+        let resp3 = client3.send_recv(&update3).await;
+        assert_eq!(
+            resp3["payload"]["status"], "Stored",
+            "Different auth identity should have its own rate-limit bucket"
+        );
+
+        client3.close().await;
+    }
+}
+
 // @scenario: relay_network:Routing tokens enable anonymous addressing
 #[tokio::test]
 async fn test_routing_token_no_auth_required() {
