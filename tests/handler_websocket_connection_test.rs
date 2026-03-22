@@ -135,7 +135,7 @@ async fn test_ping_pong() {
 // @scenario: relay_network:Relay disconnects idle clients
 #[tokio::test]
 async fn test_idle_timeout_disconnects_client() {
-    let (deps, relay_pub, _, _, _) = test_deps_custom(
+    let (deps, relay_pub, _, _) = test_deps_custom(
         60,
         10,
         1_048_576,
@@ -165,7 +165,7 @@ async fn test_idle_timeout_disconnects_client() {
 // @scenario: relay_network:Relay disconnects clients without handshake
 #[tokio::test]
 async fn test_handshake_timeout_disconnects() {
-    let (deps, relay_pub, _, _, _) = test_deps_custom(
+    let (deps, relay_pub, _, _) = test_deps_custom(
         60,
         10,
         1_048_576,

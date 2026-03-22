@@ -22,7 +22,6 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_async, connect_async};
 
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::rate_limit::RateLimiter;
@@ -54,7 +53,6 @@ fn make_deps() -> ConnectionDeps {
     ConnectionDeps {
         storage: storage as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(60)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
         registry,

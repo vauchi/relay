@@ -5,7 +5,6 @@
 pub mod config;
 pub mod connection_limit;
 pub mod connection_registry;
-pub mod device_sync_storage;
 pub mod federation_connector;
 pub mod federation_handler;
 pub mod federation_protocol;

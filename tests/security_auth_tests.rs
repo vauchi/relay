@@ -118,7 +118,6 @@ fn test_purge_request_timestamp_window() {
         .as_secs();
 
     let purge = PurgeRequest {
-        include_device_sync: true,
         include_recovery_proofs: false,
         recovery_key_hash: None,
         public_key: Some(

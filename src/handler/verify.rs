@@ -95,7 +95,6 @@ pub(super) mod protocol {
             "routing_token".to_string(),
             "suppress_presence".to_string(),
             "purge".to_string(),
-            "device_sync".to_string(),
             "recovery_proof".to_string(),
             "account_revoked".to_string(),
             "forwarding_hints".to_string(),
@@ -131,7 +130,6 @@ pub(super) mod protocol {
     pub fn create_purge_response(
         message_id: &str,
         blobs_deleted: usize,
-        device_sync_deleted: usize,
         recovery_proofs_deleted: usize,
     ) -> MessageEnvelope {
         MessageEnvelope {
@@ -143,7 +141,6 @@ pub(super) mod protocol {
                 .as_secs(),
             payload: MessagePayload::PurgeResponse(PurgeResponse {
                 blobs_deleted,
-                device_sync_deleted,
                 recovery_proofs_deleted,
             }),
         }
@@ -195,49 +192,6 @@ pub(super) mod protocol {
                 .unwrap()
                 .as_secs(),
             payload: MessagePayload::RecoveryProofResponse(RecoveryProofResponse { proofs }),
-        }
-    }
-
-    /// Creates a device sync message delivery envelope.
-    pub fn create_device_sync_delivery(
-        message_id: &str,
-        identity_id: &str,
-        target_device_id: &str,
-        sender_device_id: &str,
-        encrypted_payload: &[u8],
-        version: u64,
-    ) -> MessageEnvelope {
-        MessageEnvelope {
-            version: PROTOCOL_VERSION,
-            message_id: message_id.to_string(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            payload: MessagePayload::DeviceSyncMessage(DeviceSyncMessage {
-                identity_id: identity_id.to_string(),
-                target_device_id: target_device_id.to_string(),
-                sender_device_id: sender_device_id.to_string(),
-                encrypted_payload: encrypted_payload.to_vec(),
-                version,
-            }),
-        }
-    }
-
-    /// Creates a device sync acknowledgment envelope.
-    #[allow(dead_code)]
-    pub fn create_device_sync_ack(message_id: &str, synced_version: u64) -> MessageEnvelope {
-        MessageEnvelope {
-            version: PROTOCOL_VERSION,
-            message_id: uuid::Uuid::new_v4().to_string(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            payload: MessagePayload::DeviceSyncAck(DeviceSyncAck {
-                message_id: message_id.to_string(),
-                synced_version,
-            }),
         }
     }
 }

@@ -102,7 +102,6 @@ fn test_validate_routing_token_format() {
 #[test]
 fn test_purge_request_serialization() {
     let purge = protocol::PurgeRequest {
-        include_device_sync: true,
         include_recovery_proofs: false,
         recovery_key_hash: None,
         public_key: None,
@@ -112,28 +111,25 @@ fn test_purge_request_serialization() {
     };
     let json = serde_json::to_string(&purge).unwrap();
     let parsed: protocol::PurgeRequest = serde_json::from_str(&json).unwrap();
-    assert!(parsed.include_device_sync);
     assert!(!parsed.include_recovery_proofs);
 }
 
 #[test]
-fn test_purge_request_default_no_device_sync() {
-    let json = r#"{"include_device_sync":false,"include_recovery_proofs":false}"#;
+fn test_purge_request_default_fields() {
+    let json = r#"{"include_recovery_proofs":false}"#;
     let parsed: protocol::PurgeRequest = serde_json::from_str(json).unwrap();
-    assert!(!parsed.include_device_sync);
+    assert!(!parsed.include_recovery_proofs);
 }
 
 #[test]
 fn test_purge_response_creation() {
     let resp = protocol::PurgeResponse {
         blobs_deleted: 5,
-        device_sync_deleted: 2,
         recovery_proofs_deleted: 0,
     };
     let json = serde_json::to_string(&resp).unwrap();
     let parsed: protocol::PurgeResponse = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.blobs_deleted, 5);
-    assert_eq!(parsed.device_sync_deleted, 2);
     assert_eq!(parsed.recovery_proofs_deleted, 0);
 }
 
@@ -142,19 +138,18 @@ fn test_handshake_ack_creation() {
     let ack = protocol::HandshakeAck {
         protocol_version: protocol::PROTOCOL_VERSION,
         server_version: "0.3.0".to_string(),
-        features: vec!["device_sync".to_string()],
+        features: vec!["recovery_proof".to_string()],
     };
     let json = serde_json::to_string(&ack).unwrap();
     let parsed: protocol::HandshakeAck = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.protocol_version, protocol::PROTOCOL_VERSION);
     assert_eq!(parsed.server_version, "0.3.0");
-    assert_eq!(parsed.features, vec!["device_sync"]);
+    assert_eq!(parsed.features, vec!["recovery_proof"]);
 }
 
 #[test]
 fn test_purge_request_roundtrip_in_envelope() {
     let purge = protocol::PurgeRequest {
-        include_device_sync: true,
         include_recovery_proofs: false,
         recovery_key_hash: None,
         public_key: None,
@@ -172,7 +167,7 @@ fn test_purge_request_roundtrip_in_envelope() {
     let parsed: protocol::MessageEnvelope = serde_json::from_str(&json).unwrap();
     match parsed.payload {
         protocol::MessagePayload::PurgeRequest(p) => {
-            assert!(p.include_device_sync);
+            assert!(!p.include_recovery_proofs);
         }
         _ => panic!("Expected PurgeRequest payload"),
     }

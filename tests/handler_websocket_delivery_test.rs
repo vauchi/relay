@@ -15,7 +15,6 @@ use tokio::time::timeout;
 use tokio_tungstenite::accept_async;
 
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key::generate_relay_keypair;
@@ -54,7 +53,7 @@ async fn test_purge_deletes_blobs() {
     }
 
     // Send purge request
-    let purge = make_purge_request(false);
+    let purge = make_purge_request();
     let response = client.send_recv(&purge).await;
 
     assert_eq!(response["payload"]["type"], "PurgeResponse");
@@ -75,13 +74,11 @@ async fn test_purge_empty_returns_zero() {
     let client_id = common::generate_test_client_id(1);
     let _ack = client.do_handshake(&client_id).await;
 
-    let purge = make_purge_request(false);
+    let purge = make_purge_request();
     let response = client.send_recv(&purge).await;
 
     assert_eq!(response["payload"]["type"], "PurgeResponse");
     assert_eq!(response["payload"]["blobs_deleted"], 0);
-    assert_eq!(response["payload"]["device_sync_deleted"], 0);
-
     client.close().await;
 }
 
@@ -108,7 +105,7 @@ async fn test_routing_token_used_for_storage() {
     storage.store(&routing_token, StoredBlob::new(vec![42]));
 
     // The client connected with that routing_token should be able to purge it
-    let purge = make_purge_request(false);
+    let purge = make_purge_request();
     let response = client.send_recv(&purge).await;
     assert_eq!(response["payload"]["blobs_deleted"], 1);
 
@@ -133,7 +130,6 @@ fn make_shared_deps(
     ConnectionDeps {
         storage: storage as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(60)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
         registry,

@@ -9,7 +9,6 @@ use tracing::{debug, warn};
 use super::nonce::{MAX_RECOVERY_PROOF_SIZE, MAX_RECOVERY_QUERY_HASHES, hash_to_hex, hex_to_hash};
 use super::types::{HandleResult, HandlerResponse, MessageContext};
 use super::verify::{PurgeVerify, RevocationVerify, protocol};
-use crate::device_sync_storage::StoredDeviceSyncMessage;
 use crate::recovery_storage::StoredRecoveryProof;
 use crate::storage::StoredBlob;
 
@@ -170,63 +169,6 @@ pub(super) fn handle_recovery_proof_query(
     HandleResult::single(HandlerResponse::SendEnvelope(response))
 }
 
-/// Handles a `DeviceSyncMessage`: validate identity, store, ack.
-pub(super) fn handle_device_sync_message(
-    ctx: &MessageContext<'_>,
-    sync_msg: &protocol::DeviceSyncMessage,
-    message_id: &str,
-) -> HandleResult {
-    // Validate that sender is the connected client
-    if sync_msg.identity_id != ctx.client_id {
-        warn!("[{}] DeviceSyncMessage identity mismatch", ctx.session);
-        return HandleResult::single(HandlerResponse::Skip);
-    }
-
-    // Store the device sync message for the target device
-    let stored = StoredDeviceSyncMessage::new(
-        sync_msg.identity_id.clone(),
-        sync_msg.target_device_id.clone(),
-        sync_msg.sender_device_id.clone(),
-        sync_msg.encrypted_payload.clone(),
-        sync_msg.version,
-    );
-    ctx.deps.device_sync_storage.store(stored);
-
-    debug!(
-        "[{}] Stored device sync (version {})",
-        ctx.session, sync_msg.version
-    );
-    HandleResult::single(HandlerResponse::SendAck {
-        message_id: message_id.to_string(),
-        status: protocol::AckStatus::Stored,
-    })
-}
-
-/// Handles a `DeviceSyncAck`: acknowledge receipt of device sync message.
-pub(super) fn handle_device_sync_ack(
-    ctx: &MessageContext<'_>,
-    ack: &protocol::DeviceSyncAck,
-) -> HandleResult {
-    if let Some(ref did) = ctx.device_id {
-        if ctx
-            .deps
-            .device_sync_storage
-            .acknowledge(&ctx.client_id, did, &ack.message_id)
-        {
-            debug!(
-                "[{}] Device sync acknowledged (version {})",
-                ctx.session, ack.synced_version
-            );
-        }
-    } else {
-        debug!(
-            "[{}] DeviceSyncAck received but no device_id in handshake",
-            ctx.session
-        );
-    }
-    HandleResult::empty()
-}
-
 /// Handles a `PurgeRequest`: verify signature, delete data, respond.
 pub(super) fn handle_purge_request(
     ctx: &MessageContext<'_>,
@@ -260,13 +202,6 @@ pub(super) fn handle_purge_request(
 
     // Delete all stored blobs for this client's routing ID
     let blobs_deleted = deps.storage.delete_all_for(&ctx.routing_id);
-
-    // Optionally delete device sync messages (identity-based)
-    let device_sync_deleted = if purge.include_device_sync {
-        deps.device_sync_storage.delete_all_for(&ctx.client_id)
-    } else {
-        0
-    };
 
     // Optionally delete recovery proofs
     let recovery_proofs_deleted = if purge.include_recovery_proofs {
@@ -306,17 +241,13 @@ pub(super) fn handle_purge_request(
     }
 
     debug!(
-        "[{}] Purged {} blobs, {} device sync, {} recovery proofs",
-        ctx.session, blobs_deleted, device_sync_deleted, recovery_proofs_deleted
+        "[{}] Purged {} blobs, {} recovery proofs",
+        ctx.session, blobs_deleted, recovery_proofs_deleted
     );
 
     // Send purge response
-    let response = protocol::create_purge_response(
-        message_id,
-        blobs_deleted,
-        device_sync_deleted,
-        recovery_proofs_deleted,
-    );
+    let response =
+        protocol::create_purge_response(message_id, blobs_deleted, recovery_proofs_deleted);
     HandleResult::single(HandlerResponse::SendEnvelope(response))
 }
 
@@ -436,10 +367,6 @@ pub(super) fn handle_message(
             debug!("[{}] Unexpected HandshakeAck", ctx.session);
             HandleResult::empty()
         }
-        protocol::MessagePayload::DeviceSyncMessage(sync_msg) => {
-            handle_device_sync_message(ctx, sync_msg, &envelope.message_id)
-        }
-        protocol::MessagePayload::DeviceSyncAck(ack) => handle_device_sync_ack(ctx, ack),
         protocol::MessagePayload::PurgeRequest(purge) => {
             handle_purge_request(ctx, purge, &envelope.message_id)
         }

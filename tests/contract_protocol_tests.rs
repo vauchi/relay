@@ -67,8 +67,6 @@ fn contract_all_payload_variants_exist() {
             MessagePayload::RecoveryProofStore(_) => "RecoveryProofStore",
             MessagePayload::RecoveryProofQuery(_) => "RecoveryProofQuery",
             MessagePayload::RecoveryProofResponse(_) => "RecoveryProofResponse",
-            MessagePayload::DeviceSyncMessage(_) => "DeviceSyncMessage",
-            MessagePayload::DeviceSyncAck(_) => "DeviceSyncAck",
             MessagePayload::PurgeRequest(_) => "PurgeRequest",
             MessagePayload::PurgeResponse(_) => "PurgeResponse",
             MessagePayload::AccountRevoked(_) => "AccountRevoked",
@@ -178,7 +176,6 @@ fn contract_encrypted_update_has_recipient_and_ciphertext() {
 fn contract_purge_request_optional_fields() {
     let json = "{}";
     let req: PurgeRequest = serde_json::from_str(json).unwrap();
-    assert!(!req.include_device_sync);
     assert!(!req.include_recovery_proofs);
     assert_eq!(req.public_key, None);
     assert_eq!(req.signature, None);
@@ -190,42 +187,10 @@ fn contract_purge_request_optional_fields() {
 fn contract_purge_response_has_all_counters() {
     let resp = PurgeResponse {
         blobs_deleted: 1,
-        device_sync_deleted: 2,
         recovery_proofs_deleted: 3,
     };
     assert_eq!(resp.blobs_deleted, 1);
-    assert_eq!(resp.device_sync_deleted, 2);
     assert_eq!(resp.recovery_proofs_deleted, 3);
-}
-
-// ============================================================
-// DeviceSync contracts
-// ============================================================
-
-#[test]
-fn contract_device_sync_message_has_all_fields() {
-    let msg = DeviceSyncMessage {
-        identity_id: "id1".to_string(),
-        target_device_id: "dev1".to_string(),
-        sender_device_id: "dev2".to_string(),
-        encrypted_payload: vec![1, 2, 3],
-        version: 42,
-    };
-    assert_eq!(msg.identity_id, "id1");
-    assert_eq!(msg.target_device_id, "dev1");
-    assert_eq!(msg.sender_device_id, "dev2");
-    assert_eq!(msg.encrypted_payload, vec![1, 2, 3]);
-    assert_eq!(msg.version, 42);
-}
-
-#[test]
-fn contract_device_sync_ack_has_version_field() {
-    let ack = DeviceSyncAck {
-        message_id: "m1".to_string(),
-        synced_version: 10,
-    };
-    assert_eq!(ack.message_id, "m1");
-    assert_eq!(ack.synced_version, 10);
 }
 
 // ============================================================

@@ -10,7 +10,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key::generate_relay_keypair;
@@ -30,7 +29,6 @@ async fn test_quota_blob_count_exceeded() {
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(1000)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(100)),
         registry: registry.clone(),
@@ -83,7 +81,6 @@ async fn test_quota_byte_limit_exceeded() {
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(1000)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(100)),
         registry: Arc::new(ConnectionRegistry::new()),

@@ -23,7 +23,6 @@ use tokio_tungstenite::{accept_async, connect_async};
 
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::federation_connector::OffloadManager;
 use vauchi_relay::federation_handler::{self, FederationDeps};
 use vauchi_relay::federation_protocol::{
@@ -178,7 +177,6 @@ fn make_client_purge() -> serde_json::Value {
         "timestamp": 1000,
         "payload": {
             "type": "PurgeRequest",
-            "include_device_sync": false,
             "public_key": pk_hex,
             "signature": sig_hex,
             "purge_token": token_hex,
@@ -302,7 +300,6 @@ fn make_client_deps(
     let deps = ConnectionDeps {
         storage,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(60)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
         registry: Arc::new(ConnectionRegistry::new()),

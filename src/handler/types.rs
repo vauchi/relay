@@ -10,7 +10,6 @@ use std::time::Duration;
 use super::nonce::NonceTracker;
 use super::verify::protocol;
 use crate::connection_registry::ConnectionRegistry;
-use crate::device_sync_storage::DeviceSyncStore;
 use crate::forwarding_hints::ForwardingHintStore;
 use crate::metrics::RelayMetrics;
 use crate::noise_key::RelaySigningKey;
@@ -39,7 +38,6 @@ pub struct QuotaLimits {
 pub struct ConnectionDeps {
     pub storage: Arc<dyn BlobStore>,
     pub recovery_storage: Arc<dyn RecoveryProofStore>,
-    pub device_sync_storage: Arc<dyn DeviceSyncStore>,
     pub rate_limiter: Arc<RateLimiter>,
     pub recovery_rate_limiter: Arc<RateLimiter>,
     pub registry: Arc<ConnectionRegistry>,

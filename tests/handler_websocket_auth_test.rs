@@ -16,7 +16,6 @@ use tokio_tungstenite::tungstenite::Message;
 
 use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key::generate_relay_keypair;
@@ -207,7 +206,6 @@ async fn test_nonce_replay_rejected() {
     let deps1 = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(60)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
         registry: registry.clone(),
@@ -243,7 +241,6 @@ async fn test_nonce_replay_rejected() {
     let deps2 = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(60)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
         registry: registry.clone(),

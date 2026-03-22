@@ -174,7 +174,6 @@ fn test_verify_signed_handshake_nonce_replay() {
 #[test]
 fn test_purge_request_rejects_missing_signature() {
     let purge = protocol::PurgeRequest {
-        include_device_sync: true,
         include_recovery_proofs: false,
         recovery_key_hash: None,
         public_key: None,
@@ -216,7 +215,6 @@ fn test_purge_request_accepts_valid_signature() {
         .collect();
 
     let purge = protocol::PurgeRequest {
-        include_device_sync: true,
         include_recovery_proofs: false,
         recovery_key_hash: None,
         public_key: Some(pk_hex),
@@ -250,7 +248,6 @@ fn test_purge_request_rejects_bad_signature() {
     let bad_sig: String = [0xFFu8; 64].iter().map(|b| format!("{:02x}", b)).collect();
 
     let purge = protocol::PurgeRequest {
-        include_device_sync: true,
         include_recovery_proofs: false,
         recovery_key_hash: None,
         public_key: Some(pk_hex),

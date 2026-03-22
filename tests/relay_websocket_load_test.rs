@@ -23,7 +23,6 @@ use tokio::time::timeout;
 use tokio_tungstenite::accept_async;
 
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key::generate_relay_keypair;
@@ -51,7 +50,6 @@ fn test_deps() -> (
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(1000)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(100)),
         registry: registry.clone(),
@@ -91,7 +89,6 @@ fn test_deps_custom(
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(rate_limit)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(100)),
         registry: registry.clone(),
@@ -118,7 +115,6 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
 
     let storage = deps.storage;
     let recovery_storage = deps.recovery_storage;
-    let device_sync_storage = deps.device_sync_storage;
     let rate_limiter = deps.rate_limiter;
     let recovery_rate_limiter = deps.recovery_rate_limiter;
     let registry = deps.registry;
@@ -133,7 +129,6 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
             let per_conn = ConnectionDeps {
                 storage: storage.clone(),
                 recovery_storage: recovery_storage.clone(),
-                device_sync_storage: device_sync_storage.clone(),
                 rate_limiter: rate_limiter.clone(),
                 recovery_rate_limiter: recovery_rate_limiter.clone(),
                 registry: registry.clone(),
@@ -463,7 +458,6 @@ async fn test_delivery_notification_latency() {
         ConnectionDeps {
             storage: s as Arc<dyn BlobStore>,
             recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-            device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
             rate_limiter: Arc::new(RateLimiter::new(1000)),
             recovery_rate_limiter: Arc::new(RateLimiter::new(100)),
             registry: r,

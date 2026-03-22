@@ -86,7 +86,7 @@ async fn test_truncated_frame_too_short() {
 // @scenario: relay_network:Relay enforces message size limits
 #[tokio::test]
 async fn test_oversized_message_silently_dropped() {
-    let (deps, relay_pub, storage, _, _) = test_deps_custom(
+    let (deps, relay_pub, storage, _) = test_deps_custom(
         60,
         10,
         512, // small max_message_size but large enough for envelope overhead
@@ -203,7 +203,7 @@ async fn test_unknown_message_type_ignored() {
 // @scenario: relay_network.feature:Rate limiting on relay nodes
 #[tokio::test]
 async fn test_rate_limit_silently_drops_excess_messages() {
-    let (deps, relay_pub, storage, _, _) = test_deps_custom(
+    let (deps, relay_pub, storage, _) = test_deps_custom(
         3, // Only allow 3 messages (token bucket starts with 3 tokens)
         10,
         1_048_576,
@@ -248,7 +248,7 @@ async fn test_rate_limit_silently_drops_excess_messages() {
 // @scenario: relay_network:Relay enforces rate limits
 #[tokio::test]
 async fn test_recovery_rate_limit_separate_from_general() {
-    let (deps, relay_pub, _, _, _) = test_deps_custom(
+    let (deps, relay_pub, _, _) = test_deps_custom(
         60, // general rate limit is generous
         2,  // recovery rate limit is very low
         1_048_576,
@@ -296,7 +296,7 @@ async fn test_recovery_rate_limit_separate_from_general() {
 // @scenario: relay_network:Relay enforces rate limits
 #[tokio::test]
 async fn test_recovery_query_rate_limited() {
-    let (deps, relay_pub, _, _, _) = test_deps_custom(
+    let (deps, relay_pub, _, _) = test_deps_custom(
         60,
         2, // Only allow 2 recovery operations
         1_048_576,

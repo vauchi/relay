@@ -233,8 +233,7 @@ async fn perform_handshake(
     ))
 }
 
-/// Delivers pending blobs, forwarding hints, and device sync messages
-/// to a newly connected client.
+/// Delivers pending blobs and forwarding hints to a newly connected client.
 async fn deliver_pending(
     write: &mut futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
     noise_session: &mut Option<NoiseTransport>,
@@ -352,53 +351,6 @@ async fn deliver_pending(
         }
     }
 
-    // Send any pending device sync messages if device_id is present
-    if let Some(ref did) = ctx.device_id {
-        let pending_sync = deps.device_sync_storage.peek(&ctx.client_id, did);
-        let pending_count = pending_sync.len();
-        for msg in pending_sync {
-            let envelope = protocol::create_device_sync_delivery(
-                &msg.id,
-                &msg.identity_id,
-                &msg.target_device_id,
-                &msg.sender_device_id,
-                &msg.encrypted_payload,
-                msg.version,
-            );
-            match protocol::encode_message(&envelope) {
-                Ok(data) => {
-                    let send_data = if let Some(ns) = noise_session {
-                        match ns.encrypt(&data) {
-                            Ok(encrypted) => encrypted,
-                            Err(e) => {
-                                error!("[{}] Failed to encrypt device sync: {}", ctx.session, e);
-                                continue;
-                            }
-                        }
-                    } else {
-                        unreachable!("Noise NK is mandatory since v0.1")
-                    };
-                    if write.send(Message::Binary(send_data)).await.is_err() {
-                        warn!("[{}] Failed to send pending device sync", ctx.session);
-                        return false;
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        "[{}] Failed to encode device sync delivery: {}",
-                        ctx.session, e
-                    );
-                }
-            }
-        }
-        if pending_count > 0 {
-            debug!(
-                "[{}] Sent {} pending device sync messages",
-                ctx.session, pending_count
-            );
-        }
-    }
-
     true
 }
 
@@ -493,7 +445,7 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
         deps: &deps,
     };
 
-    // Deliver pending blobs, forwarding hints, and device sync messages
+    // Deliver pending blobs and forwarding hints
     if !deliver_pending(&mut write, &mut noise_session, &ctx).await {
         deps.registry.unregister(&routing_id, conn_id);
         return;

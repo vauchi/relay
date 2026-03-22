@@ -23,7 +23,6 @@ use tracing::{error, info};
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_limit::ConnectionLimiter;
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::{DeviceSyncStore, create_device_sync_store};
 use vauchi_relay::federation_connector::{self, OffloadManager};
 use vauchi_relay::federation_handler::{self, FederationDeps};
 use vauchi_relay::federation_tls;
@@ -197,15 +196,6 @@ async fn main() {
                 SqliteRecoveryProofStore::open(&path)
                     .expect("Failed to open recovery proof database"),
             )
-        }
-    };
-
-    // Initialize device sync storage
-    // Always use SQLite - in-memory for Memory backend, file-based for Sqlite backend
-    let device_sync_storage: Arc<dyn DeviceSyncStore> = match config.storage.backend {
-        StorageBackend::Memory => Arc::from(create_device_sync_store(None)),
-        StorageBackend::Sqlite => {
-            Arc::from(create_device_sync_store(Some(&config.storage.data_dir)))
         }
     };
 
@@ -498,19 +488,6 @@ async fn main() {
         }
     });
 
-    // Start cleanup task for device sync messages
-    let cleanup_device_sync = device_sync_storage.clone();
-    let device_sync_ttl = blob_ttl; // Use same TTL as blobs
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(cleanup_interval).await;
-            let removed = cleanup_device_sync.cleanup_expired(device_sync_ttl);
-            if removed > 0 {
-                info!("Cleaned up {} expired device sync messages", removed);
-            }
-        }
-    });
-
     // Start cleanup task for rate limiters (remove stale client buckets)
     let cleanup_rate_limiter = rate_limiter.clone();
     let cleanup_recovery_rate_limiter = recovery_rate_limiter.clone();
@@ -608,7 +585,6 @@ async fn main() {
 
         let storage = storage.clone();
         let recovery_storage = recovery_storage.clone();
-        let device_sync_storage = device_sync_storage.clone();
         let rate_limiter = rate_limiter.clone();
         let recovery_rate_limiter = recovery_rate_limiter.clone();
         let registry = registry.clone();
@@ -761,7 +737,6 @@ async fn main() {
                             handler::ConnectionDeps {
                                 storage,
                                 recovery_storage,
-                                device_sync_storage,
                                 rate_limiter,
                                 recovery_rate_limiter,
                                 registry,

@@ -24,7 +24,6 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::device_sync_storage::SqliteDeviceSyncStore;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key::generate_relay_keypair;
@@ -151,7 +150,7 @@ pub fn make_recovery_query(key_hashes: &[&str]) -> Value {
 }
 
 /// Builds a PurgeRequest envelope with valid Ed25519 signature.
-pub fn make_purge_request(include_device_sync: bool) -> Value {
+pub fn make_purge_request() -> Value {
     use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
 
     let rng = aws_lc_rs::rand::SystemRandom::new();
@@ -188,48 +187,10 @@ pub fn make_purge_request(include_device_sync: bool) -> Value {
         "timestamp": 1000,
         "payload": {
             "type": "PurgeRequest",
-            "include_device_sync": include_device_sync,
             "public_key": pk_hex,
             "signature": sig_hex,
             "purge_token": token_hex,
             "timestamp": timestamp
-        }
-    })
-}
-
-/// Builds a DeviceSyncMessage envelope.
-pub fn make_device_sync(
-    identity_id: &str,
-    target_device_id: &str,
-    sender_device_id: &str,
-    payload: &[u8],
-    version: u64,
-) -> Value {
-    json!({
-        "version": 1,
-        "message_id": uuid::Uuid::new_v4().to_string(),
-        "timestamp": 1000,
-        "payload": {
-            "type": "DeviceSyncMessage",
-            "identity_id": identity_id,
-            "target_device_id": target_device_id,
-            "sender_device_id": sender_device_id,
-            "encrypted_payload": payload.to_vec(),
-            "version": version
-        }
-    })
-}
-
-/// Builds a DeviceSyncAck envelope.
-pub fn make_device_sync_ack(message_id: &str, synced_version: u64) -> Value {
-    json!({
-        "version": 1,
-        "message_id": uuid::Uuid::new_v4().to_string(),
-        "timestamp": 1000,
-        "payload": {
-            "type": "DeviceSyncAck",
-            "message_id": message_id,
-            "synced_version": synced_version
         }
     })
 }
@@ -410,7 +371,6 @@ pub fn test_deps() -> (
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(60)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
         registry: registry.clone(),
@@ -433,7 +393,7 @@ pub fn test_deps() -> (
 }
 
 /// Creates a customised set of test dependencies.
-/// Returns `(deps, relay_pubkey, storage, registry, device_sync_storage)`.
+/// Returns `(deps, relay_pubkey, storage, registry)`.
 pub fn test_deps_custom(
     rate_limit: u32,
     recovery_rate_limit: u32,
@@ -445,16 +405,13 @@ pub fn test_deps_custom(
     [u8; 32],
     Arc<SqliteBlobStore>,
     Arc<ConnectionRegistry>,
-    Arc<SqliteDeviceSyncStore>,
 ) {
     let kp = generate_relay_keypair();
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
     let registry = Arc::new(ConnectionRegistry::new());
-    let device_sync_storage = Arc::new(SqliteDeviceSyncStore::in_memory().unwrap());
     let deps = ConnectionDeps {
         storage: storage.clone() as Arc<dyn BlobStore>,
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: device_sync_storage.clone(),
         rate_limiter: Arc::new(RateLimiter::new(rate_limit)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(recovery_rate_limit)),
         registry: registry.clone(),
@@ -470,7 +427,7 @@ pub fn test_deps_custom(
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
     };
-    (deps, kp.public, storage, registry, device_sync_storage)
+    (deps, kp.public, storage, registry)
 }
 
 /// Starts a test server that handles exactly one WebSocket connection, then returns.
@@ -502,7 +459,6 @@ pub async fn start_multi_server(deps: ConnectionDeps) -> String {
     let noise_static_key = deps.noise_static_key;
     let storage = deps.storage;
     let recovery_storage = deps.recovery_storage;
-    let device_sync_storage = deps.device_sync_storage;
     let rate_limiter = deps.rate_limiter;
     let recovery_rate_limiter = deps.recovery_rate_limiter;
     let registry = deps.registry;
@@ -516,7 +472,6 @@ pub async fn start_multi_server(deps: ConnectionDeps) -> String {
             let per_conn = ConnectionDeps {
                 storage: storage.clone(),
                 recovery_storage: recovery_storage.clone(),
-                device_sync_storage: device_sync_storage.clone(),
                 rate_limiter: rate_limiter.clone(),
                 recovery_rate_limiter: recovery_rate_limiter.clone(),
                 registry: registry.clone(),

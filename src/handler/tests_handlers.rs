@@ -7,8 +7,7 @@
 use super::*;
 
 use messages::{
-    handle_account_revoked, handle_acknowledgment, handle_device_sync_ack,
-    handle_device_sync_message, handle_encrypted_update, handle_purge_request,
+    handle_account_revoked, handle_acknowledgment, handle_encrypted_update, handle_purge_request,
     handle_recovery_proof_query, handle_recovery_proof_store,
 };
 use types::{HandlerResponse, MessageContext};
@@ -24,7 +23,6 @@ use std::time::Duration;
 /// Helper: create test deps for unit testing handlers.
 fn make_test_deps() -> ConnectionDeps {
     use crate::connection_registry::ConnectionRegistry;
-    use crate::device_sync_storage::SqliteDeviceSyncStore;
     use crate::metrics::RelayMetrics;
     use crate::rate_limit::RateLimiter;
     use crate::recovery_storage::SqliteRecoveryProofStore;
@@ -33,7 +31,6 @@ fn make_test_deps() -> ConnectionDeps {
     ConnectionDeps {
         storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(60)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
         registry: Arc::new(ConnectionRegistry::new()),
@@ -102,7 +99,6 @@ fn test_handle_encrypted_update_stores_blob_returns_stored() {
 #[test]
 fn test_handle_encrypted_update_quota_exceeded_returns_failed() {
     use crate::connection_registry::ConnectionRegistry;
-    use crate::device_sync_storage::SqliteDeviceSyncStore;
     use crate::metrics::RelayMetrics;
     use crate::rate_limit::RateLimiter;
     use crate::recovery_storage::SqliteRecoveryProofStore;
@@ -111,7 +107,6 @@ fn test_handle_encrypted_update_quota_exceeded_returns_failed() {
     let deps = ConnectionDeps {
         storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        device_sync_storage: Arc::new(SqliteDeviceSyncStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(60)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(10)),
         registry: Arc::new(ConnectionRegistry::new()),
@@ -255,87 +250,6 @@ fn test_handle_recovery_query_returns_matching_proofs() {
 }
 
 // ------------------------------------------------------------------
-// handle_device_sync_message tests
-// ------------------------------------------------------------------
-
-#[test]
-fn test_handle_device_sync_valid_returns_stored() {
-    let deps = make_test_deps();
-    let ctx = make_test_context(&deps);
-
-    let sync_msg = protocol::DeviceSyncMessage {
-        identity_id: ctx.client_id.clone(),
-        target_device_id: "d".repeat(64),
-        sender_device_id: "b".repeat(64),
-        encrypted_payload: vec![5, 6, 7],
-        version: 1,
-    };
-
-    let result = handle_device_sync_message(&ctx, &sync_msg, "msg-005");
-
-    assert_eq!(result.responses.len(), 1);
-    match &result.responses[0] {
-        HandlerResponse::SendAck { status, .. } => {
-            assert_eq!(*status, protocol::AckStatus::Stored);
-        }
-        other => panic!("Expected SendAck(Stored), got {:?}", other),
-    }
-}
-
-#[test]
-fn test_handle_device_sync_identity_mismatch_skipped() {
-    let deps = make_test_deps();
-    let ctx = make_test_context(&deps);
-
-    let sync_msg = protocol::DeviceSyncMessage {
-        identity_id: "f".repeat(64), // Different from client_id
-        target_device_id: "d".repeat(64),
-        sender_device_id: "b".repeat(64),
-        encrypted_payload: vec![5, 6, 7],
-        version: 1,
-    };
-
-    let result = handle_device_sync_message(&ctx, &sync_msg, "msg-006");
-
-    // Identity mismatch produces Skip
-    assert_eq!(result.responses.len(), 1);
-    assert!(matches!(result.responses[0], HandlerResponse::Skip));
-}
-
-// ------------------------------------------------------------------
-// handle_device_sync_ack tests
-// ------------------------------------------------------------------
-
-#[test]
-fn test_handle_device_sync_ack_with_device_id() {
-    use crate::device_sync_storage::StoredDeviceSyncMessage;
-
-    let deps = make_test_deps();
-    let ctx = make_test_context(&deps);
-
-    // Store a device sync message
-    let stored = StoredDeviceSyncMessage::new(
-        ctx.client_id.clone(),
-        ctx.device_id.clone().unwrap(),
-        "sender".to_string(),
-        vec![1, 2, 3],
-        1,
-    );
-    let msg_id = stored.id.clone();
-    deps.device_sync_storage.store(stored);
-
-    let ack = protocol::DeviceSyncAck {
-        message_id: msg_id,
-        synced_version: 1,
-    };
-
-    let result = handle_device_sync_ack(&ctx, &ack);
-
-    // Should not produce an error
-    assert!(result.responses.is_empty());
-}
-
-// ------------------------------------------------------------------
 // handle_purge_request tests
 // ------------------------------------------------------------------
 
@@ -345,7 +259,6 @@ fn test_handle_purge_unsigned_returns_failed() {
     let ctx = make_test_context(&deps);
 
     let purge = protocol::PurgeRequest {
-        include_device_sync: false,
         include_recovery_proofs: false,
         recovery_key_hash: None,
         public_key: None,
