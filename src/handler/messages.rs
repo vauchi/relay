@@ -314,6 +314,16 @@ pub(super) fn handle_message(
             debug!("[{}] Unexpected DeviceLinkRelay", ctx.session);
             HandleResult::empty()
         }
+        protocol::MessagePayload::RegisterMailbox(_) => {
+            // Token registration handling wired in Task 3.4.
+            debug!("[{}] RegisterMailbox (not yet handled)", ctx.session);
+            HandleResult::empty()
+        }
+        protocol::MessagePayload::DeregisterMailbox(_) => {
+            // Token deregistration handling wired in Task 3.4.
+            debug!("[{}] DeregisterMailbox (not yet handled)", ctx.session);
+            HandleResult::empty()
+        }
         protocol::MessagePayload::Unknown => {
             debug!("[{}] Unknown message type", ctx.session);
             HandleResult::empty()

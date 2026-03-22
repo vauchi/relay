@@ -72,6 +72,8 @@ fn contract_all_payload_variants_exist() {
             MessagePayload::AccountRevoked(_) => "AccountRevoked",
             MessagePayload::ForwardingHints(_) => "ForwardingHints",
             MessagePayload::DeviceLinkRelay(_) => "DeviceLinkRelay",
+            MessagePayload::RegisterMailbox(_) => "RegisterMailbox",
+            MessagePayload::DeregisterMailbox(_) => "DeregisterMailbox",
             MessagePayload::Unknown => "Unknown",
         }
     }

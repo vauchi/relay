@@ -14,6 +14,7 @@ pub mod handler;
 pub mod http;
 pub mod integrity;
 pub mod jitter;
+pub mod mailbox_registry;
 pub mod metrics;
 pub mod noise_key;
 pub mod noise_transport;
