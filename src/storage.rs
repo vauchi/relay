@@ -76,6 +76,9 @@ pub trait BlobStore: Send + Sync {
     /// Retrieves all pending blobs for a recipient (without removing them).
     fn peek(&self, recipient_id: &str) -> Vec<StoredBlob>;
 
+    /// Retrieves all stored blobs matching any of the given recipient tokens.
+    fn peek_many(&self, tokens: &[&str]) -> Vec<StoredBlob>;
+
     /// Retrieves and removes all pending blobs for a recipient.
     fn take(&self, recipient_id: &str) -> Vec<StoredBlob>;
 
@@ -211,6 +214,34 @@ impl BlobStore for SqliteBlobStore {
             })
         })
         .expect("peek query must succeed")
+        .filter_map(|r| r.ok())
+        .collect()
+    }
+
+    fn peek_many(&self, tokens: &[&str]) -> Vec<StoredBlob> {
+        if tokens.is_empty() {
+            return Vec::new();
+        }
+        let conn = self.conn.lock();
+        let placeholders: String = tokens.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id, data, created_at_secs, hop_count FROM blobs WHERE recipient_id IN ({}) ORDER BY created_at_secs ASC",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql).expect("peek_many SQL must be valid");
+        let params: Vec<&dyn rusqlite::types::ToSql> = tokens
+            .iter()
+            .map(|t| t as &dyn rusqlite::types::ToSql)
+            .collect();
+        stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok(StoredBlob {
+                id: row.get(0)?,
+                data: row.get(1)?,
+                created_at_secs: row.get::<_, i64>(2)? as u64,
+                hop_count: row.get::<_, i64>(3)? as u8,
+            })
+        })
+        .expect("peek_many query must succeed")
         .filter_map(|r| r.ok())
         .collect()
     }
@@ -761,6 +792,69 @@ mod tests {
             assert_eq!(blobs[0].hop_count, 2);
             assert_eq!(blobs[0].created_at_secs, 999);
         }
+    }
+
+    // ========================================================================
+    // Tests: peek_many (SP-33 multi-token delivery)
+    // ========================================================================
+
+    #[test]
+    fn test_peek_many_returns_matching_blobs() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        let b1 = StoredBlob::new(vec![1, 2, 3]);
+        let b2 = StoredBlob::new(vec![4, 5, 6]);
+        let b3 = StoredBlob::new(vec![7, 8, 9]);
+        let id1 = b1.id.clone();
+        let id3 = b3.id.clone();
+        store.store("token_a", b1);
+        store.store("token_b", b2);
+        store.store("token_c", b3);
+
+        let results = store.peek_many(&["token_a", "token_c"]);
+        assert_eq!(results.len(), 2);
+        let ids: Vec<&str> = results.iter().map(|b| b.id.as_str()).collect();
+        assert!(ids.contains(&id1.as_str()));
+        assert!(ids.contains(&id3.as_str()));
+    }
+
+    #[test]
+    fn test_peek_many_empty_tokens() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        store.store("token_a", StoredBlob::new(vec![1, 2, 3]));
+
+        let results = store.peek_many(&[]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_peek_many_no_matches() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        store.store("token_a", StoredBlob::new(vec![1, 2, 3]));
+
+        let results = store.peek_many(&["nonexistent"]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_peek_many_single_token_matches_multiple_blobs() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        store.store("token_a", StoredBlob::new(vec![1]));
+        store.store("token_a", StoredBlob::new(vec![2]));
+        store.store("token_b", StoredBlob::new(vec![3]));
+
+        let results = store.peek_many(&["token_a"]);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_peek_many_does_not_remove_blobs() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        store.store("token_a", StoredBlob::new(vec![1]));
+
+        let first = store.peek_many(&["token_a"]);
+        assert_eq!(first.len(), 1);
+        let second = store.peek_many(&["token_a"]);
+        assert_eq!(second.len(), 1);
     }
 
     // ========================================================================
