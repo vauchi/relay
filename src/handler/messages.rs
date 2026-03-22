@@ -8,7 +8,7 @@ use tracing::{debug, warn};
 
 use super::nonce::{MAX_RECOVERY_PROOF_SIZE, MAX_RECOVERY_QUERY_HASHES, hash_to_hex, hex_to_hash};
 use super::types::{HandleResult, HandlerResponse, MessageContext};
-use super::verify::{PurgeVerify, RevocationVerify, protocol};
+use super::verify::{PurgeVerify, protocol};
 use crate::recovery_storage::StoredRecoveryProof;
 use crate::storage::StoredBlob;
 
@@ -251,82 +251,6 @@ pub(super) fn handle_purge_request(
     HandleResult::single(HandlerResponse::SendEnvelope(response))
 }
 
-/// Handles an `AccountRevoked` message: verify signature, validate, store as blob, ack.
-///
-/// F-01 fix: Requires valid Ed25519 signature over canonical revocation bytes.
-/// Without verification, any client could send a revocation for any recipient.
-pub(super) fn handle_account_revoked(
-    ctx: &MessageContext<'_>,
-    revoked: &protocol::AccountRevoked,
-    envelope: &protocol::MessageEnvelope,
-) -> HandleResult {
-    let deps = ctx.deps;
-
-    // F-01: Verify Ed25519 signature over canonical revocation bytes.
-    // Rejects unsigned, tampered, expired, or forged revocations.
-    if let Err(e) = revoked.verify_revocation() {
-        warn!(
-            "[{}] Rejecting AccountRevoked with invalid signature: {}",
-            ctx.session, e
-        );
-        return HandleResult::single(HandlerResponse::SendAck {
-            message_id: envelope.message_id.clone(),
-            status: protocol::AckStatus::Failed,
-        });
-    }
-
-    // Validate recipient_id format (hex-encoded, 64 chars).
-    // verify_revocation already checks hex decode + 32 bytes for recipient_id,
-    // but this guards the storage key format explicitly.
-    if revoked.recipient_id.len() != 64
-        || !revoked.recipient_id.chars().all(|c| c.is_ascii_hexdigit())
-    {
-        debug!("[{}] AccountRevoked: invalid recipient_id", ctx.session);
-        return HandleResult::single(HandlerResponse::SendAck {
-            message_id: envelope.message_id.clone(),
-            status: protocol::AckStatus::Failed,
-        });
-    }
-
-    // Check per-recipient quota
-    if deps.quota.max_blobs > 0
-        && deps.storage.blob_count_for(&revoked.recipient_id) >= deps.quota.max_blobs
-    {
-        debug!(
-            "[{}] AccountRevoked: quota exceeded for recipient",
-            ctx.session
-        );
-        return HandleResult::single(HandlerResponse::SendAck {
-            message_id: envelope.message_id.clone(),
-            status: protocol::AckStatus::Failed,
-        });
-    }
-
-    // Re-encode the entire envelope as a blob for the recipient
-    match protocol::encode_message(envelope) {
-        Ok(blob_data) => {
-            let blob = StoredBlob::new(blob_data);
-            deps.storage.store(&revoked.recipient_id, blob);
-
-            debug!("[{}] Stored AccountRevoked for recipient", ctx.session);
-            HandleResult::single(HandlerResponse::SendAck {
-                message_id: envelope.message_id.clone(),
-                status: protocol::AckStatus::Stored,
-            })
-        }
-        Err(e) => {
-            warn!(
-                "[{}] AccountRevoked: failed to re-encode envelope: {}",
-                ctx.session, e
-            );
-            HandleResult::single(HandlerResponse::SendAck {
-                message_id: envelope.message_id.clone(),
-                status: protocol::AckStatus::Failed,
-            })
-        }
-    }
-}
-
 /// Handles a single decoded message by dispatching to the appropriate handler.
 ///
 /// Returns a `HandleResult` describing the actions the message loop should take.
@@ -370,8 +294,13 @@ pub(super) fn handle_message(
         protocol::MessagePayload::PurgeRequest(purge) => {
             handle_purge_request(ctx, purge, &envelope.message_id)
         }
-        protocol::MessagePayload::AccountRevoked(revoked) => {
-            handle_account_revoked(ctx, revoked, envelope)
+        protocol::MessagePayload::AccountRevoked(_) => {
+            // AccountRevoked is now carried inside EncryptedUpdate blobs and verified client-side.
+            debug!(
+                "[{}] Unexpected AccountRevoked (handled client-side)",
+                ctx.session
+            );
+            HandleResult::empty()
         }
         protocol::MessagePayload::PurgeResponse(_) => {
             debug!("[{}] Unexpected PurgeResponse", ctx.session);
