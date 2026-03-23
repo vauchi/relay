@@ -75,16 +75,8 @@ criteria = "safe-to-deploy"
 version = "4.5.60"
 criteria = "safe-to-run"
 
-[[exemptions.clap_builder]]
-version = "4.6.0"
-criteria = "safe-to-run"
-
 [[exemptions.clap_lex]]
 version = "1.0.0"
-criteria = "safe-to-run"
-
-[[exemptions.clap_lex]]
-version = "1.1.0"
 criteria = "safe-to-run"
 
 [[exemptions.criterion]]
@@ -219,10 +211,6 @@ criteria = "safe-to-deploy"
 version = "0.30.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.log]]
-version = "0.4.29"
-criteria = "safe-to-deploy"
-
 [[exemptions.matchit]]
 version = "0.7.3"
 criteria = "safe-to-deploy"
@@ -245,10 +233,6 @@ criteria = "safe-to-run"
 
 [[exemptions.once_cell]]
 version = "1.21.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.once_cell]]
-version = "1.21.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.pem]]
@@ -345,7 +329,7 @@ version = "1.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-webpki]]
-version = "0.103.9"
+version = "0.103.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.rusty-fork]]
@@ -366,10 +350,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tempfile]]
 version = "3.26.0"
-criteria = "safe-to-run"
-
-[[exemptions.tempfile]]
-version = "3.27.0"
 criteria = "safe-to-run"
 
 [[exemptions.time]]
@@ -468,14 +448,6 @@ criteria = "safe-to-run"
 version = "0.8.40"
 criteria = "safe-to-deploy"
 
-[[exemptions.zerocopy]]
-version = "0.8.42"
-criteria = "safe-to-deploy"
-
 [[exemptions.zerocopy-derive]]
 version = "0.8.40"
-criteria = "safe-to-deploy"
-
-[[exemptions.zerocopy-derive]]
-version = "0.8.42"
 criteria = "safe-to-deploy"
