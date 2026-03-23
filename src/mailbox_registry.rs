@@ -99,12 +99,12 @@ impl MailboxRegistry {
     /// Use this on connection disconnect to clean up only the disconnecting
     /// device's entries.
     pub fn deregister_connection(&mut self, reg_id: RegistrationId) {
-        if let Some(token) = self.reverse.remove(&reg_id) {
-            if let Some(entries) = self.entries.get_mut(&token) {
-                entries.retain(|(id, _)| *id != reg_id);
-                if entries.is_empty() {
-                    self.entries.remove(&token);
-                }
+        if let Some(token) = self.reverse.remove(&reg_id)
+            && let Some(entries) = self.entries.get_mut(&token)
+        {
+            entries.retain(|(id, _)| *id != reg_id);
+            if entries.is_empty() {
+                self.entries.remove(&token);
             }
         }
     }
