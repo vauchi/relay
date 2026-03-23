@@ -5,6 +5,7 @@
 target/
 .git/
 .gitignore
+.cargo/
 *.md
 LICENSE*
 LICENSES/
