@@ -24,3 +24,11 @@ mutants.out.old/
 
 # CI local testing
 .gitlab-ci-local/
+
+# Secrets & credentials (never commit)
+.env
+.env.*
+*.key
+*.pem
+credentials.json
+service-account*.json
