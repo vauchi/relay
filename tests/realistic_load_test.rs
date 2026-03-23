@@ -42,19 +42,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use tokio::net::TcpListener;
 use tokio::sync::Barrier;
 use tokio::time::timeout;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{accept_async, connect_async};
 
-use vauchi_relay::connection_registry::ConnectionRegistry;
-use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
-use vauchi_relay::metrics::RelayMetrics;
-use vauchi_relay::rate_limit::RateLimiter;
-use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
+use vauchi_relay::handler::QuotaLimits;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
 
 // ============================================================================
@@ -94,34 +86,6 @@ const fn seconds_per_simulated_day() -> f64 {
 // ============================================================================
 // Protocol Helpers
 // ============================================================================
-
-const FRAME_HEADER_SIZE: usize = 4;
-
-fn encode_envelope(envelope: &Value) -> Vec<u8> {
-    let json = serde_json::to_vec(envelope).unwrap();
-    let len = json.len() as u32;
-    let mut frame = Vec::with_capacity(FRAME_HEADER_SIZE + json.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&json);
-    frame
-}
-
-fn decode_envelope(data: &[u8]) -> Value {
-    assert!(data.len() >= FRAME_HEADER_SIZE, "Frame too short");
-    serde_json::from_slice(&data[FRAME_HEADER_SIZE..]).unwrap()
-}
-
-fn make_handshake(client_id: &str) -> Value {
-    json!({
-        "version": 1,
-        "message_id": uuid::Uuid::new_v4().to_string(),
-        "timestamp": 1000,
-        "payload": {
-            "type": "Handshake",
-            "client_id": client_id
-        }
-    })
-}
 
 fn make_encrypted_update(recipient_id: &str, ciphertext: &[u8]) -> Value {
     json!({
@@ -214,128 +178,35 @@ impl LoadTestMetrics {
     }
 }
 
-/// Creates test dependencies with realistic quotas.
+/// Creates test dependencies with realistic quotas and a Noise NK keypair.
+///
+/// Returns `(deps, relay_pubkey, storage)`.
 fn test_deps_realistic() -> (
-    ConnectionDeps,
+    vauchi_relay::handler::ConnectionDeps,
+    [u8; 32],
     Arc<SqliteBlobStore>,
-    Arc<ConnectionRegistry>,
 ) {
-    let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());
-    let registry = Arc::new(ConnectionRegistry::new());
-    let deps = ConnectionDeps {
-        storage: storage.clone() as Arc<dyn BlobStore>,
-        recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
-        // High rate limit to avoid artificial bottlenecks in load testing
-        rate_limiter: Arc::new(RateLimiter::new(10_000)),
-        recovery_rate_limiter: Arc::new(RateLimiter::new(1000)),
-        registry: registry.clone(),
-        blob_sender_map: handler::new_blob_sender_map(),
-        max_message_size: 1_048_576,
-        idle_timeout: Duration::from_secs(300),
-        quota: QuotaLimits {
-            // Allow up to 200k blobs per recipient (enough for 30 days)
-            max_blobs: 200_000,
+    let (deps, pubkey, storage, _registry) = common::ws_helpers::test_deps_custom(
+        10_000,    // High rate limit — avoid artificial bottlenecks in load testing
+        1_000,     // recovery_rate_limit
+        1_048_576, // max_msg_size
+        Duration::from_secs(300),
+        QuotaLimits {
+            max_blobs: 200_000, // Allow up to 200k blobs per recipient (enough for 30 days)
             max_bytes: 0,
         },
-        hint_store: None,
-        noise_static_key: None,
-        nonce_tracker: Arc::new(handler::NonceTracker::new()),
-        delivery_jitter_min_ms: 0,
-        delivery_jitter_max_ms: 0,
-        relay_signing_key: None,
-        metrics: RelayMetrics::new(),
-        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
-            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
-        )),
-    };
-    (deps, storage, registry)
+    );
+    (deps, pubkey, storage)
 }
 
-/// Starts a multi-connection test server. Returns the URL.
-async fn start_load_test_server(deps: ConnectionDeps) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let url = format!("ws://127.0.0.1:{}", addr.port());
-
-    let storage = deps.storage;
-    let recovery_storage = deps.recovery_storage;
-    let rate_limiter = deps.rate_limiter;
-    let recovery_rate_limiter = deps.recovery_rate_limiter;
-    let registry = deps.registry;
-    let blob_sender_map = deps.blob_sender_map;
-    let max_message_size = deps.max_message_size;
-    let idle_timeout = deps.idle_timeout;
-    let quota = deps.quota;
-
-    tokio::spawn(async move {
-        while let Ok((stream, _)) = listener.accept().await {
-            let per_conn = ConnectionDeps {
-                storage: storage.clone(),
-                recovery_storage: recovery_storage.clone(),
-                rate_limiter: rate_limiter.clone(),
-                recovery_rate_limiter: recovery_rate_limiter.clone(),
-                registry: registry.clone(),
-                blob_sender_map: blob_sender_map.clone(),
-                max_message_size,
-                idle_timeout,
-                quota,
-                hint_store: None,
-                noise_static_key: None,
-                nonce_tracker: Arc::new(handler::NonceTracker::new()),
-                delivery_jitter_min_ms: 0,
-                delivery_jitter_max_ms: 0,
-                relay_signing_key: None,
-                metrics: RelayMetrics::new(),
-                mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
-                    vauchi_relay::mailbox_registry::MailboxRegistry::new(),
-                )),
-            };
-            tokio::spawn(async move {
-                if let Ok(ws) = accept_async(stream).await {
-                    handler::handle_connection(ws, per_conn).await;
-                }
-            });
-        }
-    });
-
-    url
-}
-
-/// Perform handshake, return success status.
-async fn do_handshake(
-    ws: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-    client_id: &str,
-) -> bool {
-    let frame = encode_envelope(&make_handshake(client_id));
-    if ws.send(Message::Binary(frame)).await.is_err() {
-        return false;
-    }
-
-    match timeout(Duration::from_secs(5), ws.next()).await {
-        Ok(Some(Ok(Message::Binary(data)))) => {
-            let resp = decode_envelope(&data);
-            resp["payload"]["type"] == "HandshakeAck"
-        }
-        _ => false,
-    }
-}
-
-/// Send a message and receive the response, measuring latency.
+/// Send a Noise-encrypted message and receive the response, measuring latency.
 /// Handles interleaved EncryptedUpdate pushes by skipping them.
-async fn send_recv_timed(
-    ws: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+async fn noise_send_recv_timed(
+    client: &mut common::ws_helpers::NoiseClient,
     msg: &Value,
 ) -> Result<(Value, Duration), ()> {
     let start = Instant::now();
-    let frame = encode_envelope(msg);
-
-    if ws.send(Message::Binary(frame)).await.is_err() {
-        return Err(());
-    }
+    client.send_envelope(msg).await;
 
     // Read responses, skipping any pushed EncryptedUpdate or Delivered messages
     // until we get a Stored acknowledgment
@@ -346,26 +217,21 @@ async fn send_recv_timed(
             return Err(());
         }
 
-        match timeout(remaining, ws.next()).await {
-            Ok(Some(Ok(Message::Binary(data)))) => {
+        match timeout(remaining, async { client.recv().await }).await {
+            Ok(response) => {
                 let latency = start.elapsed();
-                let response = decode_envelope(&data);
-
+                let msg_type = response["payload"]["type"].as_str().unwrap_or("");
                 // Skip pushed EncryptedUpdate messages (deliveries to us)
                 // and Delivered acks (for blobs we sent earlier)
-                let msg_type = response["payload"]["type"].as_str().unwrap_or("");
                 if msg_type == "EncryptedUpdate" {
                     continue;
                 }
                 if msg_type == "Acknowledgment" && response["payload"]["status"] == "Delivered" {
                     continue;
                 }
-
                 return Ok((response, latency));
             }
-            Ok(Some(Ok(Message::Ping(_)))) => continue,
-            Ok(Some(Ok(Message::Pong(_)))) => continue,
-            _ => return Err(()),
+            Err(_) => return Err(()),
         }
     }
 }
@@ -475,8 +341,8 @@ async fn test_realistic_usage_pattern_30_days() {
     );
     println!();
 
-    let (deps, storage, _registry) = test_deps_realistic();
-    let url = start_load_test_server(deps).await;
+    let (deps, relay_pubkey, storage) = test_deps_realistic();
+    let url = common::ws_helpers::start_multi_server(deps).await;
 
     let metrics = Arc::new(LoadTestMetrics::new());
     let mut daily_snapshots: Vec<StorageSnapshot> = Vec::with_capacity(SIMULATED_DAYS + 1);
@@ -510,12 +376,15 @@ async fn test_realistic_usage_pattern_30_days() {
 
                     let client_id = common::generate_test_client_id_wide(user as u16);
 
-                    // Connect and handshake
-                    let connect_result =
-                        timeout(Duration::from_secs(10), connect_async(&url)).await;
-                    let (mut ws, _) = match connect_result {
-                        Ok(Ok((ws, _))) => (ws, ()),
-                        _ => {
+                    // Connect via Noise NK — mandatory since SP-33 Task 0.1
+                    let mut client = match timeout(
+                        Duration::from_secs(10),
+                        common::ws_helpers::connect_noise(&url, &relay_pubkey),
+                    )
+                    .await
+                    {
+                        Ok(c) => c,
+                        Err(_) => {
                             for _ in 0..CONTACTS_PER_USER {
                                 metrics.record_failure();
                             }
@@ -523,7 +392,8 @@ async fn test_realistic_usage_pattern_30_days() {
                         }
                     };
 
-                    if !do_handshake(&mut ws, &client_id).await {
+                    let ack = client.do_handshake(&client_id).await;
+                    if ack["payload"]["type"] != "HandshakeAck" {
                         for _ in 0..CONTACTS_PER_USER {
                             metrics.record_failure();
                         }
@@ -536,7 +406,7 @@ async fn test_realistic_usage_pattern_30_days() {
                         let payload = generate_realistic_payload(day, user, contact_idx);
                         let update = make_encrypted_update(&recipient_id, &payload);
 
-                        match send_recv_timed(&mut ws, &update).await {
+                        match noise_send_recv_timed(&mut client, &update).await {
                             Ok((response, latency)) => {
                                 if response["payload"]["status"] == "Stored" {
                                     metrics.record_success(latency);
@@ -551,7 +421,7 @@ async fn test_realistic_usage_pattern_30_days() {
                     }
 
                     // Close connection gracefully
-                    ws.close(None).await.ok();
+                    client.close().await;
                 }));
             }
 
@@ -725,8 +595,8 @@ async fn test_realistic_usage_pattern_quick() {
         QUICK_USERS, QUICK_CONTACTS, QUICK_DAYS
     );
 
-    let (deps, storage, _) = test_deps_realistic();
-    let url = start_load_test_server(deps).await;
+    let (deps, relay_pubkey, storage) = test_deps_realistic();
+    let url = common::ws_helpers::start_multi_server(deps).await;
 
     let metrics = Arc::new(LoadTestMetrics::new());
     let test_start = Instant::now();
@@ -741,9 +611,15 @@ async fn test_realistic_usage_pattern_quick() {
             handles.push(tokio::spawn(async move {
                 let client_id = common::generate_test_client_id_wide(user as u16);
 
-                let (mut ws, _) = match timeout(Duration::from_secs(5), connect_async(&url)).await {
-                    Ok(Ok((ws, _))) => (ws, ()),
-                    _ => {
+                // Connect via Noise NK — mandatory since SP-33 Task 0.1
+                let mut client = match timeout(
+                    Duration::from_secs(5),
+                    common::ws_helpers::connect_noise(&url, &relay_pubkey),
+                )
+                .await
+                {
+                    Ok(c) => c,
+                    Err(_) => {
                         for _ in 0..QUICK_CONTACTS {
                             metrics.record_failure();
                         }
@@ -751,7 +627,8 @@ async fn test_realistic_usage_pattern_quick() {
                     }
                 };
 
-                if !do_handshake(&mut ws, &client_id).await {
+                let ack = client.do_handshake(&client_id).await;
+                if ack["payload"]["type"] != "HandshakeAck" {
                     for _ in 0..QUICK_CONTACTS {
                         metrics.record_failure();
                     }
@@ -765,7 +642,7 @@ async fn test_realistic_usage_pattern_quick() {
                     let payload: Vec<u8> = (0..BLOB_SIZE_BYTES).map(|i| i as u8).collect();
                     let update = make_encrypted_update(&recipient_id, &payload);
 
-                    match send_recv_timed(&mut ws, &update).await {
+                    match noise_send_recv_timed(&mut client, &update).await {
                         Ok((response, latency)) => {
                             if response["payload"]["status"] == "Stored" {
                                 metrics.record_success(latency);
@@ -779,7 +656,7 @@ async fn test_realistic_usage_pattern_quick() {
                     }
                 }
 
-                ws.close(None).await.ok();
+                client.close().await;
             }));
         }
 
