@@ -30,7 +30,9 @@ use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
 
-use common::ws_helpers::{connect_noise, make_encrypted_update, make_handshake};
+use common::ws_helpers::{
+    connect_noise, make_encrypted_update, make_handshake, make_register_mailbox,
+};
 
 // ============================================================================
 // Test infrastructure
@@ -512,14 +514,19 @@ async fn test_delivery_notification_latency() {
 
     let start = Instant::now();
 
-    // Recipient connects — triggers delivery + Delivered ack to sender
+    // Recipient connects — must register mailbox tokens to trigger delivery
     let mut recipient = connect_noise(&url, &relay_pub).await;
     let hs = make_handshake(&recipient_id);
     recipient.send_envelope(&hs).await;
 
     // Recipient: HandshakeAck
     let _ack = recipient.recv().await;
-    // Recipient: blob delivery
+
+    // Register mailbox tokens (SP-33: delivery triggered by RegisterMailbox, not handshake)
+    let register = make_register_mailbox(&[&recipient_id]);
+    recipient.send_envelope(&register).await;
+
+    // Recipient: blob delivery (triggered by RegisterMailbox)
     let blob = recipient.recv().await;
     assert_eq!(blob["payload"]["type"], "EncryptedUpdate");
 
