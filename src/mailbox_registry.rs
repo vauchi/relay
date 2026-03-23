@@ -105,6 +105,25 @@ impl MailboxRegistry {
         }
     }
 
+    /// Deregister specific tokens but only for registrations belonging to the given IDs.
+    ///
+    /// This prevents one connection from deregistering another connection's tokens.
+    /// Only entries whose [`RegistrationId`] appears in `reg_ids` are removed.
+    pub fn deregister_tokens_for_connection(
+        &mut self,
+        tokens: &[String],
+        reg_ids: &[RegistrationId],
+    ) {
+        for token in tokens {
+            if let Some(entries) = self.entries.get_mut(token.as_str()) {
+                entries.retain(|(id, _)| !reg_ids.contains(id));
+                if entries.is_empty() {
+                    self.entries.remove(token.as_str());
+                }
+            }
+        }
+    }
+
     /// Return clones of all senders registered for `token`.
     ///
     /// Returns an empty `Vec` when no registration exists for the token.
@@ -243,5 +262,47 @@ mod tests {
         reg.register("token_a", tx);
         reg.deregister_connection(9999); // must not panic
         assert_eq!(reg.lookup("token_a").len(), 1);
+    }
+
+    #[test]
+    fn test_deregister_tokens_for_connection_only_removes_own() {
+        let mut reg = MailboxRegistry::new();
+        let (tx1, _) = mpsc::unbounded_channel();
+        let (tx2, _) = mpsc::unbounded_channel();
+
+        // Connection A registers token "shared"
+        let id_a = reg.register("shared", tx1);
+        // Connection B registers the same token "shared"
+        let _id_b = reg.register("shared", tx2);
+
+        assert_eq!(reg.lookup("shared").len(), 2);
+
+        // Connection A deregisters — should only remove its own entry
+        reg.deregister_tokens_for_connection(&["shared".into()], &[id_a]);
+        assert_eq!(reg.lookup("shared").len(), 1);
+    }
+
+    #[test]
+    fn test_deregister_tokens_for_connection_removes_empty_entry() {
+        let mut reg = MailboxRegistry::new();
+        let (tx, _) = mpsc::unbounded_channel();
+        let id = reg.register("solo", tx);
+
+        reg.deregister_tokens_for_connection(&["solo".into()], &[id]);
+        assert!(reg.lookup("solo").is_empty());
+    }
+
+    #[test]
+    fn test_deregister_tokens_for_connection_nonexistent_is_noop() {
+        let mut reg = MailboxRegistry::new();
+        let (tx, _) = mpsc::unbounded_channel();
+        reg.register("token_a", tx);
+
+        // Deregister with IDs that don't match — no effect
+        reg.deregister_tokens_for_connection(&["token_a".into()], &[9999]);
+        assert_eq!(reg.lookup("token_a").len(), 1);
+
+        // Deregister a token that doesn't exist — no panic
+        reg.deregister_tokens_for_connection(&["ghost".into()], &[1]);
     }
 }

@@ -78,10 +78,10 @@ pub struct ConnectionDeps {
 /// individual handlers can be tested independently of the WebSocket loop.
 pub struct MessageContext<'a> {
     pub routing_id: String,
-    #[allow(dead_code)]
-    pub client_id: String, // SP-33: re-used when DeviceSync is reimplemented via self-token
-    #[allow(dead_code)]
-    pub device_id: Option<String>, // SP-33: re-used when DeviceSync is reimplemented via self-token
+    #[allow(dead_code)] // stored for future DeviceSync via self-token (SP-33)
+    pub client_id: String,
+    #[allow(dead_code)] // stored for future DeviceSync via self-token (SP-33)
+    pub device_id: Option<String>,
     pub suppress_presence: bool,
     pub session: &'a str,
     pub deps: &'a ConnectionDeps,

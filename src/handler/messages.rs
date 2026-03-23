@@ -286,6 +286,26 @@ pub(super) fn handle_register_mailbox(
 ) -> HandleResult {
     let deps = ctx.deps;
 
+    // C-1: Server-side validation — reject oversized or malformed token batches
+    if reg.tokens.len() > 512 {
+        warn!(
+            "[{}] RegisterMailbox rejected: {} tokens exceeds limit",
+            ctx.session,
+            reg.tokens.len()
+        );
+        return HandleResult::empty();
+    }
+    for token in &reg.tokens {
+        if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+            warn!(
+                "[{}] RegisterMailbox rejected: invalid token format (len={}, expected 64 hex)",
+                ctx.session,
+                token.len()
+            );
+            return HandleResult::empty();
+        }
+    }
+
     // Register all tokens in the shared MailboxRegistry
     let reg_ids = {
         let mut registry = deps.mailbox_registry.write();
@@ -311,20 +331,24 @@ pub(super) fn handle_register_mailbox(
     })
 }
 
-/// Handles a `DeregisterMailbox` message: remove tokens from MailboxRegistry.
+/// Handles a `DeregisterMailbox` message: remove only this connection's tokens.
+///
+/// C-2: Only removes registrations belonging to the calling connection,
+/// preventing a malicious client from deregistering other connections' tokens.
 pub(super) fn handle_deregister_mailbox(
     ctx: &MessageContext<'_>,
     dereg: &protocol::DeregisterMailbox,
 ) -> HandleResult {
     let deps = ctx.deps;
 
+    let reg_ids: Vec<_> = ctx.mailbox_reg_ids.lock().clone();
     {
         let mut registry = deps.mailbox_registry.write();
-        registry.deregister_batch(&dereg.tokens);
+        registry.deregister_tokens_for_connection(&dereg.tokens, &reg_ids);
     }
 
     debug!(
-        "[{}] Deregistered {} mailbox tokens",
+        "[{}] Deregistered {} mailbox tokens (scoped to connection)",
         ctx.session,
         dereg.tokens.len(),
     );

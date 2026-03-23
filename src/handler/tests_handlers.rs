@@ -7,8 +7,9 @@
 use super::*;
 
 use messages::{
-    handle_acknowledgment, handle_encrypted_update, handle_purge_request,
-    handle_recovery_proof_query, handle_recovery_proof_store,
+    handle_acknowledgment, handle_deregister_mailbox, handle_encrypted_update,
+    handle_purge_request, handle_recovery_proof_query, handle_recovery_proof_store,
+    handle_register_mailbox,
 };
 use types::{HandlerResponse, MessageContext};
 use verify::protocol;
@@ -284,4 +285,120 @@ fn test_handle_purge_unsigned_returns_failed() {
         }
         other => panic!("Expected SendAck(Failed), got {:?}", other),
     }
+}
+
+// ------------------------------------------------------------------
+// C-1: RegisterMailbox validation tests
+// ------------------------------------------------------------------
+
+#[test]
+fn test_register_mailbox_rejects_too_many_tokens() {
+    let deps = make_test_deps();
+    let ctx = make_test_context(&deps);
+
+    let tokens: Vec<String> = (0..513).map(|i| format!("{:064x}", i)).collect();
+    let reg = protocol::RegisterMailbox { tokens };
+
+    let result = handle_register_mailbox(&ctx, &reg);
+    assert!(result.responses.is_empty(), "Should reject >512 tokens");
+}
+
+#[test]
+fn test_register_mailbox_rejects_non_hex_token() {
+    let deps = make_test_deps();
+    let ctx = make_test_context(&deps);
+
+    // 64 chars but contains 'g' (not hex)
+    let bad_token = "g".repeat(64);
+    let reg = protocol::RegisterMailbox {
+        tokens: vec![bad_token],
+    };
+
+    let result = handle_register_mailbox(&ctx, &reg);
+    assert!(result.responses.is_empty(), "Should reject non-hex token");
+}
+
+#[test]
+fn test_register_mailbox_rejects_wrong_length_token() {
+    let deps = make_test_deps();
+    let ctx = make_test_context(&deps);
+
+    let short_token = "a".repeat(63);
+    let reg = protocol::RegisterMailbox {
+        tokens: vec![short_token],
+    };
+
+    let result = handle_register_mailbox(&ctx, &reg);
+    assert!(result.responses.is_empty(), "Should reject len!=64 token");
+}
+
+#[test]
+fn test_register_mailbox_accepts_valid_tokens() {
+    let deps = make_test_deps();
+    let ctx = make_test_context(&deps);
+
+    let tokens: Vec<String> = (0..256).map(|i| format!("{:064x}", i)).collect();
+    let reg = protocol::RegisterMailbox { tokens };
+
+    let result = handle_register_mailbox(&ctx, &reg);
+    // Valid registration returns a DeliverPending response
+    assert_eq!(result.responses.len(), 1);
+    match &result.responses[0] {
+        HandlerResponse::DeliverPending { tokens } => {
+            assert_eq!(tokens.len(), 256);
+        }
+        other => panic!("Expected DeliverPending, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_register_mailbox_accepts_512_tokens() {
+    let deps = make_test_deps();
+    let ctx = make_test_context(&deps);
+
+    let tokens: Vec<String> = (0..512).map(|i| format!("{:064x}", i)).collect();
+    let reg = protocol::RegisterMailbox { tokens };
+
+    let result = handle_register_mailbox(&ctx, &reg);
+    assert_eq!(
+        result.responses.len(),
+        1,
+        "Should accept exactly 512 tokens"
+    );
+}
+
+// ------------------------------------------------------------------
+// C-2: DeregisterMailbox scoped deregistration tests
+// ------------------------------------------------------------------
+
+#[test]
+fn test_deregister_mailbox_only_removes_own_connection() {
+    let deps = make_test_deps();
+    let token = "a".repeat(64);
+
+    // Register token for connection A (via ctx)
+    let ctx_a = make_test_context(&deps);
+    let reg = protocol::RegisterMailbox {
+        tokens: vec![token.clone()],
+    };
+    handle_register_mailbox(&ctx_a, &reg);
+
+    // Register the same token for connection B (separate sender + reg_ids)
+    {
+        let (tx_b, _rx_b) = tokio::sync::mpsc::unbounded_channel();
+        let mut registry = deps.mailbox_registry.write();
+        registry.register(&token, tx_b);
+    }
+
+    // Now 2 registrations for the token
+    assert_eq!(deps.mailbox_registry.read().lookup(&token).len(), 2);
+
+    // Connection A deregisters
+    let dereg = protocol::DeregisterMailbox {
+        tokens: vec![token.clone()],
+    };
+    handle_deregister_mailbox(&ctx_a, &dereg);
+
+    // Only connection B's registration should remain
+    assert_eq!(deps.mailbox_registry.read().lookup(&token).len(), 1);
 }
