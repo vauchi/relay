@@ -137,7 +137,7 @@ impl ForwardingHintStore for SqliteForwardingHintStore {
             return Vec::new();
         }
         let conn = self.conn.lock();
-        let placeholders: Vec<String> = (1..=tokens.len()).map(|i| format!("?{i}")).collect();
+        let placeholders: Vec<&str> = tokens.iter().map(|_| "?").collect();
         let sql = format!(
             "SELECT blob_id, routing_id, target_relay, created_at_secs, expires_at_secs \
              FROM forwarding_hints WHERE routing_id IN ({})",

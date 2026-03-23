@@ -31,6 +31,8 @@ type TokenEntry = (RegistrationId, mpsc::UnboundedSender<Vec<u8>>);
 pub struct MailboxRegistry {
     /// token → list of registration entries
     entries: HashMap<String, Vec<TokenEntry>>,
+    /// reg_id → token (reverse index for O(1) disconnect cleanup)
+    reverse: HashMap<RegistrationId, String>,
     next_id: RegistrationId,
 }
 
@@ -39,6 +41,7 @@ impl MailboxRegistry {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            reverse: HashMap::new(),
             next_id: 1,
         }
     }
@@ -55,10 +58,12 @@ impl MailboxRegistry {
     ) -> RegistrationId {
         let id = self.next_id;
         self.next_id += 1;
+        let token_owned = token.to_owned();
         self.entries
-            .entry(token.to_owned())
+            .entry(token_owned.clone())
             .or_default()
             .push((id, sender));
+        self.reverse.insert(id, token_owned);
         id
     }
 
@@ -81,18 +86,27 @@ impl MailboxRegistry {
     ///
     /// Use this when a token expires or is explicitly revoked.
     pub fn deregister(&mut self, token: &str) {
-        self.entries.remove(token);
+        if let Some(entries) = self.entries.remove(token) {
+            for (id, _) in entries {
+                self.reverse.remove(&id);
+            }
+        }
     }
 
     /// Remove the single registration identified by `reg_id`.
     ///
+    /// Uses a reverse index for O(1) lookup instead of scanning all tokens.
     /// Use this on connection disconnect to clean up only the disconnecting
-    /// device's entries across all tokens.
+    /// device's entries.
     pub fn deregister_connection(&mut self, reg_id: RegistrationId) {
-        self.entries.retain(|_, registrations| {
-            registrations.retain(|(id, _)| *id != reg_id);
-            !registrations.is_empty()
-        });
+        if let Some(token) = self.reverse.remove(&reg_id) {
+            if let Some(entries) = self.entries.get_mut(&token) {
+                entries.retain(|(id, _)| *id != reg_id);
+                if entries.is_empty() {
+                    self.entries.remove(&token);
+                }
+            }
+        }
     }
 
     /// Remove all registrations for each token in `tokens`.
@@ -101,7 +115,11 @@ impl MailboxRegistry {
     /// have been consumed).
     pub fn deregister_batch(&mut self, tokens: &[String]) {
         for token in tokens {
-            self.entries.remove(token.as_str());
+            if let Some(entries) = self.entries.remove(token.as_str()) {
+                for (id, _) in entries {
+                    self.reverse.remove(&id);
+                }
+            }
         }
     }
 
@@ -114,13 +132,25 @@ impl MailboxRegistry {
         tokens: &[String],
         reg_ids: &[RegistrationId],
     ) {
+        // Collect IDs to remove from reverse index
+        let mut removed_ids = Vec::new();
         for token in tokens {
             if let Some(entries) = self.entries.get_mut(token.as_str()) {
-                entries.retain(|(id, _)| !reg_ids.contains(id));
+                entries.retain(|(id, _)| {
+                    if reg_ids.contains(id) {
+                        removed_ids.push(*id);
+                        false
+                    } else {
+                        true
+                    }
+                });
                 if entries.is_empty() {
                     self.entries.remove(token.as_str());
                 }
             }
+        }
+        for id in removed_ids {
+            self.reverse.remove(&id);
         }
     }
 
