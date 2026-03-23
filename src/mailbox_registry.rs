@@ -20,14 +20,17 @@ use tokio::sync::mpsc;
 /// [`MailboxRegistry::deregister_connection`] to clean up on disconnect.
 pub type RegistrationId = u64;
 
+/// Type alias for a registration entry: (registration_id, sender).
+type TokenEntry = (RegistrationId, mpsc::UnboundedSender<Vec<u8>>);
+
 /// In-memory registry mapping mailbox tokens to active connections.
 ///
 /// A single token may have multiple registrations (same identity logged in
 /// on several devices). A single connection may be registered under multiple
 /// tokens (self-token + peer tokens for pending exchanges).
 pub struct MailboxRegistry {
-    /// token → list of (registration_id, sender)
-    entries: HashMap<String, Vec<(RegistrationId, mpsc::UnboundedSender<Vec<u8>>)>>,
+    /// token → list of registration entries
+    entries: HashMap<String, Vec<TokenEntry>>,
     next_id: RegistrationId,
 }
 
@@ -187,8 +190,8 @@ mod tests {
     fn test_deregister_batch() {
         let mut reg = MailboxRegistry::new();
         let (tx, _) = mpsc::unbounded_channel();
-        reg.register_batch(&vec!["t1".into(), "t2".into()], tx);
-        reg.deregister_batch(&vec!["t1".into()]);
+        reg.register_batch(&["t1".into(), "t2".into()], tx);
+        reg.deregister_batch(&["t1".into()]);
         assert!(reg.lookup("t1").is_empty());
         assert_eq!(reg.lookup("t2").len(), 1);
     }

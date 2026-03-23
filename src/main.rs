@@ -204,6 +204,11 @@ async fn main() {
     let blob_sender_map = handler::new_blob_sender_map();
     let nonce_tracker = Arc::new(handler::NonceTracker::new());
 
+    // SP-33: Initialize mailbox registry for token-based routing
+    let mailbox_registry = Arc::new(parking_lot::RwLock::new(
+        vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+    ));
+
     // Initialize federation state
     let config = Arc::new(config);
     let peer_registry = Arc::new(PeerRegistry::new(config.federation.offload_refuse));
@@ -591,6 +596,7 @@ async fn main() {
         let blob_sender_map = blob_sender_map.clone();
         let nonce_tracker = nonce_tracker.clone();
         let relay_signing_key = relay_signing_key.clone();
+        let mailbox_registry = mailbox_registry.clone();
         let metrics = metrics.clone();
         let hint_store = hint_store.clone();
         let federation_rate_limiter = federation_rate_limiter.clone();
@@ -755,6 +761,7 @@ async fn main() {
                                 delivery_jitter_max_ms: config.security.delivery_jitter_max_ms,
                                 relay_signing_key: Some(relay_signing_key),
                                 metrics: metrics.clone(),
+                                mailbox_registry: mailbox_registry.clone(),
                             },
                         )
                         .await;

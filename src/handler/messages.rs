@@ -49,13 +49,31 @@ pub(super) fn handle_encrypted_update(
     // Track sender for delivery notification (ephemeral, in-memory only)
     deps.blob_sender_map
         .write()
-        .insert(blob_id, ctx.routing_id.clone());
+        .insert(blob_id.clone(), ctx.routing_id.clone());
 
     debug!("[{}] Stored blob", ctx.session);
-    HandleResult::single(HandlerResponse::SendAck {
+
+    // SP-33: Attempt live delivery via MailboxRegistry token routing.
+    // If the recipient_id matches a registered mailbox token, deliver
+    // the blob to all connections registered for that token.
+    let envelope =
+        protocol::create_update_delivery(&blob_id, &update.recipient_id, &update.ciphertext);
+    let mut responses = vec![HandlerResponse::SendAck {
         message_id: message_id.to_string(),
         status: protocol::AckStatus::Stored,
-    })
+    }];
+    if let Ok(data) = protocol::encode_message(&envelope) {
+        let registry = deps.mailbox_registry.read();
+        let senders = registry.lookup(&update.recipient_id);
+        if !senders.is_empty() {
+            responses.push(HandlerResponse::DeliverToMailbox {
+                token: update.recipient_id.clone(),
+                data,
+            });
+        }
+    }
+
+    HandleResult { responses }
 }
 
 /// Handles an `Acknowledgment` message: acknowledge blob, optionally forward to sender.
@@ -200,8 +218,13 @@ pub(super) fn handle_purge_request(
         });
     }
 
-    // Delete all stored blobs for this client's routing ID
-    let blobs_deleted = deps.storage.delete_all_for(&ctx.routing_id);
+    // SP-33: Delete all stored blobs for the authorized purge token.
+    // Blobs are indexed by recipient_id (= mailbox token), not routing_id.
+    // The purge_token in the request is the hex-encoded token the client
+    // proved ownership of via signature. It is guaranteed to be present and
+    // valid because is_authenticated() + verify_signature() already passed.
+    let token_key = purge.purge_token.as_deref().unwrap_or(&ctx.routing_id);
+    let blobs_deleted = deps.storage.delete_all_for(token_key);
 
     // Optionally delete recovery proofs
     let recovery_proofs_deleted = if purge.include_recovery_proofs {
@@ -229,7 +252,9 @@ pub(super) fn handle_purge_request(
         0
     };
 
-    // Delete forwarding hints for this routing_id (federation cleanup)
+    // Delete forwarding hints for this routing_id (federation cleanup).
+    // Hints are keyed by routing_id, not mailbox token — they track where
+    // federation offloaded blobs for this connection, not per-token storage.
     if let Some(ref hint_store) = deps.hint_store {
         let hints_deleted = hint_store.delete_all_for(&ctx.routing_id);
         if hints_deleted > 0 {
@@ -249,6 +274,62 @@ pub(super) fn handle_purge_request(
     let response =
         protocol::create_purge_response(message_id, blobs_deleted, recovery_proofs_deleted);
     HandleResult::single(HandlerResponse::SendEnvelope(response))
+}
+
+/// Handles a `RegisterMailbox` message: register tokens in MailboxRegistry, trigger pending delivery.
+///
+/// Returns `HandleResult` with a `DeliverPending` action so the connection loop
+/// can asynchronously deliver stored blobs matching the registered tokens.
+pub(super) fn handle_register_mailbox(
+    ctx: &MessageContext<'_>,
+    reg: &protocol::RegisterMailbox,
+) -> HandleResult {
+    let deps = ctx.deps;
+
+    // Register all tokens in the shared MailboxRegistry
+    let reg_ids = {
+        let mut registry = deps.mailbox_registry.write();
+        registry.register_batch(&reg.tokens, ctx.mailbox_sender.clone())
+    };
+
+    // Track registration IDs for cleanup on disconnect
+    {
+        let mut ids = ctx.mailbox_reg_ids.lock();
+        ids.extend_from_slice(&reg_ids);
+    }
+
+    debug!(
+        "[{}] Registered {} mailbox tokens ({} reg_ids)",
+        ctx.session,
+        reg.tokens.len(),
+        reg_ids.len(),
+    );
+
+    // Return a DeliverPending action so the connection loop delivers stored blobs
+    HandleResult::single(HandlerResponse::DeliverPending {
+        tokens: reg.tokens.clone(),
+    })
+}
+
+/// Handles a `DeregisterMailbox` message: remove tokens from MailboxRegistry.
+pub(super) fn handle_deregister_mailbox(
+    ctx: &MessageContext<'_>,
+    dereg: &protocol::DeregisterMailbox,
+) -> HandleResult {
+    let deps = ctx.deps;
+
+    {
+        let mut registry = deps.mailbox_registry.write();
+        registry.deregister_batch(&dereg.tokens);
+    }
+
+    debug!(
+        "[{}] Deregistered {} mailbox tokens",
+        ctx.session,
+        dereg.tokens.len(),
+    );
+
+    HandleResult::empty()
 }
 
 /// Handles a single decoded message by dispatching to the appropriate handler.
@@ -314,16 +395,8 @@ pub(super) fn handle_message(
             debug!("[{}] Unexpected DeviceLinkRelay", ctx.session);
             HandleResult::empty()
         }
-        protocol::MessagePayload::RegisterMailbox(_) => {
-            // Token registration handling wired in Task 3.4.
-            debug!("[{}] RegisterMailbox (not yet handled)", ctx.session);
-            HandleResult::empty()
-        }
-        protocol::MessagePayload::DeregisterMailbox(_) => {
-            // Token deregistration handling wired in Task 3.4.
-            debug!("[{}] DeregisterMailbox (not yet handled)", ctx.session);
-            HandleResult::empty()
-        }
+        protocol::MessagePayload::RegisterMailbox(reg) => handle_register_mailbox(ctx, reg),
+        protocol::MessagePayload::DeregisterMailbox(dereg) => handle_deregister_mailbox(ctx, dereg),
         protocol::MessagePayload::Unknown => {
             debug!("[{}] Unknown message type", ctx.session);
             HandleResult::empty()

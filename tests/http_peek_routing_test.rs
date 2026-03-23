@@ -164,6 +164,9 @@ async fn start_full_server(
                             delivery_jitter_max_ms: 0,
                             relay_signing_key: None,
                             metrics: RelayMetrics::new(),
+                            mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+                                vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+                            )),
                         };
                         handler::handle_connection(ws_stream, deps).await;
                     }

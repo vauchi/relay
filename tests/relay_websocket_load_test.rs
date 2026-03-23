@@ -67,6 +67,9 @@ fn test_deps() -> (
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
     };
     (deps, relay_pub, storage, registry)
 }
@@ -103,6 +106,9 @@ fn test_deps_custom(
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
     };
     (deps, relay_pub, storage, registry)
 }
@@ -143,6 +149,9 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 delivery_jitter_max_ms: 0,
                 relay_signing_key: None,
                 metrics: RelayMetrics::new(),
+                mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+                    vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+                )),
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -475,6 +484,9 @@ async fn test_delivery_notification_latency() {
             delivery_jitter_max_ms: 0,
             relay_signing_key: None,
             metrics: RelayMetrics::new(),
+            mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+                vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+            )),
         }
     };
 

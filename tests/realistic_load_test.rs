@@ -244,6 +244,9 @@ fn test_deps_realistic() -> (
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
     };
     (deps, storage, registry)
 }
@@ -283,6 +286,9 @@ async fn start_load_test_server(deps: ConnectionDeps) -> String {
                 delivery_jitter_max_ms: 0,
                 relay_signing_key: None,
                 metrics: RelayMetrics::new(),
+                mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+                    vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+                )),
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {

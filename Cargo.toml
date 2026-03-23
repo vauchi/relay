@@ -101,3 +101,7 @@ harness = false
 [[bench]]
 name = "transport_benchmarks"
 harness = false
+
+# Local path override for development — use sibling core checkout
+[patch."https://gitlab.com/vauchi/core.git"]
+vauchi-protocol = { path = "../core/vauchi-protocol" }

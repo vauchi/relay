@@ -317,6 +317,9 @@ fn make_client_deps(
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
     };
     (deps, relay_pub)
 }
@@ -933,6 +936,10 @@ async fn test_client_receives_forwarding_hints_on_connect() {
         "forwarding_hints should be in features"
     );
 
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = common::ws_helpers::make_register_mailbox(&[routing_id]);
+    client.send_envelope(&reg).await;
+
     // Receive ForwardingHints message
     let hints_msg = client.recv().await;
     assert_eq!(hints_msg["payload"]["type"], "ForwardingHints");
@@ -1050,6 +1057,10 @@ async fn test_purge_request_deletes_forwarding_hints() {
     let ack = client.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = common::ws_helpers::make_register_mailbox(&[routing_id]);
+    client.send_envelope(&reg).await;
+
     // Receive pending blobs (1 blob)
     let blob_msg = client.recv().await;
     assert_eq!(blob_msg["payload"]["type"], "EncryptedUpdate");
@@ -1148,6 +1159,10 @@ async fn test_end_to_end_offload_and_retrieval() {
     let client_ack = client.recv().await;
     assert_eq!(client_ack["payload"]["type"], "HandshakeAck");
 
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = common::ws_helpers::make_register_mailbox(&[&client_id]);
+    client.send_envelope(&reg).await;
+
     // Receive the offloaded blob
     let blob_msg = client.recv().await;
     assert_eq!(blob_msg["payload"]["type"], "EncryptedUpdate");
@@ -1235,6 +1250,10 @@ async fn test_end_to_end_offload_with_forwarding_hints() {
     // HandshakeAck
     let ack = client.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
+
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = common::ws_helpers::make_register_mailbox(&[&client_id]);
+    client.send_envelope(&reg).await;
 
     // ForwardingHints (no pending blobs since they were offloaded)
     let hints_msg = client.recv().await;

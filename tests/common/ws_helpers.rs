@@ -25,6 +25,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
+use vauchi_relay::mailbox_registry::MailboxRegistry;
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key::generate_relay_keypair;
 use vauchi_relay::noise_transport::{NOISE_PATTERN, V2_MAGIC};
@@ -149,8 +150,38 @@ pub fn make_recovery_query(key_hashes: &[&str]) -> Value {
     })
 }
 
+/// Builds a RegisterMailbox envelope (SP-33).
+pub fn make_register_mailbox(tokens: &[&str]) -> Value {
+    json!({
+        "version": 1,
+        "message_id": uuid::Uuid::new_v4().to_string(),
+        "timestamp": 1000,
+        "payload": {
+            "type": "RegisterMailbox",
+            "tokens": tokens
+        }
+    })
+}
+
+/// Builds a DeregisterMailbox envelope (SP-33).
+pub fn make_deregister_mailbox(tokens: &[&str]) -> Value {
+    json!({
+        "version": 1,
+        "message_id": uuid::Uuid::new_v4().to_string(),
+        "timestamp": 1000,
+        "payload": {
+            "type": "DeregisterMailbox",
+            "tokens": tokens
+        }
+    })
+}
+
 /// Builds a PurgeRequest envelope with valid Ed25519 signature.
-pub fn make_purge_request() -> Value {
+///
+/// SP-33: `token_hex` is the hex-encoded 32-byte mailbox token whose stored
+/// blobs should be deleted. The relay verifies the signature covers this token,
+/// then deletes blobs indexed under it.
+pub fn make_purge_request_for_token(token_hex: &str) -> Value {
     use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
 
     let rng = aws_lc_rs::rand::SystemRandom::new();
@@ -160,8 +191,11 @@ pub fn make_purge_request() -> Value {
     let public_key = key_pair.public_key().as_ref();
     let pk_hex: String = public_key.iter().map(|b| format!("{:02x}", b)).collect();
 
-    let purge_token = [0x42u8; 32];
-    let token_hex: String = purge_token.iter().map(|b| format!("{:02x}", b)).collect();
+    let purge_token_bytes: Vec<u8> = (0..token_hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&token_hex[i..i + 2], 16).expect("token_hex must be valid hex"))
+        .collect();
+    assert_eq!(purge_token_bytes.len(), 32, "purge token must be 32 bytes");
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -171,7 +205,7 @@ pub fn make_purge_request() -> Value {
     // Sign: public_key || purge_token || timestamp_be_bytes
     let mut message = Vec::with_capacity(32 + 32 + 8);
     message.extend_from_slice(public_key);
-    message.extend_from_slice(&purge_token);
+    message.extend_from_slice(&purge_token_bytes);
     message.extend_from_slice(&timestamp.to_be_bytes());
 
     let signature = key_pair.sign(&message);
@@ -193,6 +227,14 @@ pub fn make_purge_request() -> Value {
             "timestamp": timestamp
         }
     })
+}
+
+/// Builds a PurgeRequest for a fixed test token `[0x42; 32]`.
+/// Use `make_purge_request_for_token` when blobs are stored under a specific key.
+pub fn make_purge_request() -> Value {
+    let purge_token = [0x42u8; 32];
+    let token_hex: String = purge_token.iter().map(|b| format!("{:02x}", b)).collect();
+    make_purge_request_for_token(&token_hex)
 }
 
 // ============================================================================
@@ -388,6 +430,7 @@ pub fn test_deps() -> (
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: Arc::new(parking_lot::RwLock::new(MailboxRegistry::new())),
     };
     (deps, kp.public, storage, registry)
 }
@@ -426,6 +469,7 @@ pub fn test_deps_custom(
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: Arc::new(parking_lot::RwLock::new(MailboxRegistry::new())),
     };
     (deps, kp.public, storage, registry)
 }
@@ -466,6 +510,7 @@ pub async fn start_multi_server(deps: ConnectionDeps) -> String {
     let max_message_size = deps.max_message_size;
     let idle_timeout = deps.idle_timeout;
     let quota = deps.quota;
+    let mailbox_registry = deps.mailbox_registry;
 
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
@@ -486,6 +531,7 @@ pub async fn start_multi_server(deps: ConnectionDeps) -> String {
                 delivery_jitter_max_ms: 0,
                 relay_signing_key: None,
                 metrics: RelayMetrics::new(),
+                mailbox_registry: mailbox_registry.clone(),
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {

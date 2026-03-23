@@ -25,6 +25,7 @@ use vauchi_relay::storage::{BlobStore, SqliteBlobStore};
 
 use common::ws_helpers::{
     NoiseClient, connect_noise, make_ack, make_encrypted_update, make_handshake,
+    make_register_mailbox,
 };
 
 // ============================================================================
@@ -74,6 +75,9 @@ fn make_deps(
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
     }
 }
 
@@ -145,6 +149,8 @@ async fn test_message_forwarded_to_all_connected_devices() {
     device1.send_envelope(&hs).await;
     let ack1 = device1.recv().await;
     assert_eq!(ack1["payload"]["type"], "HandshakeAck");
+    let reg = make_register_mailbox(&[&recipient_id]);
+    device1.send_envelope(&reg).await;
     let blob1 = device1.recv().await;
     assert_eq!(
         blob1["payload"]["type"], "EncryptedUpdate",
@@ -158,6 +164,8 @@ async fn test_message_forwarded_to_all_connected_devices() {
     device2.send_envelope(&hs).await;
     let ack2 = device2.recv().await;
     assert_eq!(ack2["payload"]["type"], "HandshakeAck");
+    let reg = make_register_mailbox(&[&recipient_id]);
+    device2.send_envelope(&reg).await;
     let blob2 = device2.recv().await;
     assert_eq!(
         blob2["payload"]["type"], "EncryptedUpdate",
@@ -211,6 +219,8 @@ async fn test_partial_delivery_when_one_device_offline() {
     let hs = make_handshake(&recipient_id);
     device1.send_envelope(&hs).await;
     let _ack = device1.recv().await;
+    let reg = make_register_mailbox(&[&recipient_id]);
+    device1.send_envelope(&reg).await;
     let blob = device1.recv().await;
     assert_eq!(
         blob["payload"]["type"], "EncryptedUpdate",
@@ -264,6 +274,8 @@ async fn test_blob_removed_only_after_device_acknowledges() {
     let hs = make_handshake(&recipient_id);
     device1.send_envelope(&hs).await;
     let _ack = device1.recv().await;
+    let reg = make_register_mailbox(&[&recipient_id]);
+    device1.send_envelope(&reg).await;
     let blob = device1.recv().await;
     assert_eq!(blob["payload"]["type"], "EncryptedUpdate");
 
@@ -360,6 +372,8 @@ async fn test_registry_forwards_ack_to_all_sender_devices() {
     let hs = make_handshake(&recipient_id);
     recipient.send_envelope(&hs).await;
     let _ack = recipient.recv().await; // HandshakeAck
+    let reg = make_register_mailbox(&[&recipient_id]);
+    recipient.send_envelope(&reg).await;
     let _blob = recipient.recv().await; // Blob delivery
 
     // 5. BOTH sender devices should receive the Delivered ack

@@ -89,6 +89,10 @@ async fn test_pending_blobs_delivered_on_connect() {
     let ack = client.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = make_register_mailbox(&[&recipient_id]);
+    client.send_envelope(&reg).await;
+
     // Receive 2 pending blobs
     let blob1 = client.recv().await;
     assert_eq!(blob1["payload"]["type"], "EncryptedUpdate");
@@ -138,6 +142,11 @@ async fn test_acknowledge_removes_blob() {
 
     // Receive HandshakeAck
     let _ack = client.recv().await;
+
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = make_register_mailbox(&[&client_id]);
+    client.send_envelope(&reg).await;
+
     // Receive the pending blob
     let delivered = client.recv().await;
     assert_eq!(delivered["payload"]["type"], "EncryptedUpdate");

@@ -270,16 +270,22 @@ async fn perform_handshake(
     ))
 }
 
-/// Delivers pending blobs and forwarding hints to a newly connected client.
+/// Delivers pending blobs and forwarding hints matching the given tokens.
+///
+/// In the new token-based architecture (SP-33), this is called when a client
+/// sends `RegisterMailbox` — not immediately after handshake. The `tokens`
+/// parameter lists the mailbox tokens the client registered.
 async fn deliver_pending(
     write: &mut futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
     noise_session: &mut Option<NoiseTransport>,
     ctx: &MessageContext<'_>,
+    tokens: &[String],
 ) -> bool {
     let deps = ctx.deps;
 
-    // Send any pending blobs for this client and notify senders
-    let pending = deps.storage.peek(&ctx.routing_id);
+    // Send any pending blobs matching any of the registered tokens
+    let token_refs: Vec<&str> = tokens.iter().map(|t| t.as_str()).collect();
+    let pending = deps.storage.peek_many(&token_refs);
     let pending_blob_ids: Vec<String> = pending.iter().map(|b| b.id.clone()).collect();
     for blob in pending {
         // Apply per-blob delivery jitter for traffic analysis resistance (T2.2, T7.4)
@@ -334,7 +340,7 @@ async fn deliver_pending(
 
     // Send forwarding hints if federation is enabled and hints exist
     if let Some(ref hint_store) = deps.hint_store {
-        let hints = hint_store.get_hints(&ctx.routing_id);
+        let hints = hint_store.get_hints_many(&token_refs);
         if !hints.is_empty() {
             let hint_infos: Vec<protocol::ForwardingHintInfo> = hints
                 .iter()
@@ -448,6 +454,21 @@ async fn process_handle_result(
             HandlerResponse::Skip => {
                 // No action needed
             }
+            HandlerResponse::DeliverPending { tokens } => {
+                // Triggered by RegisterMailbox — deliver stored blobs matching tokens
+                deliver_pending(write, noise_session, ctx, &tokens).await;
+            }
+            HandlerResponse::DeliverToMailbox { token, data } => {
+                // SP-33: Live delivery via MailboxRegistry to all connections
+                // registered for this token. The data is a pre-encoded protocol
+                // message; each connection's event loop encrypts it with its
+                // own Noise session.
+                let registry = ctx.deps.mailbox_registry.read();
+                let senders = registry.lookup(&token);
+                for sender in senders {
+                    let _ = sender.send(data.clone());
+                }
+            }
         }
     }
 }
@@ -472,6 +493,14 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
     // Register in connection registry for delivery notifications
     let (conn_id, mut registry_rx) = deps.registry.register(&routing_id);
 
+    // Create mailbox channel for token-based delivery (SP-33).
+    // The sender is cloned into the MailboxRegistry when RegisterMailbox tokens
+    // are registered. The receiver is listened to in the event loop below.
+    let (mailbox_tx, mut mailbox_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+
+    // Track registration IDs for cleanup on disconnect
+    let mailbox_reg_ids = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+
     // Build the message context shared by all handlers
     let ctx = MessageContext {
         routing_id: routing_id.clone(),
@@ -480,13 +509,12 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
         suppress_presence,
         session,
         deps: &deps,
+        mailbox_sender: mailbox_tx,
+        mailbox_reg_ids: mailbox_reg_ids.clone(),
     };
 
-    // Deliver pending blobs and forwarding hints
-    if !deliver_pending(&mut write, &mut noise_session, &ctx).await {
-        deps.registry.unregister(&routing_id, conn_id);
-        return;
-    }
+    // SP-33: No immediate deliver_pending() call here.
+    // Delivery now happens when the client sends RegisterMailbox.
 
     // Process incoming messages with idle timeout.
     // Uses select! to multiplex between WebSocket reads and registry messages
@@ -520,6 +548,21 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     unreachable!("Noise NK is mandatory since v0.1")
                 };
                 let _ = write.send(Message::Binary(send_data)).await;
+                continue;
+            }
+            // SP-33: Mailbox registry message (live delivery via registered token)
+            Some(mailbox_data) = mailbox_rx.recv() => {
+                let send_data = if let Some(ref mut ns) = noise_session {
+                    match ns.encrypt(&mailbox_data) {
+                        Ok(encrypted) => encrypted,
+                        Err(_) => continue,
+                    }
+                } else {
+                    unreachable!("Noise NK is mandatory since v0.1")
+                };
+                let _ = write.send(Message::Binary(send_data)).await;
+                deps.metrics.blobs_delivered.inc();
+                deps.metrics.messages_sent.inc();
                 continue;
             }
         };
@@ -593,6 +636,22 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                 warn!("[{}] Connection error: {}", session, e);
                 break;
             }
+        }
+    }
+
+    // SP-33: Deregister all mailbox tokens from MailboxRegistry on disconnect
+    {
+        let reg_ids = mailbox_reg_ids.lock();
+        if !reg_ids.is_empty() {
+            let mut registry = deps.mailbox_registry.write();
+            for &reg_id in reg_ids.iter() {
+                registry.deregister_connection(reg_id);
+            }
+            debug!(
+                "[{}] Cleaned up {} mailbox registrations on disconnect",
+                session,
+                reg_ids.len()
+            );
         }
     }
 

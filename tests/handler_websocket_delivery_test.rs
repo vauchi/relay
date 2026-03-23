@@ -34,7 +34,7 @@ async fn test_purge_deletes_blobs() {
     let (deps, relay_pub, storage, _) = test_deps();
     let client_id = common::generate_test_client_id(1);
 
-    // Pre-store some blobs
+    // Pre-store some blobs under client_id (= the mailbox token for this test)
     storage.store(&client_id, StoredBlob::new(vec![1]));
     storage.store(&client_id, StoredBlob::new(vec![2]));
     storage.store(&client_id, StoredBlob::new(vec![3]));
@@ -47,13 +47,22 @@ async fn test_purge_deletes_blobs() {
     let hs = make_handshake(&client_id);
     client.send_envelope(&hs).await;
 
-    // Drain HandshakeAck + 3 pending blobs
-    for _ in 0..4 {
+    // Drain HandshakeAck
+    let _ = client.recv().await;
+
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = make_register_mailbox(&[&client_id]);
+    client.send_envelope(&reg).await;
+
+    // Drain 3 pending blobs
+    for _ in 0..3 {
         let _ = client.recv().await;
     }
 
-    // Send purge request
-    let purge = make_purge_request();
+    // SP-33: Purge request must use the actual mailbox token as purge_token.
+    // Blobs are stored by mailbox token (recipient_id), so the purge_token must
+    // match the token under which blobs were stored.
+    let purge = make_purge_request_for_token(&client_id);
     let response = client.send_recv(&purge).await;
 
     assert_eq!(response["payload"]["type"], "PurgeResponse");
@@ -101,11 +110,12 @@ async fn test_routing_token_used_for_storage() {
     let ack = client.send_recv(&hs).await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
-    // Store a blob addressed to the routing_token
+    // Store a blob addressed to the routing_token (= the mailbox token)
     storage.store(&routing_token, StoredBlob::new(vec![42]));
 
-    // The client connected with that routing_token should be able to purge it
-    let purge = make_purge_request();
+    // SP-33: Purge using the routing_token as purge_token — blobs are stored
+    // under the mailbox token (routing_token here), so the purge must target it.
+    let purge = make_purge_request_for_token(&routing_token);
     let response = client.send_recv(&purge).await;
     assert_eq!(response["payload"]["blobs_deleted"], 1);
 
@@ -147,6 +157,9 @@ fn make_shared_deps(
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
     }
 }
 
@@ -216,6 +229,10 @@ async fn test_delivered_ack_to_sender() {
     // Recipient gets HandshakeAck
     let ack = recipient.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
+
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = make_register_mailbox(&[&recipient_id]);
+    recipient.send_envelope(&reg).await;
 
     // Recipient gets the blob delivery
     let blob = recipient.recv().await;
@@ -304,8 +321,13 @@ async fn test_suppress_presence_no_delivered_ack() {
     let hs = make_handshake_full(&recipient_id, None, None, true);
     recipient.send_envelope(&hs).await;
 
-    // Recipient gets HandshakeAck + blob
+    // Recipient gets HandshakeAck
     let _ack = recipient.recv().await;
+
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = make_register_mailbox(&[&recipient_id]);
+    recipient.send_envelope(&reg).await;
+
     let _blob = recipient.recv().await;
 
     // Verify sender does NOT receive Delivered ack (CC-06: try_recv has its own timeout)
@@ -360,6 +382,10 @@ async fn test_concurrent_store_and_receive() {
     let ack = recipient.recv().await;
     assert_eq!(ack["payload"]["type"], "HandshakeAck");
 
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = make_register_mailbox(&[&recipient_id]);
+    recipient.send_envelope(&reg).await;
+
     // Pending blob delivery
     let blob = recipient.recv().await;
     assert_eq!(blob["payload"]["type"], "EncryptedUpdate");
@@ -411,6 +437,11 @@ async fn test_received_by_recipient_after_delivered_not_forwarded() {
 
     // Recipient: HandshakeAck
     let _ack = recipient.recv().await;
+
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = make_register_mailbox(&[&recipient_id]);
+    recipient.send_envelope(&reg).await;
+
     // Recipient: blob delivery
     let blob = recipient.recv().await;
     assert_eq!(blob["payload"]["type"], "EncryptedUpdate");
@@ -482,6 +513,11 @@ async fn test_suppress_presence_blocks_received_by_recipient() {
     recipient.send_envelope(&hs).await;
 
     let _ack = recipient.recv().await;
+
+    // SP-33: Register mailbox token to trigger pending delivery
+    let reg = make_register_mailbox(&[&recipient_id]);
+    recipient.send_envelope(&reg).await;
+
     let blob = recipient.recv().await;
     assert_eq!(blob["payload"]["type"], "EncryptedUpdate");
     let blob_id = blob["message_id"].as_str().unwrap().to_string();

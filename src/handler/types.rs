@@ -7,10 +7,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use parking_lot::RwLock;
+use tokio::sync::mpsc;
+
 use super::nonce::NonceTracker;
 use super::verify::protocol;
 use crate::connection_registry::ConnectionRegistry;
 use crate::forwarding_hints::ForwardingHintStore;
+use crate::mailbox_registry::MailboxRegistry;
 use crate::metrics::RelayMetrics;
 use crate::noise_key::RelaySigningKey;
 use crate::rate_limit::RateLimiter;
@@ -60,6 +64,8 @@ pub struct ConnectionDeps {
     pub relay_signing_key: Option<Arc<RelaySigningKey>>,
     /// Prometheus metrics for observability.
     pub metrics: RelayMetrics,
+    /// Shared mailbox registry for token-based routing (SP-33).
+    pub mailbox_registry: Arc<RwLock<MailboxRegistry>>,
 }
 
 // =========================================================================
@@ -72,11 +78,20 @@ pub struct ConnectionDeps {
 /// individual handlers can be tested independently of the WebSocket loop.
 pub struct MessageContext<'a> {
     pub routing_id: String,
-    pub client_id: String,
-    pub device_id: Option<String>,
+    #[allow(dead_code)]
+    pub client_id: String, // SP-33: re-used when DeviceSync is reimplemented via self-token
+    #[allow(dead_code)]
+    pub device_id: Option<String>, // SP-33: re-used when DeviceSync is reimplemented via self-token
     pub suppress_presence: bool,
     pub session: &'a str,
     pub deps: &'a ConnectionDeps,
+    /// Sender for delivering messages to this connection's WebSocket via the
+    /// mailbox registry. Created once at connection start, cloned into the
+    /// MailboxRegistry when `RegisterMailbox` tokens are registered.
+    pub mailbox_sender: mpsc::UnboundedSender<Vec<u8>>,
+    /// Accumulated registration IDs from RegisterMailbox calls, used for
+    /// cleanup on disconnect. Shared between handler and connection loop.
+    pub mailbox_reg_ids: Arc<parking_lot::Mutex<Vec<crate::mailbox_registry::RegistrationId>>>,
 }
 
 /// A single action the message loop should take after a handler returns.
@@ -95,6 +110,10 @@ pub enum HandlerResponse {
     RemoveFromSenderMap(String),
     /// No action needed (e.g., identity mismatch — skip silently).
     Skip,
+    /// Deliver pending blobs for these mailbox tokens (triggered by RegisterMailbox).
+    DeliverPending { tokens: Vec<String> },
+    /// Deliver an encoded message to all connections registered for a mailbox token.
+    DeliverToMailbox { token: String, data: Vec<u8> },
 }
 
 /// Result of processing a single message. Contains zero or more responses

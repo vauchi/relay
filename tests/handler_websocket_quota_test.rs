@@ -46,6 +46,9 @@ async fn test_quota_blob_count_exceeded() {
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
     };
 
     let url = start_test_server(deps).await;
@@ -98,6 +101,9 @@ async fn test_quota_byte_limit_exceeded() {
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
     };
 
     let url = start_test_server(deps).await;

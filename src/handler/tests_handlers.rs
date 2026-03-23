@@ -47,11 +47,15 @@ fn make_test_deps() -> ConnectionDeps {
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: Arc::new(parking_lot::RwLock::new(
+            crate::mailbox_registry::MailboxRegistry::new(),
+        )),
     }
 }
 
 /// Helper: create a MessageContext for testing.
 fn make_test_context(deps: &ConnectionDeps) -> MessageContext<'_> {
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     MessageContext {
         routing_id: "a".repeat(64),
         client_id: "a".repeat(64),
@@ -59,6 +63,8 @@ fn make_test_context(deps: &ConnectionDeps) -> MessageContext<'_> {
         suppress_presence: false,
         session: "test1234",
         deps,
+        mailbox_sender: tx,
+        mailbox_reg_ids: Arc::new(parking_lot::Mutex::new(Vec::new())),
     }
 }
 
@@ -123,6 +129,9 @@ fn test_handle_encrypted_update_quota_exceeded_returns_failed() {
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: Arc::new(parking_lot::RwLock::new(
+            crate::mailbox_registry::MailboxRegistry::new(),
+        )),
     };
     let ctx = make_test_context(&deps);
     let recipient_id = "c".repeat(64);

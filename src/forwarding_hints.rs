@@ -29,6 +29,8 @@ pub trait ForwardingHintStore: Send + Sync {
     fn store_hint(&self, hint: ForwardingHint);
     /// Returns all hints for a routing_id.
     fn get_hints(&self, routing_id: &str) -> Vec<ForwardingHint>;
+    /// Returns all hints matching any of the given routing_ids/tokens.
+    fn get_hints_many(&self, tokens: &[&str]) -> Vec<ForwardingHint>;
     /// Removes a specific hint by blob_id.
     fn remove_hint(&self, blob_id: &str) -> bool;
     /// Deletes all hints for a routing_id (e.g., on PurgeRequest).
@@ -126,6 +128,36 @@ impl ForwardingHintStore for SqliteForwardingHintStore {
             })
         })
         .expect("get_hints query must succeed")
+        .filter_map(|r| r.ok())
+        .collect()
+    }
+
+    fn get_hints_many(&self, tokens: &[&str]) -> Vec<ForwardingHint> {
+        if tokens.is_empty() {
+            return Vec::new();
+        }
+        let conn = self.conn.lock();
+        let placeholders: Vec<String> = (1..=tokens.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "SELECT blob_id, routing_id, target_relay, created_at_secs, expires_at_secs \
+             FROM forwarding_hints WHERE routing_id IN ({})",
+            placeholders.join(", ")
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .expect("get_hints_many SQL must be valid");
+        let params: Vec<&dyn rusqlite::ToSql> =
+            tokens.iter().map(|t| t as &dyn rusqlite::ToSql).collect();
+        stmt.query_map(params.as_slice(), |row| {
+            Ok(ForwardingHint {
+                blob_id: row.get(0)?,
+                routing_id: row.get(1)?,
+                target_relay: row.get(2)?,
+                created_at_secs: row.get::<_, i64>(3)? as u64,
+                expires_at_secs: row.get::<_, i64>(4)? as u64,
+            })
+        })
+        .expect("get_hints_many query must succeed")
         .filter_map(|r| r.ok())
         .collect()
     }

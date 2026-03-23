@@ -223,6 +223,9 @@ async fn test_nonce_replay_rejected() {
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
     };
 
     let url1 = start_test_server(deps1).await;
@@ -258,6 +261,9 @@ async fn test_nonce_replay_rejected() {
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
     };
 
     let url2 = start_test_server(deps2).await;
@@ -450,7 +456,7 @@ async fn test_rate_limit_keys_on_auth_hash_not_routing_id() {
     let rng = aws_lc_rs::rand::SystemRandom::new();
     let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
     let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
-    let client_id: String = key_pair
+    let _client_id: String = key_pair
         .public_key()
         .as_ref()
         .iter()
@@ -481,6 +487,9 @@ async fn test_rate_limit_keys_on_auth_hash_not_routing_id() {
         delivery_jitter_max_ms: 0,
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
+        mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
     };
 
     // Connection 1: routing_token_1 with signed handshake — sends one blob (consumes the token)
