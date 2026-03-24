@@ -195,7 +195,7 @@ async fn ohttp_key_handler(State(state): State<HttpApiState>) -> axum::response:
     let Some(gw) = &state.ohttp_gateway else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let bytes = gw.encoded_key_config().to_vec();
+    let bytes = gw.encoded_key_config();
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/ohttp-keys")],

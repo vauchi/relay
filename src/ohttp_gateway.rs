@@ -4,10 +4,15 @@
 
 //! OHTTP Gateway (RFC 9458)
 //!
-//! Manages OHTTP server keypair lifecycle and encapsulation/decapsulation.
-//! `OhttpGateway` is cheaply clonable via `Arc` internals.
+//! Manages OHTTP server keypair lifecycle, encapsulation/decapsulation,
+//! and periodic key rotation. Thread-safe for concurrent access.
+
+use std::sync::Arc;
+use std::time::Duration;
 
 use ohttp::{KeyConfig, Server, SymmetricSuite, hpke};
+use parking_lot::RwLock;
+use tracing::{info, warn};
 
 /// Errors that can arise in the OHTTP gateway.
 #[derive(Debug)]
@@ -32,15 +37,20 @@ impl From<ohttp::Error> for OhttpGatewayError {
     }
 }
 
-/// OHTTP server: holds the keypair and a pre-encoded public key config.
-///
-/// `Server::decapsulate` takes `&self`, so no `Mutex` is required for
-/// shared access — this type is `Send + Sync` via `ohttp::Server`'s own
-/// thread safety.
-pub struct OhttpGateway {
+/// Inner state that gets swapped on key rotation.
+struct GatewayState {
     server: Server,
-    /// Encoded public-key configuration returned to clients on `GET /v2/ohttp-key`.
     encoded_config: Vec<u8>,
+}
+
+/// OHTTP server with key rotation support.
+///
+/// Holds the current keypair behind a `RwLock` so it can be atomically
+/// rotated without dropping in-flight requests (they hold their own
+/// `ServerResponse` tokens from before the swap).
+pub struct OhttpGateway {
+    state: RwLock<Arc<GatewayState>>,
+    rotation_interval: Duration,
 }
 
 impl OhttpGateway {
@@ -49,25 +59,21 @@ impl OhttpGateway {
     /// Uses X25519-SHA256 KEM with HKDF-SHA256 / AES-128-GCM (the
     /// mandatory-to-implement suite from RFC 9180).
     pub fn new() -> Result<Self, OhttpGatewayError> {
-        let config = KeyConfig::new(
-            0, // key_id
-            hpke::Kem::X25519Sha256,
-            vec![SymmetricSuite::new(
-                hpke::Kdf::HkdfSha256,
-                hpke::Aead::Aes128Gcm,
-            )],
-        )?;
-        let encoded_config = config.encode()?;
-        let server = Server::new(config)?;
+        Self::with_rotation_hours(24)
+    }
+
+    /// Create a gateway with a custom rotation interval.
+    pub fn with_rotation_hours(hours: u64) -> Result<Self, OhttpGatewayError> {
+        let inner = Self::generate_state()?;
         Ok(Self {
-            server,
-            encoded_config,
+            state: RwLock::new(Arc::new(inner)),
+            rotation_interval: Duration::from_secs(hours * 3600),
         })
     }
 
     /// Return the encoded public-key configuration bytes for `GET /v2/ohttp-key`.
-    pub fn encoded_key_config(&self) -> &[u8] {
-        &self.encoded_config
+    pub fn encoded_key_config(&self) -> Vec<u8> {
+        self.state.read().encoded_config.clone()
     }
 
     /// Decrypt an OHTTP-encapsulated request.
@@ -78,15 +84,68 @@ impl OhttpGateway {
         &self,
         encrypted: &[u8],
     ) -> Result<(Vec<u8>, ohttp::ServerResponse), OhttpGatewayError> {
-        let (plaintext, srv_response) = self.server.decapsulate(encrypted)?;
+        let state = self.state.read().clone();
+        let (plaintext, srv_response) = state.server.decapsulate(encrypted)?;
         Ok((plaintext, srv_response))
+    }
+
+    /// Rotate the keypair. Generates a new key and atomically swaps it in.
+    /// In-flight requests using the old key continue to work (they hold
+    /// their own `ServerResponse` tokens).
+    pub fn rotate(&self) -> Result<(), OhttpGatewayError> {
+        let new_state = Self::generate_state()?;
+        *self.state.write() = Arc::new(new_state);
+        info!("OHTTP gateway key rotated");
+        Ok(())
+    }
+
+    /// Returns the configured rotation interval.
+    pub fn rotation_interval(&self) -> Duration {
+        self.rotation_interval
+    }
+
+    /// Spawn a background task that rotates the key periodically.
+    /// Runs until the returned handle is dropped.
+    pub fn spawn_rotation_task(gateway: Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let interval = gateway.rotation_interval;
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.tick().await; // skip the initial immediate tick
+            loop {
+                ticker.tick().await;
+                if let Err(e) = gateway.rotate() {
+                    warn!("OHTTP key rotation failed: {e}");
+                }
+            }
+        })
+    }
+
+    fn generate_state() -> Result<GatewayState, OhttpGatewayError> {
+        let config = KeyConfig::new(
+            0, // key_id
+            hpke::Kem::X25519Sha256,
+            vec![SymmetricSuite::new(
+                hpke::Kdf::HkdfSha256,
+                hpke::Aead::Aes128Gcm,
+            )],
+        )?;
+        let encoded_config = config.encode()?;
+        let server = Server::new(config)?;
+        Ok(GatewayState {
+            server,
+            encoded_config,
+        })
     }
 }
 
 impl std::fmt::Debug for OhttpGateway {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OhttpGateway")
-            .field("encoded_config_len", &self.encoded_config.len())
+            .field(
+                "encoded_config_len",
+                &self.state.read().encoded_config.len(),
+            )
+            .field("rotation_interval", &self.rotation_interval)
             .finish_non_exhaustive()
     }
 }
@@ -98,72 +157,96 @@ mod tests {
     use super::*;
     use ohttp::{ClientRequest, KeyConfig};
 
-    /// Verify that `OhttpGateway::new()` succeeds and produces a non-empty
-    /// encoded key config.
     #[test]
     fn test_gateway_new_produces_encoded_config() {
         let gw = OhttpGateway::new().expect("gateway construction must succeed");
-        assert!(
-            !gw.encoded_key_config().is_empty(),
-            "encoded config must not be empty"
-        );
+        let config = gw.encoded_key_config();
+        assert!(!config.is_empty(), "encoded config must not be empty");
     }
 
-    /// Verify that the encoded config can be decoded back to a `KeyConfig`.
     #[test]
     fn test_encoded_config_is_valid_key_config() {
         let gw = OhttpGateway::new().expect("gateway construction must succeed");
-        let decoded = KeyConfig::decode(gw.encoded_key_config());
+        let decoded = KeyConfig::decode(&gw.encoded_key_config());
         assert!(
             decoded.is_ok(),
             "encoded config must decode as a valid KeyConfig"
         );
     }
 
-    /// Full client→server roundtrip: encrypt a request, decapsulate on the
-    /// server, re-encapsulate the response, decrypt on the client.
     #[test]
     fn test_roundtrip_encrypt_decrypt() {
         let gw = OhttpGateway::new().expect("gateway construction must succeed");
 
-        // Client side: encrypt a request
         let plaintext_req = b"hello relay";
-        let client = ClientRequest::from_encoded_config(gw.encoded_key_config())
+        let client = ClientRequest::from_encoded_config(&gw.encoded_key_config())
             .expect("client must accept the gateway's encoded config");
         let (enc_request, client_response) = client
             .encapsulate(plaintext_req)
             .expect("client encapsulation must succeed");
 
-        // Server side: decrypt the request
         let (decrypted_req, srv_response) = gw
             .decapsulate(&enc_request)
             .expect("server decapsulation must succeed");
-        assert_eq!(
-            decrypted_req, plaintext_req,
-            "decrypted request must match original plaintext"
-        );
+        assert_eq!(decrypted_req, plaintext_req);
 
-        // Server side: encrypt the response
         let plaintext_resp = b"world";
         let enc_response = srv_response
             .encapsulate(plaintext_resp)
             .expect("server response encapsulation must succeed");
 
-        // Client side: decrypt the response
         let decrypted_resp = client_response
             .decapsulate(&enc_response)
             .expect("client response decapsulation must succeed");
-        assert_eq!(
-            decrypted_resp, plaintext_resp,
-            "decrypted response must match original plaintext"
-        );
+        assert_eq!(decrypted_resp, plaintext_resp);
     }
 
-    /// Feeding garbage bytes to `decapsulate` must return an error, not panic.
     #[test]
     fn test_decapsulate_rejects_invalid_bytes() {
         let gw = OhttpGateway::new().expect("gateway construction must succeed");
         let result = gw.decapsulate(b"this is not a valid ohttp request");
         assert!(result.is_err(), "garbage input must be rejected");
+    }
+
+    #[test]
+    fn test_key_rotation_changes_config() {
+        let gw = OhttpGateway::new().expect("gateway construction must succeed");
+        let config_before = gw.encoded_key_config();
+
+        gw.rotate().expect("rotation must succeed");
+        let config_after = gw.encoded_key_config();
+
+        assert_ne!(
+            config_before, config_after,
+            "rotation must produce a different key config"
+        );
+    }
+
+    #[test]
+    fn test_old_key_requests_fail_after_rotation() {
+        let gw = OhttpGateway::new().expect("gateway construction must succeed");
+
+        // Encrypt with the current key
+        let client = ClientRequest::from_encoded_config(&gw.encoded_key_config())
+            .expect("client must accept config");
+        let (enc_request, _client_response) = client
+            .encapsulate(b"before rotation")
+            .expect("encapsulation must succeed");
+
+        // Rotate
+        gw.rotate().expect("rotation must succeed");
+
+        // Request encrypted with old key should fail to decapsulate
+        let result = gw.decapsulate(&enc_request);
+        assert!(
+            result.is_err(),
+            "request encrypted with old key must fail after rotation"
+        );
+    }
+
+    #[test]
+    fn test_rotation_interval_configurable() {
+        let gw = OhttpGateway::with_rotation_hours(12).unwrap();
+        assert_eq!(gw.rotation_interval(), Duration::from_secs(12 * 3600));
     }
 }
