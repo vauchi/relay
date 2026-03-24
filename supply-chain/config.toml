@@ -167,6 +167,14 @@ criteria = "safe-to-deploy"
 version = "0.5.2"
 criteria = "safe-to-run"
 
+[[exemptions.hkdf]]
+version = "0.12.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.hpke]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.http]]
 version = "1.4.0"
 criteria = "safe-to-deploy"
@@ -257,7 +265,7 @@ version = "0.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.proptest]]
-version = "1.10.0"
+version = "1.11.0"
 criteria = "safe-to-run"
 
 [[exemptions.protobuf]]
@@ -324,6 +332,10 @@ criteria = "safe-to-deploy"
 version = "0.3.1"
 criteria = "safe-to-run"
 
+[[exemptions.serde_spanned]]
+version = "1.1.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.serde_urlencoded]]
 version = "0.7.1"
 criteria = "safe-to-deploy"
@@ -354,6 +366,14 @@ criteria = "safe-to-run"
 
 [[exemptions.tokio-tungstenite]]
 version = "0.24.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.toml_parser]]
+version = "1.1.0+spec-1.1.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.toml_writer]]
+version = "1.1.0+spec-1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tower-layer]]
@@ -415,6 +435,14 @@ criteria = "safe-to-deploy"
 [[exemptions.web-sys]]
 version = "0.3.91"
 criteria = "safe-to-run"
+
+[[exemptions.winnow]]
+version = "0.7.15"
+criteria = "safe-to-deploy"
+
+[[exemptions.winnow]]
+version = "1.0.0"
+criteria = "safe-to-deploy"
 
 [[exemptions.x509-parser]]
 version = "0.18.1"

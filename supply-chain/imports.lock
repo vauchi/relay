@@ -240,6 +240,13 @@ user-id = 539
 user-login = "cuviper"
 user-name = "Josh Stone"
 
+[[publisher.ohttp]]
+version = "0.7.2"
+when = "2025-12-11"
+user-id = 128763
+user-login = "martinthomson"
+user-name = "Martin Thomson"
+
 [[publisher.parking_lot]]
 version = "0.12.5"
 when = "2025-10-03"
@@ -408,6 +415,13 @@ user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
 
+[[publisher.toml]]
+version = "0.9.12+spec-1.1.0"
+when = "2026-02-10"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
 [[publisher.tower]]
 version = "0.5.3"
 when = "2026-01-12"
@@ -522,23 +536,9 @@ user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
-[[publisher.windows-targets]]
-version = "0.53.5"
-when = "2025-10-06"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
 [[publisher.windows_aarch64_gnullvm]]
 version = "0.52.6"
 when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_aarch64_gnullvm]]
-version = "0.53.1"
-when = "2025-10-06"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -550,23 +550,9 @@ user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
-[[publisher.windows_aarch64_msvc]]
-version = "0.53.1"
-when = "2025-10-06"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
 [[publisher.windows_i686_gnu]]
 version = "0.52.6"
 when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_i686_gnu]]
-version = "0.53.1"
-when = "2025-10-06"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -578,23 +564,9 @@ user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
-[[publisher.windows_i686_gnullvm]]
-version = "0.53.1"
-when = "2025-10-06"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
 [[publisher.windows_i686_msvc]]
 version = "0.52.6"
 when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_i686_msvc]]
-version = "0.53.1"
-when = "2025-10-06"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -606,13 +578,6 @@ user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
-[[publisher.windows_x86_64_gnu]]
-version = "0.53.1"
-when = "2025-10-06"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
 [[publisher.windows_x86_64_gnullvm]]
 version = "0.52.6"
 when = "2024-07-03"
@@ -620,23 +585,9 @@ user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
-[[publisher.windows_x86_64_gnullvm]]
-version = "0.53.1"
-when = "2025-10-06"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
 [[publisher.windows_x86_64_msvc]]
 version = "0.52.6"
 when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_x86_64_msvc]]
-version = "0.53.1"
-when = "2025-10-06"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -671,6 +622,13 @@ version = "0.244.0"
 when = "2026-01-06"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
 
+[[publisher.x25519-dalek]]
+version = "2.0.1"
+when = "2024-02-07"
+user-id = 6979
+user-login = "rozbb"
+user-name = "Michael Rosenberg"
+
 [[publisher.zerocopy]]
 version = "0.8.47"
 when = "2026-03-19"
@@ -684,6 +642,13 @@ when = "2026-03-19"
 user-id = 7178
 user-login = "joshlf"
 user-name = "Joshua Liebow-Feeser"
+
+[[publisher.zeroize_derive]]
+version = "1.4.3"
+when = "2025-12-29"
+user-id = 267
+user-login = "tarcieri"
+user-name = "Tony Arcieri"
 
 [[publisher.zmij]]
 version = "1.0.21"
@@ -1336,12 +1301,6 @@ For more detailed unsafe review notes please see https://crrev.com/c/6362797
 """
 aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
 
-[[audits.google.audits.rand_chacha]]
-who = "Android Legacy"
-criteria = "safe-to-run"
-version = "0.3.1"
-aggregated-from = "https://chromium.googlesource.com/chromiumos/third_party/rust_crates/+/refs/heads/main/cargo-vet/audits.toml?format=TEXT"
-
 [[audits.google.audits.rand_core]]
 who = "Lukasz Anforowicz <lukasza@chromium.org>"
 criteria = "safe-to-deploy"
@@ -1350,12 +1309,6 @@ notes = """
 For more detailed unsafe review notes please see https://crrev.com/c/6362797
 """
 aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
-
-[[audits.google.audits.rand_core]]
-who = "Android Legacy"
-criteria = "safe-to-run"
-version = "0.6.4"
-aggregated-from = "https://chromium.googlesource.com/chromiumos/third_party/rust_crates/+/refs/heads/main/cargo-vet/audits.toml?format=TEXT"
 
 [[audits.google.audits.regex]]
 who = "Justin Green <greenjustin@google.com>"
@@ -1835,6 +1788,11 @@ criteria = "safe-to-deploy"
 delta = "0.2.8 -> 0.2.9"
 notes = "No changes to Rust code between 0.2.8 and 0.2.9"
 
+[[audits.isrg.audits.hmac]]
+who = "David Cook <dcook@divviup.org>"
+criteria = "safe-to-deploy"
+version = "0.12.1"
+
 [[audits.isrg.audits.once_cell]]
 who = "J.C. Jones <jc@divviup.org>"
 criteria = "safe-to-deploy"
@@ -1999,6 +1957,15 @@ delta = "0.5.0 -> 0.5.1"
 who = "David Cook <dcook@divviup.org>"
 criteria = "safe-to-deploy"
 version = "0.7.1"
+
+[[audits.mozilla.wildcard-audits.ohttp]]
+who = "Martin Thomson <mt@lowentropy.net>"
+criteria = "safe-to-deploy"
+user-id = 128763 # Martin Thomson (martinthomson)
+start = "2022-08-04"
+end = "2026-02-01"
+notes = "This code contains two cryptographic back ends.  No unsafe code is contained if the Rust `hpke` crate is used (the `rust-hpke` feature).  Using NSS (the `nss` feature) involves extensive use of bindings to the native code provided by NSS.  This interface uses wrappers that attempt to add safety to a fundamentally very dangerous library, but those wrappers have only been validated for use following the needs of this crate."
+aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
 [[audits.mozilla.wildcard-audits.unicode-xid]]
 who = "Manish Goregaokar <manishsmail@gmail.com>"
@@ -2443,6 +2410,13 @@ criteria = "safe-to-deploy"
 delta = "0.2.22 -> 0.2.27"
 notes = "Refactors some unsafe code, nothing new"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.toml_datetime]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "0.7.5+spec-1.1.0"
+notes = "Pure data type crate with some datetime parsing. No unsafe."
+aggregated-from = "https://raw.githubusercontent.com/mozilla/glean/main/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.windows-link]]
 who = "Mark Hammond <mhammond@skippinet.com.au>"
