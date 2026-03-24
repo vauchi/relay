@@ -67,18 +67,6 @@ criteria = "safe-to-deploy"
 version = "0.10.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.cc]]
-version = "1.2.56"
-criteria = "safe-to-deploy"
-
-[[exemptions.clap_builder]]
-version = "4.5.60"
-criteria = "safe-to-run"
-
-[[exemptions.clap_lex]]
-version = "1.0.0"
-criteria = "safe-to-run"
-
 [[exemptions.criterion]]
 version = "0.5.1"
 criteria = "safe-to-run"
@@ -348,10 +336,6 @@ criteria = "safe-to-deploy"
 version = "1.0.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.tempfile]]
-version = "3.26.0"
-criteria = "safe-to-run"
-
 [[exemptions.time]]
 version = "0.3.47"
 criteria = "safe-to-run"
@@ -390,10 +374,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tracing-core]]
 version = "0.1.36"
-criteria = "safe-to-deploy"
-
-[[exemptions.tracing-subscriber]]
-version = "0.3.22"
 criteria = "safe-to-deploy"
 
 [[exemptions.tungstenite]]
@@ -443,11 +423,3 @@ criteria = "safe-to-run"
 [[exemptions.yasna]]
 version = "0.5.2"
 criteria = "safe-to-run"
-
-[[exemptions.zerocopy]]
-version = "0.8.40"
-criteria = "safe-to-deploy"
-
-[[exemptions.zerocopy-derive]]
-version = "0.8.40"
-criteria = "safe-to-deploy"

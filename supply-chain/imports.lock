@@ -22,6 +22,13 @@ user-id = 267
 user-login = "tarcieri"
 user-name = "Tony Arcieri"
 
+[[publisher.anstyle]]
+version = "1.0.14"
+when = "2026-03-13"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
 [[publisher.anyhow]]
 version = "1.0.102"
 when = "2026-02-20"
@@ -64,6 +71,11 @@ user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
 
+[[publisher.cc]]
+version = "1.2.57"
+when = "2026-03-14"
+trusted-publisher = "github:rust-lang/cc-rs"
+
 [[publisher.chacha20]]
 version = "0.9.1"
 when = "2023-04-01"
@@ -79,8 +91,22 @@ user-login = "tarcieri"
 user-name = "Tony Arcieri"
 
 [[publisher.clap]]
-version = "4.5.60"
-when = "2026-02-19"
+version = "4.6.0"
+when = "2026-03-12"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
+[[publisher.clap_builder]]
+version = "4.6.0"
+when = "2026-03-12"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
+[[publisher.clap_lex]]
+version = "1.1.0"
+when = "2026-03-12"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -161,8 +187,8 @@ user-login = "sunfishcode"
 user-name = "Dan Gohman"
 
 [[publisher.itoa]]
-version = "1.0.17"
-when = "2025-12-27"
+version = "1.0.18"
+when = "2026-03-20"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -174,8 +200,8 @@ user-id = 55123
 user-login = "rust-lang-owner"
 
 [[publisher.libc]]
-version = "0.2.182"
-when = "2026-02-13"
+version = "0.2.183"
+when = "2026-03-08"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -334,8 +360,8 @@ user-login = "mcginty"
 user-name = "Jake McGinty"
 
 [[publisher.socket2]]
-version = "0.6.2"
-when = "2026-01-23"
+version = "0.6.3"
+when = "2026-03-06"
 user-id = 6025
 user-login = "Thomasdezeeuw"
 user-name = "Thomas de Zeeuw"
@@ -346,6 +372,13 @@ when = "2026-02-20"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
+
+[[publisher.tempfile]]
+version = "3.27.0"
+when = "2026-03-11"
+user-id = 280
+user-login = "Stebalien"
+user-name = "Steven Allen"
 
 [[publisher.thiserror]]
 version = "2.0.18"
@@ -389,6 +422,13 @@ user-id = 172786
 user-login = "hds"
 user-name = "Hayden Stainsby"
 
+[[publisher.tracing-subscriber]]
+version = "0.3.23"
+when = "2026-03-13"
+user-id = 172786
+user-login = "hds"
+user-name = "Hayden Stainsby"
+
 [[publisher.unicode-ident]]
 version = "1.0.24"
 when = "2026-02-16"
@@ -404,8 +444,8 @@ user-login = "Manishearth"
 user-name = "Manish Goregaokar"
 
 [[publisher.uuid]]
-version = "1.21.0"
-when = "2026-02-14"
+version = "1.22.0"
+when = "2026-03-05"
 user-id = 3204
 user-login = "KodrAus"
 user-name = "Ashley Mannix"
@@ -462,8 +502,8 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows-sys]]
-version = "0.60.2"
-when = "2025-06-12"
+version = "0.59.0"
+when = "2024-07-30"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -630,6 +670,20 @@ trusted-publisher = "github:bytecodealliance/wasm-tools"
 version = "0.244.0"
 when = "2026-01-06"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
+
+[[publisher.zerocopy]]
+version = "0.8.47"
+when = "2026-03-19"
+user-id = 7178
+user-login = "joshlf"
+user-name = "Joshua Liebow-Feeser"
+
+[[publisher.zerocopy-derive]]
+version = "0.8.47"
+when = "2026-03-19"
+user-id = 7178
+user-login = "joshlf"
+user-name = "Joshua Liebow-Feeser"
 
 [[publisher.zmij]]
 version = "1.0.21"
@@ -1023,45 +1077,6 @@ version = "0.1.0"
 notes = "No unsafe usage or ambient capabilities, sane build script"
 
 [audits.fermyon.audits]
-
-[[audits.google.audits.anstyle]]
-who = "Yu-An Wang <wyuang@google.com>"
-criteria = "safe-to-run"
-version = "1.0.4"
-aggregated-from = "https://chromium.googlesource.com/chromiumos/third_party/rust_crates/+/refs/heads/main/cargo-vet/audits.toml?format=TEXT"
-
-[[audits.google.audits.anstyle]]
-who = "Lukasz Anforowicz <lukasza@chromium.org>"
-criteria = "safe-to-run"
-delta = "1.0.4 -> 1.0.6"
-aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
-
-[[audits.google.audits.anstyle]]
-who = "danakj <danakj@chromium.org>"
-criteria = "safe-to-run"
-delta = "1.0.6 -> 1.0.7"
-aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
-
-[[audits.google.audits.anstyle]]
-who = "Lukasz Anforowicz <lukasza@chromium.org>"
-criteria = "safe-to-run"
-delta = "1.0.7 -> 1.0.8"
-notes = "Only Cargo.toml changes in the 1.0.7 => 1.0.8 delta."
-aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
-
-[[audits.google.audits.anstyle]]
-who = "Dustin J. Mitchell <djmitche@chromium.org>"
-criteria = "safe-to-run"
-delta = "1.0.8 -> 1.0.9"
-notes = "No changes"
-aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
-
-[[audits.google.audits.anstyle]]
-who = "Lukasz Anforowicz <lukasza@chromium.org>"
-criteria = "safe-to-run"
-delta = "1.0.9 -> 1.0.10"
-notes = "Minor changes related to `write_str`."
-aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
 
 [[audits.google.audits.autocfg]]
 who = "Manish Goregaokar <manishearth@google.com>"
@@ -1820,6 +1835,12 @@ criteria = "safe-to-deploy"
 delta = "0.2.8 -> 0.2.9"
 notes = "No changes to Rust code between 0.2.8 and 0.2.9"
 
+[[audits.isrg.audits.once_cell]]
+who = "J.C. Jones <jc@divviup.org>"
+criteria = "safe-to-deploy"
+delta = "1.21.3 -> 1.21.4"
+notes = "The addition is a safe while loop around prior behavior. I don't see any way for that to become malicious."
+
 [[audits.isrg.audits.opaque-debug]]
 who = "David Cook <dcook@divviup.org>"
 criteria = "safe-to-deploy"
@@ -2445,12 +2466,6 @@ This code DOES contain unsafe code required to internally call volatiles
 for deleting data. This is expected and documented behavior.
 """
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.zcash.audits.anstyle]]
-who = "Jack Grigg <jack@electriccoin.co>"
-criteria = "safe-to-deploy"
-delta = "1.0.10 -> 1.0.13"
-aggregated-from = "https://raw.githubusercontent.com/zcash/wallet/main/supply-chain/audits.toml"
 
 [[audits.zcash.audits.autocfg]]
 who = "Jack Grigg <jack@electriccoin.co>"
