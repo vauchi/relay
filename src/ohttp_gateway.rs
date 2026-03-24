@@ -37,7 +37,6 @@ impl From<ohttp::Error> for OhttpGatewayError {
 /// `Server::decapsulate` takes `&self`, so no `Mutex` is required for
 /// shared access — this type is `Send + Sync` via `ohttp::Server`'s own
 /// thread safety.
-#[derive(Clone)]
 pub struct OhttpGateway {
     server: Server,
     /// Encoded public-key configuration returned to clients on `GET /v2/ohttp-key`.

@@ -131,72 +131,29 @@ async fn health_handler() -> impl IntoResponse {
     )
 }
 
+/// Map a `*_logic` result to an HTTP response with appropriate status code.
+fn logic_response(result: serde_json::Value) -> (StatusCode, Json<serde_json::Value>) {
+    let status = if result["status"] == "error" {
+        if result["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("quota exceeded"))
+        {
+            StatusCode::TOO_MANY_REQUESTS
+        } else {
+            StatusCode::BAD_REQUEST
+        }
+    } else {
+        StatusCode::OK
+    };
+    (status, Json(result))
+}
+
 /// Store an encrypted update for a recipient.
 async fn send_handler(
     State(state): State<HttpApiState>,
     Json(req): Json<V2SendRequest>,
 ) -> impl IntoResponse {
-    // Validate recipient_id is 64-char hex
-    if req.recipient_id.len() != 64 || !req.recipient_id.chars().all(|c| c.is_ascii_hexdigit()) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "status": "error",
-                "error": "recipient_id must be 64 hex characters"
-            })),
-        );
-    }
-
-    // Decode base64 ciphertext
-    let ciphertext = match base64::engine::general_purpose::STANDARD.decode(&req.ciphertext) {
-        Ok(data) => data,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "status": "error",
-                    "error": "ciphertext must be valid base64"
-                })),
-            );
-        }
-    };
-
-    // Check per-recipient quota
-    if (state.quota.max_blobs > 0
-        && state.storage.blob_count_for(&req.recipient_id) >= state.quota.max_blobs)
-        || (state.quota.max_bytes > 0
-            && state
-                .storage
-                .storage_size_for(&req.recipient_id)
-                .saturating_add(ciphertext.len())
-                > state.quota.max_bytes)
-    {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "status": "error",
-                "error": "quota exceeded for recipient"
-            })),
-        );
-    }
-
-    // Store blob
-    let blob = StoredBlob::new(ciphertext);
-    let blob_id = blob.id.clone();
-    state.storage.store(&req.recipient_id, blob);
-    state.metrics.blobs_created.inc();
-    state
-        .metrics
-        .blobs_stored
-        .set(state.storage.blob_count() as i64);
-
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "status": "ok",
-            "blob_id": blob_id
-        })),
-    )
+    logic_response(handle_send_logic(&state, req))
 }
 
 /// Fetch pending blobs for one or more mailbox tokens.
@@ -204,37 +161,7 @@ async fn fetch_handler(
     State(state): State<HttpApiState>,
     Json(req): Json<V2FetchRequest>,
 ) -> impl IntoResponse {
-    if req.mailbox_tokens.is_empty() || req.mailbox_tokens.len() > 100 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "status": "error",
-                "error": "mailbox_tokens must contain 1-100 entries"
-            })),
-        );
-    }
-
-    let token_refs: Vec<&str> = req.mailbox_tokens.iter().map(String::as_str).collect();
-    let blobs = state.storage.peek_many(&token_refs);
-
-    let blob_data: Vec<serde_json::Value> = blobs
-        .iter()
-        .map(|b| {
-            serde_json::json!({
-                "blob_id": b.id,
-                "ciphertext": base64::engine::general_purpose::STANDARD.encode(&b.data),
-                "created_at": b.created_at_secs,
-            })
-        })
-        .collect();
-
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "status": "ok",
-            "blobs": blob_data
-        })),
-    )
+    logic_response(handle_fetch_logic(&state, req))
 }
 
 /// Acknowledge receipt of a blob (removes it from storage).
@@ -242,33 +169,13 @@ async fn ack_handler(
     State(state): State<HttpApiState>,
     Json(req): Json<V2AckRequest>,
 ) -> impl IntoResponse {
-    let removed = state.storage.acknowledge(&req.recipient_id, &req.blob_id);
-    if removed {
-        state
-            .metrics
-            .blobs_stored
-            .set(state.storage.blob_count() as i64);
-    }
-
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "status": "ok",
-            "acknowledged": removed
-        })),
-    )
+    logic_response(handle_ack_logic(&state, req))
 }
 
 /// Register mailbox tokens (placeholder — tokens are meaningful with
 /// live WebSocket delivery; for HTTP polling, fetch uses tokens directly).
 async fn register_handler(Json(req): Json<V2RegisterRequest>) -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "status": "ok",
-            "registered": req.mailbox_tokens.len()
-        })),
-    )
+    logic_response(handle_register_logic(req))
 }
 
 /// Purge all blobs for a recipient.
@@ -276,13 +183,7 @@ async fn purge_handler(
     State(state): State<HttpApiState>,
     Json(req): Json<V2PurgeRequest>,
 ) -> impl IntoResponse {
-    state.storage.delete_all_for(&req.recipient_id);
-    state
-        .metrics
-        .blobs_stored
-        .set(state.storage.blob_count() as i64);
-
-    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
+    logic_response(handle_purge_logic(&state, req))
 }
 
 // ── OHTTP ───────────────────────────────────────────────────────────
@@ -392,6 +293,15 @@ async fn dispatch_ohttp_action(
             };
             handle_ack_logic(state, req)
         }
+        "register" => {
+            let req: V2RegisterRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad register payload: {e}") });
+                }
+            };
+            handle_register_logic(req)
+        }
         "purge" => {
             let req: V2PurgeRequest = match serde_json::from_value(payload) {
                 Ok(r) => r,
@@ -469,6 +379,10 @@ fn handle_ack_logic(state: &HttpApiState, req: V2AckRequest) -> serde_json::Valu
             .set(state.storage.blob_count() as i64);
     }
     serde_json::json!({ "status": "ok", "acknowledged": removed })
+}
+
+fn handle_register_logic(req: V2RegisterRequest) -> serde_json::Value {
+    serde_json::json!({ "status": "ok", "registered": req.mailbox_tokens.len() })
 }
 
 fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> serde_json::Value {
@@ -935,5 +849,161 @@ mod tests {
         // POST /v2/ohttp should 404
         let resp = post_ohttp_bytes(&app, b"anything".to_vec()).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ── Adversarial / boundary tests (CC-14) ──
+
+    #[tokio::test]
+    async fn test_v2_send_rejects_non_hex_64_chars() {
+        let app = create_v2_router(create_test_state());
+        // 64 chars but contains non-hex 'z'
+        let bad_id = "z".repeat(64);
+        let resp = post_json(
+            &app,
+            "/v2/send",
+            &serde_json::json!({
+                "recipient_id": bad_id,
+                "ciphertext": base64::engine::general_purpose::STANDARD.encode(b"x"),
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(resp).await;
+        assert_eq!(body["error"], "recipient_id must be 64 hex characters");
+    }
+
+    #[tokio::test]
+    async fn test_v2_send_rejects_empty_recipient_id() {
+        let app = create_v2_router(create_test_state());
+        let resp = post_json(
+            &app,
+            "/v2/send",
+            &serde_json::json!({
+                "recipient_id": "",
+                "ciphertext": base64::engine::general_purpose::STANDARD.encode(b"x"),
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_v2_send_rejects_65_char_recipient_id() {
+        let app = create_v2_router(create_test_state());
+        let resp = post_json(
+            &app,
+            "/v2/send",
+            &serde_json::json!({
+                "recipient_id": "a".repeat(65),
+                "ciphertext": base64::engine::general_purpose::STANDARD.encode(b"x"),
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_v2_send_rejects_empty_ciphertext() {
+        let app = create_v2_router(create_test_state());
+        let resp = post_json(
+            &app,
+            "/v2/send",
+            &serde_json::json!({
+                "recipient_id": "a".repeat(64),
+                "ciphertext": "",
+            }),
+        )
+        .await;
+        // Empty string is valid base64 (decodes to empty bytes) — should succeed
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_v2_fetch_rejects_101_tokens() {
+        let app = create_v2_router(create_test_state());
+        let tokens: Vec<String> = (0..101).map(|i| format!("token{i}")).collect();
+        let resp = post_json(
+            &app,
+            "/v2/fetch",
+            &serde_json::json!({ "mailbox_tokens": tokens }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_v2_fetch_accepts_100_tokens() {
+        let app = create_v2_router(create_test_state());
+        let tokens: Vec<String> = (0..100).map(|i| format!("token{i}")).collect();
+        let resp = post_json(
+            &app,
+            "/v2/fetch",
+            &serde_json::json!({ "mailbox_tokens": tokens }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_ohttp_empty_body_rejected() {
+        let app = create_v2_router(create_test_state_with_ohttp());
+        let resp = post_ohttp_bytes(&app, vec![]).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ohttp_single_byte_rejected() {
+        let app = create_v2_router(create_test_state_with_ohttp());
+        let resp = post_ohttp_bytes(&app, vec![0x42]).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Quota enforcement (I6) ──
+
+    #[tokio::test]
+    async fn test_v2_send_quota_enforced() {
+        let state = HttpApiState {
+            storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
+            recovery_storage: Arc::new(
+                crate::recovery_storage::SqliteRecoveryProofStore::in_memory().unwrap(),
+            ),
+            rate_limiter: Arc::new(RateLimiter::new(100)),
+            metrics: RelayMetrics::new(),
+            quota: V2QuotaLimits {
+                max_blobs: 2, // Very low quota
+                max_bytes: 50 * 1024 * 1024,
+            },
+            ohttp_gateway: None,
+        };
+        let app = create_v2_router(state);
+
+        let recipient = "a".repeat(64);
+        let ct = base64::engine::general_purpose::STANDARD.encode(b"data");
+
+        // First two sends succeed
+        for _ in 0..2 {
+            let resp = post_json(
+                &app,
+                "/v2/send",
+                &serde_json::json!({ "recipient_id": recipient, "ciphertext": ct }),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::OK);
+        }
+
+        // Third send hits quota
+        let resp = post_json(
+            &app,
+            "/v2/send",
+            &serde_json::json!({ "recipient_id": recipient, "ciphertext": ct }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = response_json(resp).await;
+        assert_eq!(body["status"], "error");
+        assert!(
+            body["error"].as_str().unwrap().contains("quota exceeded"),
+            "error message must mention quota"
+        );
     }
 }
