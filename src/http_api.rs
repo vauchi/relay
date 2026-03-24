@@ -11,8 +11,9 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::State,
-    http::StatusCode,
+    http::{StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
 };
@@ -20,6 +21,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use crate::metrics::RelayMetrics;
+use crate::ohttp_gateway::OhttpGateway;
 use crate::rate_limit::RateLimiter;
 use crate::recovery_storage::RecoveryProofStore;
 use crate::storage::{BlobStore, StoredBlob};
@@ -39,6 +41,8 @@ pub struct HttpApiState {
     pub rate_limiter: Arc<RateLimiter>,
     pub metrics: RelayMetrics,
     pub quota: V2QuotaLimits,
+    /// When `Some`, the OHTTP gateway endpoints are enabled.
+    pub ohttp_gateway: Option<Arc<OhttpGateway>>,
 }
 
 // ── Request / Response types ────────────────────────────────────────
@@ -75,6 +79,17 @@ pub struct V2PurgeRequest {
     pub recipient_id: String,
 }
 
+/// Envelope used inside an OHTTP request body.
+///
+/// The client encapsulates a JSON object with this shape and the relay
+/// dispatches to the appropriate v2 handler based on `action`.
+#[derive(Debug, Deserialize)]
+pub struct OhttpInnerRequest {
+    pub action: String,
+    #[serde(flatten)]
+    pub payload: serde_json::Value,
+}
+
 /// Standard v2 success response.
 #[derive(Debug, Serialize)]
 pub struct V2Response {
@@ -101,6 +116,8 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .route("/v2/ack", post(ack_handler))
         .route("/v2/register", post(register_handler))
         .route("/v2/purge", post(purge_handler))
+        .route("/v2/ohttp-key", get(ohttp_key_handler))
+        .route("/v2/ohttp", post(ohttp_handler))
         .with_state(state)
 }
 
@@ -268,6 +285,201 @@ async fn purge_handler(
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
 }
 
+// ── OHTTP ───────────────────────────────────────────────────────────
+
+/// Return the server's OHTTP public-key configuration.
+///
+/// Clients fetch this once and use it to encapsulate OHTTP requests.
+/// Content-type: `application/ohttp-keys` (RFC 9458 §3.1).
+async fn ohttp_key_handler(State(state): State<HttpApiState>) -> axum::response::Response {
+    let Some(gw) = &state.ohttp_gateway else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let bytes = gw.encoded_key_config().to_vec();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/ohttp-keys")],
+        bytes,
+    )
+        .into_response()
+}
+
+/// Receive an OHTTP-encapsulated request, route it to the correct v2
+/// handler, and return an OHTTP-encapsulated response.
+///
+/// Content-type of successful response: `message/ohttp-res` (RFC 9458 §3.3).
+async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::response::Response {
+    let Some(gw) = &state.ohttp_gateway else {
+        return build_ohttp_error(StatusCode::NOT_FOUND, "ohttp not enabled");
+    };
+
+    // 1. Decapsulate the OHTTP request
+    let (plaintext, srv_response) = match gw.decapsulate(&body) {
+        Ok(pair) => pair,
+        Err(_) => {
+            return build_ohttp_error(StatusCode::BAD_REQUEST, "failed to decapsulate request");
+        }
+    };
+
+    // 2. Parse the inner JSON envelope
+    let inner: OhttpInnerRequest = match serde_json::from_slice(&plaintext) {
+        Ok(r) => r,
+        Err(_) => {
+            return build_ohttp_error(StatusCode::BAD_REQUEST, "invalid inner request JSON");
+        }
+    };
+
+    // 3. Dispatch to the appropriate handler logic
+    let response_json = dispatch_ohttp_action(&state, &inner.action, inner.payload).await;
+
+    // 4. Serialize response and encapsulate
+    let resp_bytes = serde_json::to_vec(&response_json).unwrap_or_default();
+    match srv_response.encapsulate(&resp_bytes) {
+        Ok(enc) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "message/ohttp-res")],
+            enc,
+        )
+            .into_response(),
+        Err(_) => build_ohttp_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to encapsulate response",
+        ),
+    }
+}
+
+/// Build a plain (non-encapsulated) error response for OHTTP failures that
+/// occur before a valid `ServerResponse` token is available.
+fn build_ohttp_error(status: StatusCode, message: &str) -> axum::response::Response {
+    let body = serde_json::json!({ "status": "error", "error": message });
+    let bytes = serde_json::to_vec(&body).unwrap_or_default();
+    (status, [(header::CONTENT_TYPE, "application/json")], bytes).into_response()
+}
+
+/// Route the decapsulated inner request to the correct v2 handler.
+///
+/// Returns a `serde_json::Value` that will be encapsulated as the response.
+async fn dispatch_ohttp_action(
+    state: &HttpApiState,
+    action: &str,
+    payload: serde_json::Value,
+) -> serde_json::Value {
+    match action {
+        "send" => {
+            let req: V2SendRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad send payload: {e}") });
+                }
+            };
+            handle_send_logic(state, req)
+        }
+        "fetch" => {
+            let req: V2FetchRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad fetch payload: {e}") });
+                }
+            };
+            handle_fetch_logic(state, req)
+        }
+        "ack" => {
+            let req: V2AckRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad ack payload: {e}") });
+                }
+            };
+            handle_ack_logic(state, req)
+        }
+        "purge" => {
+            let req: V2PurgeRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad purge payload: {e}") });
+                }
+            };
+            handle_purge_logic(state, req)
+        }
+        unknown => {
+            serde_json::json!({ "status": "error", "error": format!("unknown action: {unknown}") })
+        }
+    }
+}
+
+// ── Extracted handler logic (shared with OHTTP dispatcher) ──────────
+
+fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> serde_json::Value {
+    if req.recipient_id.len() != 64 || !req.recipient_id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return serde_json::json!({ "status": "error", "error": "recipient_id must be 64 hex characters" });
+    }
+    let ciphertext = match base64::engine::general_purpose::STANDARD.decode(&req.ciphertext) {
+        Ok(d) => d,
+        Err(_) => {
+            return serde_json::json!({ "status": "error", "error": "ciphertext must be valid base64" });
+        }
+    };
+    if (state.quota.max_blobs > 0
+        && state.storage.blob_count_for(&req.recipient_id) >= state.quota.max_blobs)
+        || (state.quota.max_bytes > 0
+            && state
+                .storage
+                .storage_size_for(&req.recipient_id)
+                .saturating_add(ciphertext.len())
+                > state.quota.max_bytes)
+    {
+        return serde_json::json!({ "status": "error", "error": "quota exceeded for recipient" });
+    }
+    let blob = StoredBlob::new(ciphertext);
+    let blob_id = blob.id.clone();
+    state.storage.store(&req.recipient_id, blob);
+    state.metrics.blobs_created.inc();
+    state
+        .metrics
+        .blobs_stored
+        .set(state.storage.blob_count() as i64);
+    serde_json::json!({ "status": "ok", "blob_id": blob_id })
+}
+
+fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> serde_json::Value {
+    if req.mailbox_tokens.is_empty() || req.mailbox_tokens.len() > 100 {
+        return serde_json::json!({ "status": "error", "error": "mailbox_tokens must contain 1-100 entries" });
+    }
+    let token_refs: Vec<&str> = req.mailbox_tokens.iter().map(String::as_str).collect();
+    let blobs = state.storage.peek_many(&token_refs);
+    let blob_data: Vec<serde_json::Value> = blobs
+        .iter()
+        .map(|b| {
+            serde_json::json!({
+                "blob_id": b.id,
+                "ciphertext": base64::engine::general_purpose::STANDARD.encode(&b.data),
+                "created_at": b.created_at_secs,
+            })
+        })
+        .collect();
+    serde_json::json!({ "status": "ok", "blobs": blob_data })
+}
+
+fn handle_ack_logic(state: &HttpApiState, req: V2AckRequest) -> serde_json::Value {
+    let removed = state.storage.acknowledge(&req.recipient_id, &req.blob_id);
+    if removed {
+        state
+            .metrics
+            .blobs_stored
+            .set(state.storage.blob_count() as i64);
+    }
+    serde_json::json!({ "status": "ok", "acknowledged": removed })
+}
+
+fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> serde_json::Value {
+    state.storage.delete_all_for(&req.recipient_id);
+    state
+        .metrics
+        .blobs_stored
+        .set(state.storage.blob_count() as i64);
+    serde_json::json!({ "status": "ok" })
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 // INLINE_TEST_REQUIRED: Tests use private handler functions and shared test helpers
@@ -292,6 +504,24 @@ mod tests {
                 max_blobs: 1000,
                 max_bytes: 50 * 1024 * 1024,
             },
+            ohttp_gateway: None,
+        }
+    }
+
+    fn create_test_state_with_ohttp() -> HttpApiState {
+        let gw = OhttpGateway::new().expect("OhttpGateway::new must succeed in tests");
+        HttpApiState {
+            storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
+            recovery_storage: Arc::new(
+                crate::recovery_storage::SqliteRecoveryProofStore::in_memory().unwrap(),
+            ),
+            rate_limiter: Arc::new(RateLimiter::new(100)),
+            metrics: RelayMetrics::new(),
+            quota: V2QuotaLimits {
+                max_blobs: 1000,
+                max_bytes: 50 * 1024 * 1024,
+            },
+            ohttp_gateway: Some(Arc::new(gw)),
         }
     }
 
@@ -522,5 +752,188 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = response_json(resp).await;
         assert_eq!(body["registered"], 2);
+    }
+
+    // ── OHTTP ──
+
+    /// Helper: GET /v2/ohttp-key and return the raw response bytes.
+    async fn get_ohttp_key(app: &Router) -> axum::response::Response {
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v2/ohttp-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    /// Helper: POST raw bytes to /v2/ohttp and return the response.
+    async fn post_ohttp_bytes(app: &Router, body: Vec<u8>) -> axum::response::Response {
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v2/ohttp")
+                    .header("content-type", "message/ohttp-req")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    /// Helper: encrypt an inner JSON request using the server's published key.
+    fn ohttp_encrypt(
+        encoded_key: &[u8],
+        inner: &serde_json::Value,
+    ) -> (Vec<u8>, ohttp::ClientResponse) {
+        use ohttp::ClientRequest;
+        let payload = serde_json::to_vec(inner).unwrap();
+        let client = ClientRequest::from_encoded_config(encoded_key)
+            .expect("client must accept encoded key");
+        client
+            .encapsulate(&payload)
+            .expect("encapsulate must succeed")
+    }
+
+    /// Helper: decrypt the server's OHTTP response.
+    fn ohttp_decrypt(client_response: ohttp::ClientResponse, enc: &[u8]) -> serde_json::Value {
+        let plaintext = client_response
+            .decapsulate(enc)
+            .expect("decapsulate must succeed");
+        serde_json::from_slice(&plaintext).expect("response must be valid JSON")
+    }
+
+    #[tokio::test]
+    async fn test_ohttp_key_endpoint_returns_valid_config() {
+        let app = create_v2_router(create_test_state_with_ohttp());
+
+        let resp = get_ohttp_key(&app).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .expect("content-type header must be present");
+        assert_eq!(
+            ct, "application/ohttp-keys",
+            "content-type must be application/ohttp-keys"
+        );
+
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        assert!(
+            !body_bytes.is_empty(),
+            "encoded key config must not be empty"
+        );
+
+        // Verify the bytes decode as a valid KeyConfig
+        let decoded = ohttp::KeyConfig::decode(&body_bytes);
+        assert!(
+            decoded.is_ok(),
+            "body must decode as a valid KeyConfig: {:?}",
+            decoded.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ohttp_gateway_decrypt_and_route_send() {
+        let state = create_test_state_with_ohttp();
+        let storage = state.storage.clone();
+        let app = create_v2_router(state);
+
+        // Fetch the public key
+        let key_resp = get_ohttp_key(&app).await;
+        let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
+            .await
+            .unwrap();
+
+        let recipient_id = "e".repeat(64);
+        let inner = serde_json::json!({
+            "action": "send",
+            "recipient_id": recipient_id,
+            "ciphertext": base64::engine::general_purpose::STANDARD.encode(b"ohttp-blob"),
+        });
+        let (enc_req, client_resp) = ohttp_encrypt(&key_bytes, &inner);
+
+        let resp = post_ohttp_bytes(&app, enc_req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .expect("content-type must be present");
+        assert_eq!(ct, "message/ohttp-res");
+
+        let enc_resp_bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let body = ohttp_decrypt(client_resp, &enc_resp_bytes);
+        assert_eq!(body["status"], "ok", "inner response status must be ok");
+        assert!(
+            body["blob_id"].is_string(),
+            "inner response must contain blob_id"
+        );
+
+        // Verify the blob was stored
+        let blobs = storage.peek(&recipient_id);
+        assert_eq!(blobs.len(), 1);
+        assert_eq!(blobs[0].data, b"ohttp-blob");
+    }
+
+    #[tokio::test]
+    async fn test_ohttp_gateway_decrypt_and_route_fetch() {
+        let state = create_test_state_with_ohttp();
+        let storage = state.storage.clone();
+        let app = create_v2_router(state);
+
+        // Pre-store a blob
+        let token = "f".repeat(64);
+        storage.store(&token, StoredBlob::new(b"fetched-via-ohttp".to_vec()));
+
+        // Fetch the public key
+        let key_resp = get_ohttp_key(&app).await;
+        let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
+            .await
+            .unwrap();
+
+        let inner = serde_json::json!({
+            "action": "fetch",
+            "mailbox_tokens": [token],
+        });
+        let (enc_req, client_resp) = ohttp_encrypt(&key_bytes, &inner);
+
+        let resp = post_ohttp_bytes(&app, enc_req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let enc_resp_bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let body = ohttp_decrypt(client_resp, &enc_resp_bytes);
+        assert_eq!(body["status"], "ok");
+        let blobs = body["blobs"].as_array().expect("blobs must be an array");
+        assert_eq!(blobs.len(), 1, "must return the pre-stored blob");
+        assert!(blobs[0]["blob_id"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_ohttp_invalid_encrypted_data_rejected() {
+        let app = create_v2_router(create_test_state_with_ohttp());
+
+        // Post garbage — not a valid OHTTP encapsulated request
+        let resp = post_ohttp_bytes(&app, b"this is garbage and not ohttp".to_vec()).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ohttp_disabled_returns_404() {
+        // State with ohttp_gateway: None
+        let app = create_v2_router(create_test_state());
+
+        // GET /v2/ohttp-key should 404
+        let resp = get_ohttp_key(&app).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        // POST /v2/ohttp should 404
+        let resp = post_ohttp_bytes(&app, b"anything".to_vec()).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }
