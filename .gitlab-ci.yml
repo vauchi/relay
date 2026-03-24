@@ -256,8 +256,14 @@ security:deny:
   extends: [.rust-runner-readonly, .security-deny-job]
 
 # Supply chain verification (cargo-vet)
+# Override: remove .cargo/config.toml path override before --locked resolution.
+# The patch section points at ../core/vauchi-protocol for local dev but conflicts
+# with lockfile git sources in CI.
 security:vet:
   extends: [.rust-runner-readonly, .security-vet-job]
+  script:
+    - rm -f .cargo/config.toml
+    - cargo vet --locked
 
 # ============================================================
 # Load Test Stage (PI-10)
