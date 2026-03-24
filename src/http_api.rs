@@ -23,7 +23,6 @@ use serde::{Deserialize, Serialize};
 use crate::metrics::RelayMetrics;
 use crate::ohttp_gateway::OhttpGateway;
 use crate::rate_limit::RateLimiter;
-use crate::recovery_storage::RecoveryProofStore;
 use crate::storage::{BlobStore, StoredBlob};
 
 /// Per-recipient quota limits for v2 API.
@@ -37,12 +36,12 @@ pub struct V2QuotaLimits {
 #[derive(Clone)]
 pub struct HttpApiState {
     pub storage: Arc<dyn BlobStore>,
-    pub recovery_storage: Arc<dyn RecoveryProofStore>,
     pub rate_limiter: Arc<RateLimiter>,
     pub metrics: RelayMetrics,
     pub quota: V2QuotaLimits,
     /// When `Some`, the OHTTP gateway endpoints are enabled.
     pub ohttp_gateway: Option<Arc<OhttpGateway>>,
+    // TODO: recovery_storage will be added when /v2/recovery endpoint is implemented
 }
 
 // ── Request / Response types ────────────────────────────────────────
@@ -409,9 +408,6 @@ mod tests {
     fn create_test_state() -> HttpApiState {
         HttpApiState {
             storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
-            recovery_storage: Arc::new(
-                crate::recovery_storage::SqliteRecoveryProofStore::in_memory().unwrap(),
-            ),
             rate_limiter: Arc::new(RateLimiter::new(100)),
             metrics: RelayMetrics::new(),
             quota: V2QuotaLimits {
@@ -426,9 +422,6 @@ mod tests {
         let gw = OhttpGateway::new().expect("OhttpGateway::new must succeed in tests");
         HttpApiState {
             storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
-            recovery_storage: Arc::new(
-                crate::recovery_storage::SqliteRecoveryProofStore::in_memory().unwrap(),
-            ),
             rate_limiter: Arc::new(RateLimiter::new(100)),
             metrics: RelayMetrics::new(),
             quota: V2QuotaLimits {
@@ -964,9 +957,6 @@ mod tests {
     async fn test_v2_send_quota_enforced() {
         let state = HttpApiState {
             storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
-            recovery_storage: Arc::new(
-                crate::recovery_storage::SqliteRecoveryProofStore::in_memory().unwrap(),
-            ),
             rate_limiter: Arc::new(RateLimiter::new(100)),
             metrics: RelayMetrics::new(),
             quota: V2QuotaLimits {
