@@ -5,7 +5,7 @@
 
 # Relay Integration Test Runner
 
-set -e
+set -euo pipefail
 
 # Platform directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
