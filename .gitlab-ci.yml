@@ -328,7 +328,7 @@ dast:zap:
     - job: build:release
       artifacts: true
   image:
-    name: ghcr.io/zaproxy/zaproxy:stable
+    name: ghcr.io/zaproxy/zaproxy:2.17.0
     entrypoint: [""]
   before_script: []
   script:
