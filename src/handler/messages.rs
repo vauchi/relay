@@ -270,9 +270,8 @@ pub(super) fn handle_purge_request(
         ctx.session, blobs_deleted, recovery_proofs_deleted
     );
 
-    // Send purge response
-    let response =
-        protocol::create_purge_response(message_id, blobs_deleted, recovery_proofs_deleted);
+    // Send purge response (counts kept for log above, not sent to client — T0-10)
+    let response = protocol::create_purge_response(message_id);
     HandleResult::single(HandlerResponse::SendEnvelope(response))
 }
 

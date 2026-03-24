@@ -126,11 +126,7 @@ pub(super) mod protocol {
     }
 
     /// Creates a purge response envelope.
-    pub fn create_purge_response(
-        message_id: &str,
-        blobs_deleted: usize,
-        recovery_proofs_deleted: usize,
-    ) -> MessageEnvelope {
+    pub fn create_purge_response(message_id: &str) -> MessageEnvelope {
         MessageEnvelope {
             version: PROTOCOL_VERSION,
             message_id: message_id.to_string(),
@@ -138,10 +134,7 @@ pub(super) mod protocol {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            payload: MessagePayload::PurgeResponse(PurgeResponse {
-                blobs_deleted,
-                recovery_proofs_deleted,
-            }),
+            payload: MessagePayload::PurgeResponse(PurgeResponse {}),
         }
     }
 

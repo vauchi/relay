@@ -123,14 +123,11 @@ fn test_purge_request_default_fields() {
 
 #[test]
 fn test_purge_response_creation() {
-    let resp = protocol::PurgeResponse {
-        blobs_deleted: 5,
-        recovery_proofs_deleted: 0,
-    };
+    let resp = protocol::PurgeResponse {};
     let json = serde_json::to_string(&resp).unwrap();
     let parsed: protocol::PurgeResponse = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed.blobs_deleted, 5);
-    assert_eq!(parsed.recovery_proofs_deleted, 0);
+    assert_eq!(json, "{}");
+    assert!(format!("{:?}", parsed).contains("PurgeResponse"));
 }
 
 #[test]

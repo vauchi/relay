@@ -66,8 +66,7 @@ async fn test_purge_deletes_blobs() {
     let response = client.send_recv(&purge).await;
 
     assert_eq!(response["payload"]["type"], "PurgeResponse");
-    let blobs_deleted = response["payload"]["blobs_deleted"].as_u64().unwrap();
-    assert_eq!(blobs_deleted, 3);
+    // Counts no longer in response (T0-10) — verify via storage directly
     assert_eq!(storage.blob_count_for(&client_id), 0);
 
     client.close().await;
@@ -87,7 +86,6 @@ async fn test_purge_empty_returns_zero() {
     let response = client.send_recv(&purge).await;
 
     assert_eq!(response["payload"]["type"], "PurgeResponse");
-    assert_eq!(response["payload"]["blobs_deleted"], 0);
     client.close().await;
 }
 
@@ -117,9 +115,9 @@ async fn test_routing_token_used_for_storage() {
     // under the mailbox token (routing_token here), so the purge must target it.
     let purge = make_purge_request_for_token(&routing_token);
     let response = client.send_recv(&purge).await;
-    assert_eq!(response["payload"]["blobs_deleted"], 1);
+    assert_eq!(response["payload"]["type"], "PurgeResponse");
 
-    // Original client_id should have no blobs
+    // Verify purge worked via storage (counts no longer in response — T0-10)
     assert!(storage.peek(&client_id).is_empty());
     assert!(storage.peek(&routing_token).is_empty());
 

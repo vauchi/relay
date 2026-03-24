@@ -186,13 +186,10 @@ fn contract_purge_request_optional_fields() {
 }
 
 #[test]
-fn contract_purge_response_has_all_counters() {
-    let resp = PurgeResponse {
-        blobs_deleted: 1,
-        recovery_proofs_deleted: 3,
-    };
-    assert_eq!(resp.blobs_deleted, 1);
-    assert_eq!(resp.recovery_proofs_deleted, 3);
+fn contract_purge_response_is_empty() {
+    let resp = PurgeResponse {};
+    let json = serde_json::to_string(&resp).unwrap();
+    assert_eq!(json, "{}"); // No counts leaked — T0-10
 }
 
 // ============================================================
