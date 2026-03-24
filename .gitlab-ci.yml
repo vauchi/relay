@@ -291,14 +291,13 @@ load:k6:
       ./target/release/vauchi-relay &
       RELAY_PID=$!
 
-      # Wait for relay to be ready (poll health endpoint)
-      for i in $(seq 1 30); do
-        curl -sf http://127.0.0.1:8080/health && break
-        sleep 0.5
+      # Wait for relay to be ready (exponential backoff: 0.2s, 0.4s, 0.8s, ... capped at 3s)
+      for i in $(seq 1 20); do
+        curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1 && break
+        delay=$(awk "BEGIN { v = 0.2 * 2^($i-1); print (v < 3.0 ? v : 3.0) }")
+        sleep "$delay"
       done
-
-      # Verify relay is healthy
-      curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start"; kill $RELAY_PID; exit 1; }
+      curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start after 20 attempts"; kill $RELAY_PID; exit 1; }
 
       # Run k6 load test
       k6 run --summary-export=summary.json tests/load/relay-load-test.js || K6_EXIT=$?
@@ -339,14 +338,13 @@ dast:zap:
       ./target/release/vauchi-relay &
       RELAY_PID=$!
 
-      # Wait for relay to be ready (poll health endpoint)
-      for i in $(seq 1 30); do
-        curl -sf http://127.0.0.1:8080/health && break
-        sleep 0.5
+      # Wait for relay to be ready (exponential backoff: 0.2s, 0.4s, 0.8s, ... capped at 3s)
+      for i in $(seq 1 20); do
+        curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1 && break
+        delay=$(awk "BEGIN { v = 0.2 * 2^($i-1); print (v < 3.0 ? v : 3.0) }")
+        sleep "$delay"
       done
-
-      # Verify relay is running
-      curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start"; kill $RELAY_PID; exit 1; }
+      curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start after 20 attempts"; kill $RELAY_PID; exit 1; }
 
       # ZAP baseline scan against HTTP endpoints
       zap-baseline.py -t http://127.0.0.1:8080 -r zap-report.html -J zap-report.json
