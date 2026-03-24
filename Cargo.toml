@@ -25,8 +25,7 @@ serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 
 # Shared protocol message types
-# TODO: revert to branch = "main" after core !361 merges
-vauchi-protocol = { git = "https://gitlab.com/vauchi/core.git", rev = "f7367da7" }
+vauchi-protocol = { git = "https://gitlab.com/vauchi/core.git", branch = "main" }
 
 # Hex encoding/decoding for key hashes
 hex = "0.4"
