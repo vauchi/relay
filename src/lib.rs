@@ -12,6 +12,7 @@ pub mod federation_tls;
 pub mod forwarding_hints;
 pub mod handler;
 pub mod http;
+pub mod http_api;
 pub mod integrity;
 pub mod jitter;
 pub mod mailbox_registry;
