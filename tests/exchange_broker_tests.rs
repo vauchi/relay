@@ -281,8 +281,9 @@ fn test_s8_max_offers_ceiling_enforced() {
 
 #[test]
 fn test_s8_max_offers_at_ceiling_accepted() {
-    // Exactly 500,000 should be fine
-    let _broker = ExchangeBroker::new(500_000, 300);
+    // Exactly 500,000 should be fine — verify it's operational
+    let broker = ExchangeBroker::new(500_000, 300);
+    assert_eq!(broker.offer_count(), 0, "fresh broker must have no offers");
 }
 
 #[test]
