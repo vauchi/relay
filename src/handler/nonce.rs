@@ -61,15 +61,21 @@ pub fn hash_to_hex(hash: &[u8; 32]) -> String {
     hex
 }
 
+/// Cleanup interval: only run `retain` every N insertions to amortize cost.
+const CLEANUP_INTERVAL: usize = 1000;
+
 /// Tracks recently seen nonces to prevent replay attacks.
 ///
 /// Uses a HashMap for O(1) membership checks instead of O(n) linear scan.
-/// Nonces older than `TTL` are evicted amortized on each insert. Shared via
+/// Nonces older than `TTL` are evicted every `CLEANUP_INTERVAL` insertions
+/// (OHTTP-10: amortized O(n/1000) instead of O(n) per call). Shared via
 /// `Arc` across all connections handled by a single relay instance.
 pub struct NonceTracker {
     nonces: Mutex<HashMap<Vec<u8>, Instant>>,
     /// R-C3: Maximum number of nonces to track before rejecting new ones.
     max_capacity: usize,
+    /// Counter for amortized cleanup (OHTTP-10).
+    ops_since_cleanup: Mutex<usize>,
 }
 
 impl Default for NonceTracker {
@@ -89,6 +95,7 @@ impl NonceTracker {
         NonceTracker {
             nonces: Mutex::new(HashMap::new()),
             max_capacity,
+            ops_since_cleanup: Mutex::new(0),
         }
     }
 
@@ -99,19 +106,27 @@ impl NonceTracker {
 
     /// Checks if a nonce has been seen before. If not, inserts it and returns `true`.
     /// Returns `false` if the nonce is a replay or if the tracker is at capacity.
+    ///
+    /// OHTTP-10: Eviction runs every `CLEANUP_INTERVAL` insertions instead of
+    /// on every call, amortizing the O(n) retain cost.
     pub fn check_and_insert(&self, nonce: &[u8]) -> bool {
         let mut nonces = self.nonces.lock();
 
-        // Evict expired nonces (amortized O(n) on eviction, O(1) per lookup)
-        let cutoff = Instant::now() - NONCE_TTL;
-        nonces.retain(|_, ts| *ts > cutoff);
-
-        // Check for replay (O(1) lookup)
+        // Check for replay first (O(1) lookup) — always checked
         if nonces.contains_key(nonce) {
             return false;
         }
 
-        // R-C3: Reject if at capacity after eviction
+        // OHTTP-10: Amortized eviction — only run retain every N ops
+        let mut ops = self.ops_since_cleanup.lock();
+        *ops += 1;
+        if *ops >= CLEANUP_INTERVAL {
+            let cutoff = Instant::now() - NONCE_TTL;
+            nonces.retain(|_, ts| *ts > cutoff);
+            *ops = 0;
+        }
+
+        // R-C3: Reject if at capacity after potential cleanup
         if nonces.len() >= self.max_capacity {
             return false;
         }
