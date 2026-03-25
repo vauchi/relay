@@ -233,6 +233,43 @@ async fn test_v2_ack_removes_blob() {
 
 // ── Purge ──
 
+/// Helper: generate a valid purge request with Ed25519 signature.
+fn signed_purge_json(recipient_id: &str) -> serde_json::Value {
+    use aws_lc_rs::rand::SystemRandom;
+    use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
+
+    let rng = SystemRandom::new();
+    let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+
+    let pk_bytes = key_pair.public_key().as_ref();
+    let pk_hex: String = pk_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+
+    let purge_token = [0xABu8; 32];
+    let token_hex: String = purge_token.iter().map(|b| format!("{:02x}", b)).collect();
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut message = Vec::with_capacity(72);
+    message.extend_from_slice(pk_bytes);
+    message.extend_from_slice(&purge_token);
+    message.extend_from_slice(&timestamp.to_be_bytes());
+
+    let sig = key_pair.sign(&message);
+    let sig_hex: String = sig.as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+
+    serde_json::json!({
+        "recipient_id": recipient_id,
+        "public_key": pk_hex,
+        "purge_token": token_hex,
+        "signature": sig_hex,
+        "timestamp": timestamp,
+    })
+}
+
 #[tokio::test]
 async fn test_v2_purge_deletes_all_blobs() {
     let state = create_test_state();
@@ -244,15 +281,49 @@ async fn test_v2_purge_deletes_all_blobs() {
     storage.store(&token, StoredBlob::new(b"data2".to_vec()));
     assert_eq!(storage.peek(&token).len(), 2);
 
-    let resp = post_json(
-        &app,
-        "/v2/purge",
-        &serde_json::json!({ "recipient_id": token }),
-    )
-    .await;
+    let resp = post_json(&app, "/v2/purge", &signed_purge_json(&token)).await;
 
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(storage.peek(&token).len(), 0);
+}
+
+#[tokio::test]
+async fn test_v2_purge_rejects_missing_signature() {
+    let app = create_v2_router(create_test_state());
+    // Missing required signature fields — deserialization should fail (400)
+    let resp = post_json(
+        &app,
+        "/v2/purge",
+        &serde_json::json!({ "recipient_id": "d".repeat(64) }),
+    )
+    .await;
+    // axum returns 422 for missing required fields in JSON
+    assert_ne!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_v2_purge_rejects_bad_signature() {
+    let app = create_v2_router(create_test_state());
+    let resp = post_json(
+        &app,
+        "/v2/purge",
+        &serde_json::json!({
+            "recipient_id": "d".repeat(64),
+            "public_key": "aa".repeat(32),
+            "purge_token": "bb".repeat(32),
+            "signature": "cc".repeat(64),  // invalid signature
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"], "error");
+    assert!(
+        body["error"].as_str().unwrap().contains("signature"),
+        "error should mention signature"
+    );
 }
 
 // ── Register (placeholder) ──

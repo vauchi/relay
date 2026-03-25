@@ -76,9 +76,16 @@ pub struct V2RegisterRequest {
 }
 
 /// v2 purge request body.
+///
+/// Purge is destructive — requires Ed25519 signature over
+/// `public_key || purge_token || timestamp` (same as WebSocket purge auth).
 #[derive(Debug, Deserialize)]
 pub struct V2PurgeRequest {
     pub recipient_id: String,
+    pub public_key: String,  // hex-encoded Ed25519 public key (32 bytes)
+    pub purge_token: String, // hex-encoded purge token (32 bytes)
+    pub signature: String,   // hex-encoded Ed25519 signature (64 bytes)
+    pub timestamp: u64,      // Unix timestamp (must be within 60s of server time)
 }
 
 /// v2 exchange offer request body.
@@ -107,6 +114,9 @@ pub struct V2ExchangeCompleteRequest {
 /// dispatches to the appropriate v2 handler based on `action`.
 #[derive(Debug, Deserialize)]
 pub struct OhttpInnerRequest {
+    /// Protocol version — must be 2. Prevents version confusion if v3 is added.
+    #[serde(default)]
+    pub version: Option<u8>,
     pub action: String,
     #[serde(flatten)]
     pub payload: serde_json::Value,
@@ -266,7 +276,27 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
         }
     };
 
-    // 3. Dispatch to the appropriate handler logic
+    // 3. Validate protocol version (if present, must be 2)
+    if let Some(v) = inner.version
+        && v != 2
+    {
+        let err = serde_json::json!({ "status": "error", "error": format!("unsupported protocol version: {v}") });
+        let resp_bytes = serde_json::to_vec(&err).unwrap_or_default();
+        return match srv_response.encapsulate(&resp_bytes) {
+            Ok(enc) => (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "message/ohttp-res")],
+                enc,
+            )
+                .into_response(),
+            Err(_) => build_ohttp_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to encapsulate response",
+            ),
+        };
+    }
+
+    // 4. Dispatch to the appropriate handler logic
     let response_json = dispatch_ohttp_action(&state, &inner.action, inner.payload).await;
 
     // 4. Serialize response and encapsulate
@@ -382,9 +412,75 @@ async fn dispatch_ohttp_action(
 
 // ── Validation helpers ──────────────────────────────────────────────
 
+/// Simple non-crypto hash for rate limiting keys.
+/// Not security-critical — just needs to be fast and distribute well.
+fn fxhash(s: &str) -> u64 {
+    let mut h: u64 = 0;
+    for b in s.bytes() {
+        h = h.wrapping_mul(0x100000001b3).wrapping_add(b as u64);
+    }
+    h
+}
+
 /// Validates an exchange code is exactly 6 ASCII digits.
 fn is_valid_exchange_code(code: &str) -> bool {
     code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Timestamp window for purge signature validation (seconds).
+const PURGE_TIMESTAMP_WINDOW: u64 = 60;
+
+/// Verify Ed25519 signature on a purge request.
+///
+/// Signature is over: `public_key_bytes || purge_token_bytes || timestamp_be`.
+/// Same scheme as the WebSocket purge handler (`handler/verify.rs`).
+fn verify_purge_signature(req: &V2PurgeRequest) -> Result<(), String> {
+    let pk_bytes =
+        hex::decode(&req.public_key).map_err(|e| format!("invalid public_key hex: {e}"))?;
+    let sig_bytes =
+        hex::decode(&req.signature).map_err(|e| format!("invalid signature hex: {e}"))?;
+    let token_bytes =
+        hex::decode(&req.purge_token).map_err(|e| format!("invalid purge_token hex: {e}"))?;
+
+    if pk_bytes.len() != 32 {
+        return Err(format!(
+            "public_key must be 32 bytes, got {}",
+            pk_bytes.len()
+        ));
+    }
+    if sig_bytes.len() != 64 {
+        return Err(format!(
+            "signature must be 64 bytes, got {}",
+            sig_bytes.len()
+        ));
+    }
+    if token_bytes.len() != 32 {
+        return Err(format!(
+            "purge_token must be 32 bytes, got {}",
+            token_bytes.len()
+        ));
+    }
+
+    // Timestamp replay window
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if now.abs_diff(req.timestamp) > PURGE_TIMESTAMP_WINDOW {
+        return Err("purge timestamp outside acceptable window".to_string());
+    }
+
+    // Verify Ed25519: sign(pk || token || timestamp)
+    let mut message = Vec::with_capacity(32 + 32 + 8);
+    message.extend_from_slice(&pk_bytes);
+    message.extend_from_slice(&token_bytes);
+    message.extend_from_slice(&req.timestamp.to_be_bytes());
+
+    let public_key =
+        aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, &pk_bytes);
+    public_key
+        .verify(&message, &sig_bytes)
+        .map_err(|_| "invalid purge signature".to_string())
 }
 
 // ── Extracted handler logic (shared with OHTTP dispatcher) ──────────
@@ -471,6 +567,9 @@ fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> serde_json::
     if !state.rate_limiter.consume(&req.recipient_id) {
         return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
     }
+    if let Err(e) = verify_purge_signature(&req) {
+        return serde_json::json!({ "status": "error", "error": e });
+    }
     state.storage.delete_all_for(&req.recipient_id);
     state
         .metrics
@@ -485,7 +584,10 @@ fn handle_exchange_offer_logic(
     state: &HttpApiState,
     req: V2ExchangeOfferRequest,
 ) -> serde_json::Value {
-    if !state.rate_limiter.consume("exchange_offer") {
+    // Rate-limit by truncated payload hash to distinguish clients without
+    // using a global bucket (which would let one client block all others).
+    let key = format!("exchange_offer:{:x}", fxhash(&req.payload));
+    if !state.rate_limiter.consume(&key) {
         return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
     }
     match state
