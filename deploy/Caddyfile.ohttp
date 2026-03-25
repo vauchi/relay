@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Caddy reverse proxy for OHTTP relay
+#
+# Handles TLS termination with automatic Let's Encrypt certificates.
+# Proxies all traffic to the ohttp-relay container.
+# Set RELAY_DOMAIN env var to your domain (e.g., relay.vauchi.app).
+
+{$RELAY_DOMAIN:localhost} {
+	# OHTTP endpoints → ohttp-relay
+	reverse_proxy /v2/ohttp ohttp-relay:8082
+	reverse_proxy /v2/ohttp-key ohttp-relay:8082
+
+	# Health check (ohttp-relay's own health)
+	reverse_proxy /health ohttp-relay:8082
+
+	# Strip server identity headers
+	header -Server
+
+	# Security headers
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+
+	# Request size limit (aligned with ohttp-relay's max_request_bytes)
+	request_body {
+		max_size 64KB
+	}
+
+	# Logging — redact client IPs for privacy
+	log {
+		output stdout
+		format filter {
+			fields {
+				request>remote_ip delete
+				request>remote_port delete
+				request>headers>X-Forwarded-For delete
+			}
+		}
+		level INFO
+	}
+}

@@ -37,37 +37,38 @@ docker-compose up -d
 
 ### Docker Compose with OHTTP (Recommended for Privacy)
 
-The OHTTP deployment uses two containers: an OHTTP relay that accepts external
-traffic and a Vauchi relay that is only reachable over an internal Docker network
-with no internet access.
+The OHTTP deployment uses three containers: Caddy for TLS termination,
+an OHTTP relay that strips client IPs, and a Vauchi relay on an internal-only
+Docker network.
 
 ```
-Client → OHTTP Relay (port 443:8082) → Vauchi Relay (internal only, port 8080)
+Client → Caddy (443, auto-TLS) → OHTTP Relay (8082) → Vauchi Relay (8080, internal only)
 ```
 
 ```bash
+# Set your domain (required for Let's Encrypt)
+export RELAY_DOMAIN=relay.example.com
+
 docker compose -f deploy/docker-compose.ohttp.yml up -d
 
-# Verify the OHTTP relay is listening
-curl -s http://localhost:443/health
-
-# The Vauchi relay has no external ports — it is only reachable
-# from the OHTTP relay via the internal Docker network.
+# Verify health
+curl -s https://$RELAY_DOMAIN/health
 ```
 
-The OHTTP relay decapsulates OHTTP-encrypted requests before forwarding them
-to the Vauchi relay. This means even the relay operator cannot correlate client
-IP addresses with request content.
+Caddy auto-manages TLS certificates via Let's Encrypt. Client IPs are redacted
+from Caddy's logs. The OHTTP relay forwards only opaque encrypted blobs — it
+never sees request content or mailbox tokens.
 
 **Network isolation:**
 
 | Service | Networks | Internet access | External ports |
 |---------|----------|-----------------|----------------|
-| `ohttp-relay` | `external`, `internal` | Yes | 443 → 8082 |
+| `caddy` | `external` | Yes | 80, 443 |
+| `ohttp-relay` | `external`, `internal` | Yes | None |
 | `vauchi-relay` | `internal` | No | None |
 
-See `deploy/docker-compose.ohttp.yml` for the full configuration and all
-environment variables.
+See `deploy/docker-compose.ohttp.yml` and `deploy/Caddyfile.ohttp` for full
+configuration.
 
 ## Production Deployment
 
