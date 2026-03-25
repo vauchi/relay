@@ -9,9 +9,16 @@
 # OHTTP requests and forwards them to the Vauchi relay over an internal
 # Docker network with no internet access.
 #
-# SECURITY: On a single VPS, root can inspect Docker bridge traffic between
-# containers (plain HTTP). MVP limitation — mitigate by deploying on separate
-# hosts or adding inter-container TLS.
+# SECURITY NOTES:
+# - Same-VPS root can inspect Docker bridge traffic (plain HTTP between containers).
+#   Mitigate: deploy on separate hosts or add inter-container TLS.
+# - HTTP auth model: mailbox tokens as implicit bearer auth for send/fetch.
+#   Purge requires Ed25519 signature (same as WebSocket path).
+# - Replay mitigation: OHTTP layer prevents raw transport replay (fresh HPKE
+#   context per request). Application-layer replay produces duplicate blobs
+#   which clients deduplicate by blob_id.
+# - KEY-01: ohttp crate's Server type does not zeroize private keys on drop.
+#   Mitigated by server-side deployment (not user device). Track upstream.
 #
 # Usage:
 #   docker compose -f deploy/docker-compose.ohttp.yml up -d
