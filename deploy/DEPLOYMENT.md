@@ -35,6 +35,40 @@ curl http://localhost:8081/health
 docker-compose up -d
 ```
 
+### Docker Compose with OHTTP (Recommended for Privacy)
+
+The OHTTP deployment uses two containers: an OHTTP relay that accepts external
+traffic and a Vauchi relay that is only reachable over an internal Docker network
+with no internet access.
+
+```
+Client → OHTTP Relay (port 443:8082) → Vauchi Relay (internal only, port 8080)
+```
+
+```bash
+docker compose -f deploy/docker-compose.ohttp.yml up -d
+
+# Verify the OHTTP relay is listening
+curl -s http://localhost:443/health
+
+# The Vauchi relay has no external ports — it is only reachable
+# from the OHTTP relay via the internal Docker network.
+```
+
+The OHTTP relay decapsulates OHTTP-encrypted requests before forwarding them
+to the Vauchi relay. This means even the relay operator cannot correlate client
+IP addresses with request content.
+
+**Network isolation:**
+
+| Service | Networks | Internet access | External ports |
+|---------|----------|-----------------|----------------|
+| `ohttp-relay` | `external`, `internal` | Yes | 443 → 8082 |
+| `vauchi-relay` | `internal` | No | None |
+
+See `deploy/docker-compose.ohttp.yml` for the full configuration and all
+environment variables.
+
 ## Production Deployment
 
 ### 1. TLS Termination

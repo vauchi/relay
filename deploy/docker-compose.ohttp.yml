@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# OHTTP relay deployment — two-container architecture
+#
+# Client → OHTTP Relay (external, port 443:8082) → Vauchi Relay/Gateway (internal only)
+#
+# The OHTTP relay is the only externally accessible service. It decapsulates
+# OHTTP requests and forwards them to the Vauchi relay over an internal
+# Docker network with no internet access.
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.ohttp.yml up -d
+
+services:
+  ohttp-relay:
+    image: registry.gitlab.com/vauchi/ohttp-relay:latest
+    container_name: vauchi-ohttp-relay
+    ports:
+      - "443:8082"
+    environment:
+      - OHTTP_RELAY_LISTEN_ADDR=0.0.0.0:8082
+      - OHTTP_RELAY_GATEWAY_URL=http://vauchi-relay:8080
+      - RUST_LOG=vauchi_ohttp_relay=info
+    networks:
+      - external
+      - internal
+    restart: unless-stopped
+    # No in-container healthcheck — distroless has no shell/curl.
+    # Use external probes (Docker Swarm, Kamal, or orchestrator-level checks).
+
+  vauchi-relay:
+    image: registry.gitlab.com/vauchi/relay:latest
+    container_name: vauchi-relay
+    # No external ports — only reachable via the internal network
+    environment:
+      - RELAY_LISTEN_ADDR=0.0.0.0:8080
+      - RELAY_OHTTP_ENABLED=true
+      - RELAY_OHTTP_KEY_ROTATION_HOURS=24
+      - RELAY_HTTP_API_ENABLED=true
+      - RELAY_MAX_CONNECTIONS=1000
+      - RELAY_MAX_MESSAGE_SIZE=1048576
+      - RELAY_STORAGE_BACKEND=sqlite
+      - RELAY_DATA_DIR=/data
+      - RELAY_BLOB_TTL_SECS=2592000
+      - RELAY_RATE_LIMIT=60
+      - RELAY_CLEANUP_INTERVAL=3600
+      - RUST_LOG=vauchi_relay=info
+    volumes:
+      - relay-data:/data
+    networks:
+      - internal
+    restart: unless-stopped
+    # No in-container healthcheck — distroless has no shell/curl.
+
+networks:
+  internal:
+    driver: bridge
+    internal: true  # No internet access — containers only
+  external:
+    driver: bridge
+
+volumes:
+  relay-data:
+    driver: local
