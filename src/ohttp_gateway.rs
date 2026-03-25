@@ -50,6 +50,10 @@ struct GatewayState {
 /// `ServerResponse` tokens from before the swap).
 pub struct OhttpGateway {
     state: RwLock<Arc<GatewayState>>,
+    /// S10: Previous key retained for grace-period fallback.
+    /// Clients that cached the old key config can still decrypt during the
+    /// window between rotation and their next key fetch.
+    previous_state: RwLock<Option<Arc<GatewayState>>>,
     rotation_interval: Duration,
 }
 
@@ -67,6 +71,7 @@ impl OhttpGateway {
         let inner = Self::generate_state()?;
         Ok(Self {
             state: RwLock::new(Arc::new(inner)),
+            previous_state: RwLock::new(None),
             rotation_interval: Duration::from_secs(hours * 3600),
         })
     }
@@ -80,22 +85,40 @@ impl OhttpGateway {
     ///
     /// Returns the plaintext request bytes and a `ServerResponse` token that
     /// must be used to encrypt the corresponding response.
+    ///
+    /// S10: On failure with the current key, retries with the previous key
+    /// (if available). This provides a grace period after key rotation for
+    /// clients that cached the old key config.
     pub fn decapsulate(
         &self,
         encrypted: &[u8],
     ) -> Result<(Vec<u8>, ohttp::ServerResponse), OhttpGatewayError> {
         let state = self.state.read().clone();
-        let (plaintext, srv_response) = state.server.decapsulate(encrypted)?;
-        Ok((plaintext, srv_response))
+        match state.server.decapsulate(encrypted) {
+            Ok((plaintext, srv_response)) => Ok((plaintext, srv_response)),
+            Err(current_err) => {
+                // S10: Try previous key before giving up
+                if let Some(prev) = self.previous_state.read().as_ref()
+                    && let Ok((plaintext, srv_response)) = prev.server.decapsulate(encrypted)
+                {
+                    info!("OHTTP request decapsulated with previous key (client has stale config)");
+                    return Ok((plaintext, srv_response));
+                }
+                Err(current_err.into())
+            }
+        }
     }
 
     /// Rotate the keypair. Generates a new key and atomically swaps it in.
-    /// In-flight requests using the old key continue to work (they hold
-    /// their own `ServerResponse` tokens).
+    ///
+    /// S10: The previous key is retained for grace-period fallback.
+    /// Clients with a stale key config will succeed via `decapsulate()`
+    /// fallback until the next rotation replaces it.
     pub fn rotate(&self) -> Result<(), OhttpGatewayError> {
-        let new_state = Self::generate_state()?;
-        *self.state.write() = Arc::new(new_state);
-        info!("OHTTP gateway key rotated");
+        let new_state = Arc::new(Self::generate_state()?);
+        let old_state = std::mem::replace(&mut *self.state.write(), new_state);
+        *self.previous_state.write() = Some(old_state);
+        info!("OHTTP gateway key rotated (previous key retained for fallback)");
         Ok(())
     }
 
@@ -223,24 +246,45 @@ mod tests {
     }
 
     #[test]
-    fn test_old_key_requests_fail_after_rotation() {
+    fn test_old_key_requests_succeed_via_fallback() {
+        // S10: After one rotation, old-key requests should succeed via fallback.
         let gw = OhttpGateway::new().expect("gateway construction must succeed");
 
-        // Encrypt with the current key
         let client = ClientRequest::from_encoded_config(&gw.encoded_key_config())
             .expect("client must accept config");
         let (enc_request, _client_response) = client
             .encapsulate(b"before rotation")
             .expect("encapsulation must succeed");
 
-        // Rotate
         gw.rotate().expect("rotation must succeed");
 
-        // Request encrypted with old key should fail to decapsulate
+        // Request encrypted with previous key succeeds via fallback
+        let (plaintext, _srv_response) = gw
+            .decapsulate(&enc_request)
+            .expect("previous-key request must succeed via S10 fallback");
+        assert_eq!(plaintext, b"before rotation");
+    }
+
+    #[test]
+    fn test_two_rotations_evicts_oldest_key() {
+        // S10: Only one previous key is retained. After two rotations,
+        // the original key is evicted.
+        let gw = OhttpGateway::new().expect("gateway construction must succeed");
+
+        let client = ClientRequest::from_encoded_config(&gw.encoded_key_config())
+            .expect("client must accept config");
+        let (enc_request, _) = client
+            .encapsulate(b"very old")
+            .expect("encapsulation must succeed");
+
+        gw.rotate().expect("first rotation");
+        gw.rotate().expect("second rotation");
+
+        // Original key is now evicted — decapsulation must fail
         let result = gw.decapsulate(&enc_request);
         assert!(
             result.is_err(),
-            "request encrypted with old key must fail after rotation"
+            "request encrypted with evicted key (2 rotations ago) must fail"
         );
     }
 

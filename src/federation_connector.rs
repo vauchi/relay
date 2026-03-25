@@ -108,8 +108,10 @@ async fn try_connect_to_peer(
         )
         .await
     } else {
-        // Non-TLS path: still need SSRF validation after DNS resolution.
-        // Extract host/port and validate resolved IPs before connecting.
+        // Non-TLS path: explicit DNS resolution + SSRF validation (prevents
+        // DNS rebinding). S15: Connect to the validated SocketAddr, not the
+        // URL string — avoids a second DNS resolution that could return a
+        // different (private) IP.
         let stripped = federation_url
             .strip_prefix("ws://")
             .ok_or_else(|| "Non-TLS federation requires ws:// scheme".to_string())?;
@@ -120,13 +122,19 @@ async fn try_connect_to_peer(
         } else {
             (authority.to_string(), 80u16)
         };
-        crate::url_validation::resolve_and_validate(&host, port)
+        let validated_addr = crate::url_validation::resolve_and_validate(&host, port)
             .await
             .map_err(|e| format!("SSRF: {}", e))?;
 
-        let (ws_stream, _) = tokio_tungstenite::connect_async(&federation_url)
+        // TCP connect to validated address (no re-resolution)
+        let tcp_stream = tokio::net::TcpStream::connect(validated_addr)
             .await
-            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
+            .map_err(|e| format!("TCP connect failed: {}", e))?;
+
+        // WebSocket upgrade over validated TCP stream
+        let (ws_stream, _) = tokio_tungstenite::client_async(&federation_url, tcp_stream)
+            .await
+            .map_err(|e| format!("WebSocket upgrade failed: {}", e))?;
         handle_peer_session(
             ws_stream,
             own_relay_id,

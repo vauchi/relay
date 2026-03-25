@@ -243,14 +243,28 @@ async fn exchange_complete_handler(
 ///
 /// Clients fetch this once and use it to encapsulate OHTTP requests.
 /// Content-type: `application/ohttp-keys` (RFC 9458 §3.1).
+///
+/// S13: Includes a `Key-Fingerprint` header (hex-encoded SHA-256 of the
+/// key config bytes) so clients can pin the expected fingerprint and detect
+/// MitM substitution of the OHTTP key config.
 async fn ohttp_key_handler(State(state): State<HttpApiState>) -> axum::response::Response {
     let Some(gw) = &state.ohttp_gateway else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let bytes = gw.encoded_key_config();
+    let fingerprint = {
+        let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, &bytes);
+        hex::encode(digest.as_ref())
+    };
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/ohttp-keys")],
+        [
+            (header::CONTENT_TYPE, "application/ohttp-keys".to_string()),
+            (
+                header::HeaderName::from_static("key-fingerprint"),
+                fingerprint,
+            ),
+        ],
         bytes,
     )
         .into_response()
