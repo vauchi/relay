@@ -89,11 +89,6 @@ pub struct OhttpInnerRequest {
     pub payload: serde_json::Value,
 }
 
-// Note: Handler functions return `serde_json::Value` directly rather than
-// typed response structs, because each endpoint has a different response shape
-// (blob_id, blobs, acknowledged, registered). The wire format is defined by
-// the `serde_json::json!()` calls in each `handle_*_logic` function.
-
 // ── Router ──────────────────────────────────────────────────────────
 
 /// Creates the v2 HTTP API router.
