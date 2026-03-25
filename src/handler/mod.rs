@@ -10,7 +10,7 @@ mod connection;
 mod messages;
 pub(crate) mod nonce;
 mod types;
-mod verify;
+pub(crate) mod verify;
 
 // Re-export public API used by main.rs and other crate modules.
 pub use connection::handle_connection;

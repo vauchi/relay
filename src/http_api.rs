@@ -412,14 +412,14 @@ async fn dispatch_ohttp_action(
 
 // ── Validation helpers ──────────────────────────────────────────────
 
-/// Simple non-crypto hash for rate limiting keys.
-/// Not security-critical — just needs to be fast and distribute well.
-fn fxhash(s: &str) -> u64 {
-    let mut h: u64 = 0;
-    for b in s.bytes() {
-        h = h.wrapping_mul(0x100000001b3).wrapping_add(b as u64);
-    }
-    h
+/// Randomized hash for rate limiting keys. Uses SipHash with per-process
+/// random seed — collision-resistant against targeted attacks.
+fn rate_limit_hash(s: &str) -> u64 {
+    use std::hash::BuildHasher;
+    use std::sync::LazyLock;
+    static HASHER_FACTORY: LazyLock<std::collections::hash_map::RandomState> =
+        LazyLock::new(std::collections::hash_map::RandomState::new);
+    HASHER_FACTORY.hash_one(s)
 }
 
 /// Validates an exchange code is exactly 6 ASCII digits.
@@ -427,13 +427,10 @@ fn is_valid_exchange_code(code: &str) -> bool {
     code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// Timestamp window for purge signature validation (seconds).
-const PURGE_TIMESTAMP_WINDOW: u64 = 60;
-
-/// Verify Ed25519 signature on a purge request.
+/// Verify Ed25519 signature on a v2 purge request.
 ///
-/// Signature is over: `public_key_bytes || purge_token_bytes || timestamp_be`.
-/// Same scheme as the WebSocket purge handler (`handler/verify.rs`).
+/// Delegates to the shared `verify_purge_ed25519` in `handler/verify.rs`
+/// (same implementation used by the WebSocket purge handler).
 fn verify_purge_signature(req: &V2PurgeRequest) -> Result<(), String> {
     let pk_bytes =
         hex::decode(&req.public_key).map_err(|e| format!("invalid public_key hex: {e}"))?;
@@ -442,45 +439,7 @@ fn verify_purge_signature(req: &V2PurgeRequest) -> Result<(), String> {
     let token_bytes =
         hex::decode(&req.purge_token).map_err(|e| format!("invalid purge_token hex: {e}"))?;
 
-    if pk_bytes.len() != 32 {
-        return Err(format!(
-            "public_key must be 32 bytes, got {}",
-            pk_bytes.len()
-        ));
-    }
-    if sig_bytes.len() != 64 {
-        return Err(format!(
-            "signature must be 64 bytes, got {}",
-            sig_bytes.len()
-        ));
-    }
-    if token_bytes.len() != 32 {
-        return Err(format!(
-            "purge_token must be 32 bytes, got {}",
-            token_bytes.len()
-        ));
-    }
-
-    // Timestamp replay window
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    if now.abs_diff(req.timestamp) > PURGE_TIMESTAMP_WINDOW {
-        return Err("purge timestamp outside acceptable window".to_string());
-    }
-
-    // Verify Ed25519: sign(pk || token || timestamp)
-    let mut message = Vec::with_capacity(32 + 32 + 8);
-    message.extend_from_slice(&pk_bytes);
-    message.extend_from_slice(&token_bytes);
-    message.extend_from_slice(&req.timestamp.to_be_bytes());
-
-    let public_key =
-        aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, &pk_bytes);
-    public_key
-        .verify(&message, &sig_bytes)
-        .map_err(|_| "invalid purge signature".to_string())
+    crate::handler::verify::verify_purge_ed25519(&pk_bytes, &token_bytes, &sig_bytes, req.timestamp)
 }
 
 // ── Extracted handler logic (shared with OHTTP dispatcher) ──────────
@@ -564,11 +523,13 @@ fn handle_register_logic(req: V2RegisterRequest) -> serde_json::Value {
 }
 
 fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> serde_json::Value {
-    if !state.rate_limiter.consume(&req.recipient_id) {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
-    }
+    // Verify signature BEFORE rate limiting — prevents unauthenticated
+    // attackers from exhausting the rate limit for legitimate users.
     if let Err(e) = verify_purge_signature(&req) {
         return serde_json::json!({ "status": "error", "error": e });
+    }
+    if !state.rate_limiter.consume(&req.recipient_id) {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
     }
     state.storage.delete_all_for(&req.recipient_id);
     state
@@ -586,7 +547,7 @@ fn handle_exchange_offer_logic(
 ) -> serde_json::Value {
     // Rate-limit by truncated payload hash to distinguish clients without
     // using a global bucket (which would let one client block all others).
-    let key = format!("exchange_offer:{:x}", fxhash(&req.payload));
+    let key = format!("exchange_offer:{:x}", rate_limit_hash(&req.payload));
     if !state.rate_limiter.consume(&key) {
         return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
     }

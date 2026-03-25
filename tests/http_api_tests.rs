@@ -297,8 +297,12 @@ async fn test_v2_purge_rejects_missing_signature() {
         &serde_json::json!({ "recipient_id": "d".repeat(64) }),
     )
     .await;
-    // axum returns 422 for missing required fields in JSON
-    assert_ne!(resp.status(), StatusCode::OK);
+    // axum returns 422 Unprocessable Entity for missing required fields
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "missing signature fields should return 422"
+    );
 }
 
 #[tokio::test]
@@ -323,6 +327,59 @@ async fn test_v2_purge_rejects_bad_signature() {
     assert!(
         body["error"].as_str().unwrap().contains("signature"),
         "error should mention signature"
+    );
+}
+
+#[tokio::test]
+async fn test_v2_purge_rejects_expired_timestamp() {
+    use aws_lc_rs::rand::SystemRandom;
+    use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
+
+    let app = create_v2_router(create_test_state());
+
+    // Generate valid key pair but use an expired timestamp (2 minutes ago)
+    let rng = SystemRandom::new();
+    let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+
+    let pk_bytes = key_pair.public_key().as_ref();
+    let pk_hex: String = pk_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+    let purge_token = [0xABu8; 32];
+    let token_hex: String = purge_token.iter().map(|b| format!("{:02x}", b)).collect();
+
+    let expired_timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        - 120; // 2 minutes ago — outside 60s window
+
+    let mut message = Vec::with_capacity(72);
+    message.extend_from_slice(pk_bytes);
+    message.extend_from_slice(&purge_token);
+    message.extend_from_slice(&expired_timestamp.to_be_bytes());
+    let sig = key_pair.sign(&message);
+    let sig_hex: String = sig.as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+
+    let resp = post_json(
+        &app,
+        "/v2/purge",
+        &serde_json::json!({
+            "recipient_id": "d".repeat(64),
+            "public_key": pk_hex,
+            "purge_token": token_hex,
+            "signature": sig_hex,
+            "timestamp": expired_timestamp,
+        }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"], "error");
+    assert!(
+        body["error"].as_str().unwrap().contains("timestamp"),
+        "error should mention timestamp, got: {}",
+        body["error"]
     );
 }
 

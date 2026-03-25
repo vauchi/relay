@@ -7,7 +7,55 @@
 use super::nonce::{NonceTracker, decode_hex};
 
 /// Maximum allowed clock skew between client and relay (±60 seconds).
-pub(super) const TIMESTAMP_WINDOW: u64 = 60;
+pub(crate) const TIMESTAMP_WINDOW: u64 = 60;
+
+/// Verify Ed25519 signature over `pk || token || timestamp_be`.
+///
+/// Shared by WebSocket purge handler and HTTP v2 purge endpoint.
+pub(crate) fn verify_purge_ed25519(
+    pk_bytes: &[u8],
+    token_bytes: &[u8],
+    sig_bytes: &[u8],
+    timestamp: u64,
+) -> Result<(), String> {
+    if pk_bytes.len() != 32 {
+        return Err(format!(
+            "public_key must be 32 bytes, got {}",
+            pk_bytes.len()
+        ));
+    }
+    if sig_bytes.len() != 64 {
+        return Err(format!(
+            "signature must be 64 bytes, got {}",
+            sig_bytes.len()
+        ));
+    }
+    if token_bytes.len() != 32 {
+        return Err(format!(
+            "purge_token must be 32 bytes, got {}",
+            token_bytes.len()
+        ));
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if now.abs_diff(timestamp) > TIMESTAMP_WINDOW {
+        return Err("purge timestamp outside acceptable window".to_string());
+    }
+
+    let mut message = Vec::with_capacity(72);
+    message.extend_from_slice(pk_bytes);
+    message.extend_from_slice(token_bytes);
+    message.extend_from_slice(&timestamp.to_be_bytes());
+
+    let public_key =
+        aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, pk_bytes);
+    public_key
+        .verify(&message, sig_bytes)
+        .map_err(|_| "invalid purge signature".to_string())
+}
 
 /// Verifies an authenticated handshake using Ed25519 signature verification.
 ///
@@ -216,39 +264,6 @@ impl PurgeVerify for protocol::PurgeRequest {
         let sig_bytes = hex::decode(sig_hex).map_err(|e| e.to_string())?;
         let token_bytes = hex::decode(token_hex).map_err(|e| e.to_string())?;
 
-        if pk_bytes.len() != 32 {
-            return Err("public key must be 32 bytes".to_string());
-        }
-
-        // R-M5: Validate purge token is exactly 32 bytes
-        if token_bytes.len() != 32 {
-            return Err(format!(
-                "purge token must be 32 bytes, got {}",
-                token_bytes.len()
-            ));
-        }
-
-        // R-C2: Check timestamp is within acceptable window to prevent replay
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        if now.abs_diff(timestamp) > TIMESTAMP_WINDOW {
-            return Err(format!(
-                "purge request timestamp outside window: now={}, timestamp={}, window={}",
-                now, timestamp, TIMESTAMP_WINDOW
-            ));
-        }
-
-        let mut message = Vec::with_capacity(32 + 32 + 8);
-        message.extend_from_slice(&pk_bytes);
-        message.extend_from_slice(&token_bytes);
-        message.extend_from_slice(&timestamp.to_be_bytes());
-
-        let public_key =
-            aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, &pk_bytes);
-        public_key
-            .verify(&message, &sig_bytes)
-            .map_err(|_| "invalid signature".to_string())
+        verify_purge_ed25519(&pk_bytes, &token_bytes, &sig_bytes, timestamp)
     }
 }
