@@ -599,6 +599,12 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     warn!("[{}] Rate limited", session);
                     deps.metrics.rate_limited.inc();
                     deps.metrics.messages_rejected.inc();
+                    // Notify client instead of silent drop (G8 soft gate)
+                    let notice = serde_json::json!({
+                        "type": "rate_limit_exceeded",
+                        "retry_after_secs": 10
+                    });
+                    let _ = write.send(Message::Text(notice.to_string())).await;
                     continue;
                 }
 

@@ -101,12 +101,20 @@ async fn health_handler() -> impl IntoResponse {
 }
 
 /// Map a `*_logic` result to an HTTP response with appropriate status code.
-fn logic_response(result: serde_json::Value) -> (StatusCode, Json<serde_json::Value>) {
+/// Rate-limited responses include a `Retry-After` header (RFC 6585 §4).
+fn logic_response(
+    result: serde_json::Value,
+) -> (
+    StatusCode,
+    [(axum::http::header::HeaderName, &'static str); 1],
+    Json<serde_json::Value>,
+) {
+    let is_rate_limited = result["error"]
+        .as_str()
+        .is_some_and(|e| e.contains("quota exceeded") || e.contains("rate limit"));
+
     let status = if result["status"] == "error" {
-        if result["error"]
-            .as_str()
-            .is_some_and(|e| e.contains("quota exceeded") || e.contains("rate limit"))
-        {
+        if is_rate_limited {
             StatusCode::TOO_MANY_REQUESTS
         } else {
             StatusCode::BAD_REQUEST
@@ -114,7 +122,12 @@ fn logic_response(result: serde_json::Value) -> (StatusCode, Json<serde_json::Va
     } else {
         StatusCode::OK
     };
-    (status, Json(result))
+
+    // Retry-After: seconds until the token bucket refills (only meaningful on 429)
+    let retry_after = if is_rate_limited { "10" } else { "" };
+    let headers = [(axum::http::header::RETRY_AFTER, retry_after)];
+
+    (status, headers, Json(result))
 }
 
 /// Store an encrypted update for a recipient.
