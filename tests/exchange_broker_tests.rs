@@ -129,19 +129,17 @@ fn test_cleanup_removes_expired() {
 
     broker.create_offer("expired-1".to_string(), None).unwrap();
     broker.create_offer("expired-2".to_string(), None).unwrap();
-
-    // Create one with valid TTL that won't expire
-    let long_lived_broker = ExchangeBroker::new(100, 300);
-    long_lived_broker
-        .create_offer("alive".to_string(), None)
+    // Create one with an explicit valid TTL that won't expire (same broker).
+    broker
+        .create_offer("alive".to_string(), Some(MIN_EXCHANGE_TTL_SECS))
         .unwrap();
 
-    assert_eq!(broker.offer_count(), 2);
+    assert_eq!(broker.offer_count(), 3);
 
     let removed = broker.cleanup_expired();
 
     assert_eq!(removed, 2, "should remove 2 expired offers");
-    assert_eq!(broker.offer_count(), 0);
+    assert_eq!(broker.offer_count(), 1, "1 active offer should remain");
 }
 
 #[test]
@@ -230,6 +228,18 @@ fn test_s5_ttl_above_maximum_rejected() {
     let err = broker
         .create_offer("payload".to_string(), Some(MAX_EXCHANGE_TTL_SECS + 1))
         .expect_err("TTL above maximum must be rejected");
+
+    assert_eq!(err, ExchangeError::InvalidTtl);
+}
+
+#[test]
+fn test_s5_ttl_u64_max_rejected() {
+    let broker = ExchangeBroker::new(100, 300);
+
+    // Ensures validation catches u64::MAX before Duration::from_secs overflow
+    let err = broker
+        .create_offer("payload".to_string(), Some(u64::MAX))
+        .expect_err("u64::MAX TTL must be rejected");
 
     assert_eq!(err, ExchangeError::InvalidTtl);
 }

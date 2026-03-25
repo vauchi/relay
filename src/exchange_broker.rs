@@ -115,6 +115,10 @@ impl fmt::Display for ExchangeError {
 impl ExchangeBroker {
     /// Create a new broker with the given capacity and default TTL.
     ///
+    /// `default_ttl_secs` is **not** validated — operators control this value and
+    /// tests use TTL=0 for immediate-expiration scenarios.  Per-offer TTL overrides
+    /// are validated against [`MIN_EXCHANGE_TTL_SECS`]–[`MAX_EXCHANGE_TTL_SECS`].
+    ///
     /// # Panics
     ///
     /// Panics if `max_offers` exceeds `MAX_OFFERS_CEILING` (50% of code space).

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
@@ -125,6 +125,10 @@ pub struct OhttpInnerRequest {
 // ── Router ──────────────────────────────────────────────────────────
 
 /// Creates the v2 HTTP API router.
+///
+/// Applies a 128 KiB body size limit to all endpoints. This is a transport-layer
+/// defense against memory exhaustion — the broker enforces tighter per-field limits
+/// (e.g., 64 KiB for exchange payloads).
 pub fn create_v2_router(state: HttpApiState) -> Router {
     Router::new()
         .route("/v2/health", get(health_handler))
@@ -138,6 +142,7 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .route("/v2/exchange/complete", post(exchange_complete_handler))
         .route("/v2/ohttp-key", get(ohttp_key_handler))
         .route("/v2/ohttp", post(ohttp_handler))
+        .layer(DefaultBodyLimit::max(128 * 1024))
         .with_state(state)
 }
 
