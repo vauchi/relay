@@ -380,6 +380,13 @@ async fn dispatch_ohttp_action(
     }
 }
 
+// ── Validation helpers ──────────────────────────────────────────────
+
+/// Validates an exchange code is exactly 6 ASCII digits.
+fn is_valid_exchange_code(code: &str) -> bool {
+    code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())
+}
+
 // ── Extracted handler logic (shared with OHTTP dispatcher) ──────────
 
 fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> serde_json::Value {
@@ -478,6 +485,9 @@ fn handle_exchange_offer_logic(
     state: &HttpApiState,
     req: V2ExchangeOfferRequest,
 ) -> serde_json::Value {
+    if !state.rate_limiter.consume("exchange_offer") {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
     match state
         .exchange_broker
         .create_offer(req.payload, req.expires_secs)
@@ -491,6 +501,9 @@ fn handle_exchange_claim_logic(
     state: &HttpApiState,
     req: V2ExchangeClaimRequest,
 ) -> serde_json::Value {
+    if !is_valid_exchange_code(&req.code) {
+        return serde_json::json!({ "status": "error", "error": "code must be exactly 6 digits" });
+    }
     if !state
         .rate_limiter
         .consume(&format!("exchange:{}", req.code))
@@ -507,6 +520,9 @@ fn handle_exchange_complete_logic(
     state: &HttpApiState,
     req: V2ExchangeCompleteRequest,
 ) -> serde_json::Value {
+    if !is_valid_exchange_code(&req.code) {
+        return serde_json::json!({ "status": "error", "error": "code must be exactly 6 digits" });
+    }
     if !state
         .rate_limiter
         .consume(&format!("exchange:{}", req.code))

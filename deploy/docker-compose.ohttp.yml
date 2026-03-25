@@ -9,6 +9,10 @@
 # OHTTP requests and forwards them to the Vauchi relay over an internal
 # Docker network with no internet access.
 #
+# SECURITY: On a single VPS, root can inspect Docker bridge traffic between
+# containers (plain HTTP). MVP limitation — mitigate by deploying on separate
+# hosts or adding inter-container TLS.
+#
 # Usage:
 #   docker compose -f deploy/docker-compose.ohttp.yml up -d
 
