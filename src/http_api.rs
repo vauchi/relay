@@ -21,6 +21,7 @@ use base64::Engine;
 use serde::Deserialize;
 
 use crate::exchange_broker::ExchangeBroker;
+use crate::handler::NonceTracker;
 use crate::metrics::RelayMetrics;
 use crate::ohttp_gateway::OhttpGateway;
 use crate::rate_limit::RateLimiter;
@@ -44,6 +45,10 @@ pub struct HttpApiState {
     pub ohttp_gateway: Option<Arc<OhttpGateway>>,
     /// Exchange broker for short-code mediated contact exchange.
     pub exchange_broker: Arc<ExchangeBroker>,
+    /// Nonce tracker for purge replay protection (shared with WebSocket handler).
+    pub nonce_tracker: Arc<NonceTracker>,
+    /// Separate rate limiter for OHTTP-routed exchange requests (higher capacity).
+    pub ohttp_exchange_rate_limiter: Arc<RateLimiter>,
     // TODO: recovery_storage will be added when /v2/recovery endpoint is implemented
 }
 
@@ -115,8 +120,7 @@ pub struct V2ExchangeCompleteRequest {
 #[derive(Debug, Deserialize)]
 pub struct OhttpInnerRequest {
     /// Protocol version — must be 2. Prevents version confusion if v3 is added.
-    #[serde(default)]
-    pub version: Option<u8>,
+    pub version: u8,
     pub action: String,
     #[serde(flatten)]
     pub payload: serde_json::Value,
@@ -150,10 +154,7 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
 
 /// Health check — returns 200 with JSON status.
 async fn health_handler() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "status": "ok", "protocol": "v2" })),
-    )
+    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
 }
 
 /// Map a `*_logic` result to an HTTP response with appropriate status code.
@@ -295,13 +296,13 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
         }
     };
 
-    // 3. Validate protocol version (if present, must be 2)
-    if let Some(v) = inner.version
-        && v != 2
-    {
+    // 3. Validate protocol version (must be 2)
+    if inner.version != 2 {
+        let v = inner.version;
         let err = serde_json::json!({ "status": "error", "error": format!("unsupported protocol version: {v}") });
         let resp_bytes = serde_json::to_vec(&err).unwrap_or_default();
-        return match srv_response.encapsulate(&resp_bytes) {
+        let padded_bytes = crate::padding::pad(&resp_bytes);
+        return match srv_response.encapsulate(&padded_bytes) {
             Ok(enc) => (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, "message/ohttp-res")],
@@ -318,9 +319,11 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
     // 4. Dispatch to the appropriate handler logic
     let response_json = dispatch_ohttp_action(&state, &inner.action, inner.payload).await;
 
-    // 4. Serialize response and encapsulate
+    // 5. Serialize response, pad to fixed bucket size, and encapsulate.
+    // OHTTP-08: Padding prevents action-type leakage via response size.
     let resp_bytes = serde_json::to_vec(&response_json).unwrap_or_default();
-    match srv_response.encapsulate(&resp_bytes) {
+    let padded_bytes = crate::padding::pad(&resp_bytes);
+    match srv_response.encapsulate(&padded_bytes) {
         Ok(enc) => (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "message/ohttp-res")],
@@ -403,7 +406,14 @@ async fn dispatch_ohttp_action(
                     return serde_json::json!({ "status": "error", "error": format!("bad exchange_offer payload: {e}") });
                 }
             };
-            handle_exchange_offer_logic(state, req)
+            // OHTTP-05: Use separate OHTTP rate limiter for exchange actions
+            if !state
+                .ohttp_exchange_rate_limiter
+                .consume("ohttp_exchange_offer")
+            {
+                return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+            }
+            handle_ohttp_exchange_offer_logic(state, req)
         }
         "exchange_claim" => {
             let req: V2ExchangeClaimRequest = match serde_json::from_value(payload) {
@@ -412,7 +422,14 @@ async fn dispatch_ohttp_action(
                     return serde_json::json!({ "status": "error", "error": format!("bad exchange_claim payload: {e}") });
                 }
             };
-            handle_exchange_claim_logic(state, req)
+            // OHTTP-05: Use separate OHTTP rate limiter for exchange actions
+            if !state
+                .ohttp_exchange_rate_limiter
+                .consume("ohttp_exchange_claim")
+            {
+                return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+            }
+            handle_ohttp_exchange_claim_logic(state, req)
         }
         "exchange_complete" => {
             let req: V2ExchangeCompleteRequest = match serde_json::from_value(payload) {
@@ -421,7 +438,14 @@ async fn dispatch_ohttp_action(
                     return serde_json::json!({ "status": "error", "error": format!("bad exchange_complete payload: {e}") });
                 }
             };
-            handle_exchange_complete_logic(state, req)
+            // OHTTP-05: Use separate OHTTP rate limiter for exchange actions
+            if !state
+                .ohttp_exchange_rate_limiter
+                .consume("ohttp_exchange_claim")
+            {
+                return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+            }
+            handle_ohttp_exchange_complete_logic(state, req)
         }
         unknown => {
             serde_json::json!({ "status": "error", "error": format!("unknown action: {unknown}") })
@@ -446,11 +470,14 @@ fn is_valid_exchange_code(code: &str) -> bool {
     code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// Verify Ed25519 signature on a v2 purge request.
+/// Verify Ed25519 signature on a v2 purge request and check nonce replay.
 ///
 /// Delegates to the shared `verify_purge_ed25519` in `handler/verify.rs`
 /// (same implementation used by the WebSocket purge handler).
-fn verify_purge_signature(req: &V2PurgeRequest) -> Result<(), String> {
+fn verify_purge_signature(
+    req: &V2PurgeRequest,
+    nonce_tracker: &NonceTracker,
+) -> Result<(), String> {
     let pk_bytes =
         hex::decode(&req.public_key).map_err(|e| format!("invalid public_key hex: {e}"))?;
     let sig_bytes =
@@ -458,7 +485,19 @@ fn verify_purge_signature(req: &V2PurgeRequest) -> Result<(), String> {
     let token_bytes =
         hex::decode(&req.purge_token).map_err(|e| format!("invalid purge_token hex: {e}"))?;
 
-    crate::handler::verify::verify_purge_ed25519(&pk_bytes, &token_bytes, &sig_bytes, req.timestamp)
+    crate::handler::verify::verify_purge_ed25519(
+        &pk_bytes,
+        &token_bytes,
+        &sig_bytes,
+        req.timestamp,
+    )?;
+
+    // OHTTP-04: Replay protection — reject if purge_token was already used
+    if !nonce_tracker.check_and_insert(&token_bytes) {
+        return Err("purge token replay detected".to_string());
+    }
+
+    Ok(())
 }
 
 // ── Extracted handler logic (shared with OHTTP dispatcher) ──────────
@@ -542,9 +581,9 @@ fn handle_register_logic(req: V2RegisterRequest) -> serde_json::Value {
 }
 
 fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> serde_json::Value {
-    // Verify signature BEFORE rate limiting — prevents unauthenticated
-    // attackers from exhausting the rate limit for legitimate users.
-    if let Err(e) = verify_purge_signature(&req) {
+    // Verify signature + nonce replay BEFORE rate limiting — prevents
+    // unauthenticated attackers from exhausting the rate limit for legitimate users.
+    if let Err(e) = verify_purge_signature(&req, &state.nonce_tracker) {
         return serde_json::json!({ "status": "error", "error": e });
     }
     if !state.rate_limiter.consume(&req.recipient_id) {
@@ -618,6 +657,63 @@ fn handle_exchange_complete_logic(
     // S6: Global rate limit on complete (same bucket as claim — both guess codes).
     if !state.rate_limiter.consume("exchange_claim_global") {
         return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
+    if !state
+        .rate_limiter
+        .consume(&format!("exchange:{}", req.code))
+    {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
+    match state.exchange_broker.complete_offer(&req.code) {
+        Ok(response) => serde_json::json!({ "status": "ok", "response": response }),
+        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+    }
+}
+
+// ── OHTTP-specific exchange handlers (OHTTP-05) ────────────────────
+//
+// These skip the global rate limiter (already checked by the separate
+// OHTTP exchange rate limiter in dispatch_ohttp_action). Per-code rate
+// limits still apply to prevent brute-force.
+
+fn handle_ohttp_exchange_offer_logic(
+    state: &HttpApiState,
+    req: V2ExchangeOfferRequest,
+) -> serde_json::Value {
+    match state
+        .exchange_broker
+        .create_offer(req.payload, req.expires_secs)
+    {
+        Ok(code) => serde_json::json!({ "status": "ok", "code": code }),
+        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+    }
+}
+
+fn handle_ohttp_exchange_claim_logic(
+    state: &HttpApiState,
+    req: V2ExchangeClaimRequest,
+) -> serde_json::Value {
+    if !is_valid_exchange_code(&req.code) {
+        return serde_json::json!({ "status": "error", "error": "code must be exactly 6 digits" });
+    }
+    if !state
+        .rate_limiter
+        .consume(&format!("exchange:{}", req.code))
+    {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
+    match state.exchange_broker.claim_offer(&req.code, req.response) {
+        Ok(payload) => serde_json::json!({ "status": "ok", "payload": payload }),
+        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+    }
+}
+
+fn handle_ohttp_exchange_complete_logic(
+    state: &HttpApiState,
+    req: V2ExchangeCompleteRequest,
+) -> serde_json::Value {
+    if !is_valid_exchange_code(&req.code) {
+        return serde_json::json!({ "status": "error", "error": "code must be exactly 6 digits" });
     }
     if !state
         .rate_limiter

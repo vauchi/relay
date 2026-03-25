@@ -243,7 +243,7 @@ pub(super) mod protocol {
 
 pub(super) trait PurgeVerify {
     fn is_authenticated(&self) -> bool;
-    fn verify_signature(&self) -> Result<(), String>;
+    fn verify_signature(&self, nonce_tracker: &NonceTracker) -> Result<(), String>;
 }
 
 impl PurgeVerify for protocol::PurgeRequest {
@@ -254,7 +254,7 @@ impl PurgeVerify for protocol::PurgeRequest {
             && self.timestamp.is_some()
     }
 
-    fn verify_signature(&self) -> Result<(), String> {
+    fn verify_signature(&self, nonce_tracker: &NonceTracker) -> Result<(), String> {
         let pk_hex = self.public_key.as_ref().ok_or("missing public_key")?;
         let sig_hex = self.signature.as_ref().ok_or("missing signature")?;
         let token_hex = self.purge_token.as_ref().ok_or("missing purge_token")?;
@@ -264,6 +264,13 @@ impl PurgeVerify for protocol::PurgeRequest {
         let sig_bytes = hex::decode(sig_hex).map_err(|e| e.to_string())?;
         let token_bytes = hex::decode(token_hex).map_err(|e| e.to_string())?;
 
-        verify_purge_ed25519(&pk_bytes, &token_bytes, &sig_bytes, timestamp)
+        verify_purge_ed25519(&pk_bytes, &token_bytes, &sig_bytes, timestamp)?;
+
+        // OHTTP-04: Replay protection — reject if purge_token was already used
+        if !nonce_tracker.check_and_insert(&token_bytes) {
+            return Err("purge token replay detected".to_string());
+        }
+
+        Ok(())
     }
 }

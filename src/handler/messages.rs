@@ -197,7 +197,7 @@ pub(super) fn handle_purge_request(
 
     // Require authenticated purge requests (v2 signature)
     if purge.is_authenticated() {
-        if let Err(e) = purge.verify_signature() {
+        if let Err(e) = purge.verify_signature(&ctx.deps.nonce_tracker) {
             warn!(
                 "[{}] Rejecting purge with invalid signature: {}",
                 ctx.session, e

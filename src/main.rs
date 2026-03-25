@@ -490,6 +490,8 @@ async fn main() {
             },
             ohttp_gateway,
             exchange_broker,
+            nonce_tracker: nonce_tracker.clone(),
+            ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(300)),
         };
 
         http_router = http_router.merge(create_v2_router(api_state));

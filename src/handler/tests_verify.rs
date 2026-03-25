@@ -224,7 +224,8 @@ fn test_purge_request_accepts_valid_signature() {
     };
 
     assert!(purge.is_authenticated());
-    assert!(purge.verify_signature().is_ok());
+    let tracker = NonceTracker::new();
+    assert!(purge.verify_signature(&tracker).is_ok());
 }
 
 #[test]
@@ -257,7 +258,8 @@ fn test_purge_request_rejects_bad_signature() {
     };
 
     assert!(purge.is_authenticated());
-    assert!(purge.verify_signature().is_err());
+    let tracker = NonceTracker::new();
+    assert!(purge.verify_signature(&tracker).is_err());
 }
 
 #[test]

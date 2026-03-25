@@ -13,6 +13,7 @@ use base64::Engine;
 use tower::ServiceExt;
 
 use vauchi_relay::exchange_broker::ExchangeBroker;
+use vauchi_relay::handler::NonceTracker;
 use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::ohttp_gateway::OhttpGateway;
@@ -30,6 +31,8 @@ fn create_test_state() -> HttpApiState {
         },
         ohttp_gateway: None,
         exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
+        nonce_tracker: Arc::new(NonceTracker::new()),
+        ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(300)),
     }
 }
 
@@ -45,6 +48,8 @@ fn create_test_state_with_ohttp() -> HttpApiState {
         },
         ohttp_gateway: Some(Arc::new(gw)),
         exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
+        nonce_tracker: Arc::new(NonceTracker::new()),
+        ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(300)),
     }
 }
 
@@ -88,7 +93,11 @@ async fn test_v2_health_endpoint_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response_json(response).await;
     assert_eq!(body["status"], "ok");
-    assert_eq!(body["protocol"], "v2");
+    // OHTTP-09: protocol field removed to avoid leaking version info
+    assert!(
+        body.get("protocol").is_none(),
+        "health response must not include protocol field"
+    );
 }
 
 // ── Send ──
@@ -446,12 +455,14 @@ fn ohttp_encrypt(
         .expect("encapsulate must succeed")
 }
 
-/// Helper: decrypt the server's OHTTP response.
+/// Helper: decrypt the server's OHTTP response (handles padding from OHTTP-08).
 fn ohttp_decrypt(client_response: ohttp::ClientResponse, enc: &[u8]) -> serde_json::Value {
     let plaintext = client_response
         .decapsulate(enc)
         .expect("decapsulate must succeed");
-    serde_json::from_slice(&plaintext).expect("response must be valid JSON")
+    // OHTTP-08: Response is padded — unpad before parsing JSON
+    let unpadded = vauchi_relay::padding::unpad(&plaintext).expect("padded response must be valid");
+    serde_json::from_slice(&unpadded).expect("response must be valid JSON")
 }
 
 #[tokio::test]
@@ -499,6 +510,7 @@ async fn test_ohttp_gateway_decrypt_and_route_send() {
 
     let recipient_id = "e".repeat(64);
     let inner = serde_json::json!({
+        "version": 2,
         "action": "send",
         "recipient_id": recipient_id,
         "ciphertext": base64::engine::general_purpose::STANDARD.encode(b"ohttp-blob"),
@@ -545,6 +557,7 @@ async fn test_ohttp_gateway_decrypt_and_route_fetch() {
         .unwrap();
 
     let inner = serde_json::json!({
+        "version": 2,
         "action": "fetch",
         "mailbox_tokens": [token],
     });
@@ -705,6 +718,8 @@ async fn test_v2_send_quota_enforced() {
         },
         ohttp_gateway: None,
         exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
+        nonce_tracker: Arc::new(NonceTracker::new()),
+        ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(300)),
     };
     let app = create_v2_router(state);
 
@@ -878,5 +893,180 @@ async fn test_v2_exchange_oversized_payload_rejected() {
         body["error"].as_str().unwrap().contains("too large"),
         "error must mention size, got: {}",
         body["error"]
+    );
+}
+
+// ── OHTTP-01: Mandatory version field ──
+
+#[tokio::test]
+async fn test_ohttp_missing_version_field_rejected() {
+    let app = create_v2_router(create_test_state_with_ohttp());
+    let key_resp = get_ohttp_key(&app).await;
+    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
+        .await
+        .unwrap();
+
+    // Inner request WITHOUT version field — must fail deserialization
+    let inner = serde_json::json!({
+        "action": "send",
+        "recipient_id": "a".repeat(64),
+        "ciphertext": base64::engine::general_purpose::STANDARD.encode(b"data"),
+    });
+    let (enc_req, _client_resp) = ohttp_encrypt(&key_bytes, &inner);
+    let resp = post_ohttp_bytes(&app, enc_req).await;
+
+    // The server should return 200 (OHTTP envelope OK) but inner JSON error
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_ohttp_version_1_rejected() {
+    let app = create_v2_router(create_test_state_with_ohttp());
+    let key_resp = get_ohttp_key(&app).await;
+    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
+        .await
+        .unwrap();
+
+    let inner = serde_json::json!({
+        "version": 1,
+        "action": "send",
+        "recipient_id": "a".repeat(64),
+        "ciphertext": base64::engine::general_purpose::STANDARD.encode(b"data"),
+    });
+    let (enc_req, client_resp) = ohttp_encrypt(&key_bytes, &inner);
+    let resp = post_ohttp_bytes(&app, enc_req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let enc_resp_bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+    let body = ohttp_decrypt(client_resp, &enc_resp_bytes);
+    assert_eq!(body["status"], "error");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported protocol version"),
+        "must reject version 1, got: {}",
+        body["error"]
+    );
+}
+
+#[tokio::test]
+async fn test_ohttp_version_2_accepted() {
+    let state = create_test_state_with_ohttp();
+    let storage = state.storage.clone();
+    let app = create_v2_router(state);
+    let key_resp = get_ohttp_key(&app).await;
+    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
+        .await
+        .unwrap();
+
+    let recipient_id = "b".repeat(64);
+    let inner = serde_json::json!({
+        "version": 2,
+        "action": "send",
+        "recipient_id": recipient_id,
+        "ciphertext": base64::engine::general_purpose::STANDARD.encode(b"v2-data"),
+    });
+    let (enc_req, client_resp) = ohttp_encrypt(&key_bytes, &inner);
+    let resp = post_ohttp_bytes(&app, enc_req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let enc_resp_bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+    let body = ohttp_decrypt(client_resp, &enc_resp_bytes);
+    assert_eq!(body["status"], "ok", "version 2 must be accepted");
+    assert!(body["blob_id"].is_string());
+
+    let blobs = storage.peek(&recipient_id);
+    assert_eq!(blobs.len(), 1);
+    assert_eq!(blobs[0].data, b"v2-data");
+}
+
+// ── OHTTP-04: Purge nonce replay protection ──
+
+#[tokio::test]
+async fn test_v2_purge_replay_rejected() {
+    let state = create_test_state();
+    let storage = state.storage.clone();
+    let app = create_v2_router(state);
+
+    let token = "d".repeat(64);
+    storage.store(&token, StoredBlob::new(b"data1".to_vec()));
+
+    let purge_json = signed_purge_json(&token);
+
+    // First purge succeeds
+    let resp1 = post_json(&app, "/v2/purge", &purge_json).await;
+    assert_eq!(resp1.status(), StatusCode::OK);
+
+    // Replay same purge request — must be rejected
+    let resp2 = post_json(&app, "/v2/purge", &purge_json).await;
+    assert_eq!(resp2.status(), StatusCode::BAD_REQUEST);
+    let body = response_json(resp2).await;
+    assert_eq!(body["status"], "error");
+    assert!(
+        body["error"].as_str().unwrap().contains("replay"),
+        "must mention replay, got: {}",
+        body["error"]
+    );
+}
+
+// ── OHTTP-08: Response padding ──
+
+#[tokio::test]
+async fn test_ohttp_response_is_padded_to_bucket_size() {
+    let app = create_v2_router(create_test_state_with_ohttp());
+    let key_resp = get_ohttp_key(&app).await;
+    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
+        .await
+        .unwrap();
+
+    // Send a simple request and check that the decapsulated response is a valid bucket size
+    let inner = serde_json::json!({
+        "version": 2,
+        "action": "register",
+        "mailbox_tokens": ["token1"],
+    });
+    let (enc_req, client_resp) = ohttp_encrypt(&key_bytes, &inner);
+    let resp = post_ohttp_bytes(&app, enc_req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let enc_resp_bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+    let plaintext = client_resp
+        .decapsulate(&enc_resp_bytes)
+        .expect("decapsulate must succeed");
+
+    // The raw plaintext (before unpadding) must be a valid bucket size
+    assert!(
+        vauchi_relay::padding::is_valid_bucket_size(plaintext.len()),
+        "OHTTP response must be padded to a bucket size, got {} bytes",
+        plaintext.len()
+    );
+
+    // And it must unpad to valid JSON
+    let unpadded = vauchi_relay::padding::unpad(&plaintext).expect("padded response must be valid");
+    let body: serde_json::Value = serde_json::from_slice(&unpadded).unwrap();
+    assert_eq!(body["status"], "ok");
+}
+
+// ── OHTTP-09: No protocol field in health ──
+
+#[tokio::test]
+async fn test_v2_health_no_protocol_field() {
+    let app = create_v2_router(create_test_state());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v2/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    assert_eq!(body["status"], "ok");
+    assert!(
+        body.get("protocol").is_none(),
+        "health must not leak protocol version"
     );
 }
