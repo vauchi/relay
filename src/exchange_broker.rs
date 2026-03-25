@@ -25,6 +25,27 @@ use rand::Rng;
 /// 100 retries gives P(all collide) ≈ 10^-200, effectively zero.
 const MAX_CODE_RETRIES: usize = 100;
 
+/// Total 6-digit code space: 000000–999999.
+const CODE_SPACE: usize = 1_000_000;
+
+/// S8: Maximum allowed `max_offers` — 50% of code space.
+/// Beyond this, collision probability rises sharply and code generation
+/// becomes unreliable even with 100 retries.
+const MAX_OFFERS_CEILING: usize = CODE_SPACE / 2; // 500,000
+
+/// S5: Minimum TTL for exchange offers (30 seconds).
+/// Prevents trivially short-lived offers that waste code space.
+pub const MIN_EXCHANGE_TTL_SECS: u64 = 30;
+
+/// S5: Maximum TTL for exchange offers (1 hour).
+/// Prevents long-lived offers that consume memory indefinitely.
+pub const MAX_EXCHANGE_TTL_SECS: u64 = 3600;
+
+/// S4: Maximum payload size for exchange offers/responses (64 KiB).
+/// Exchange payloads are base64-encoded encrypted contact data — legitimate
+/// payloads are a few hundred bytes. 64 KiB provides generous headroom.
+pub const MAX_EXCHANGE_PAYLOAD_BYTES: usize = 64 * 1024;
+
 /// In-memory broker for short-code mediated exchange offers.
 pub struct ExchangeBroker {
     offers: RwLock<HashMap<String, ExchangeOffer>>,
@@ -63,6 +84,10 @@ pub enum ExchangeError {
     TooManyOffers,
     /// The initiator tried to complete before a responder claimed.
     NotYetClaimed,
+    /// The payload exceeds the maximum allowed size.
+    PayloadTooLarge,
+    /// The requested TTL is outside the allowed range.
+    InvalidTtl,
 }
 
 impl fmt::Display for ExchangeError {
@@ -76,13 +101,32 @@ impl fmt::Display for ExchangeError {
             Self::AlreadyCompleted => write!(f, "already completed"),
             Self::TooManyOffers => write!(f, "too many offers"),
             Self::NotYetClaimed => write!(f, "not yet claimed"),
+            Self::PayloadTooLarge => write!(f, "payload too large"),
+            Self::InvalidTtl => {
+                write!(
+                    f,
+                    "TTL must be between {MIN_EXCHANGE_TTL_SECS} and {MAX_EXCHANGE_TTL_SECS} seconds"
+                )
+            }
         }
     }
 }
 
 impl ExchangeBroker {
     /// Create a new broker with the given capacity and default TTL.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `max_offers` exceeds `MAX_OFFERS_CEILING` (50% of code space).
+    /// This is a startup-time check to prevent misconfiguration.
     pub fn new(max_offers: usize, default_ttl_secs: u64) -> Self {
+        // S8: Validate max_offers at construction time — fail fast on misconfiguration.
+        assert!(
+            max_offers <= MAX_OFFERS_CEILING,
+            "max_offers ({max_offers}) exceeds ceiling ({MAX_OFFERS_CEILING}); \
+             code generation becomes unreliable above 50% of the 6-digit code space"
+        );
+
         Self {
             offers: RwLock::new(HashMap::new()),
             max_offers,
@@ -98,6 +142,18 @@ impl ExchangeBroker {
         payload: String,
         ttl_secs: Option<u64>,
     ) -> Result<String, ExchangeError> {
+        // S4: Reject oversized payloads before acquiring the lock.
+        if payload.len() > MAX_EXCHANGE_PAYLOAD_BYTES {
+            return Err(ExchangeError::PayloadTooLarge);
+        }
+
+        // S5: Validate TTL bounds (when explicitly specified).
+        if let Some(secs) = ttl_secs
+            && !(MIN_EXCHANGE_TTL_SECS..=MAX_EXCHANGE_TTL_SECS).contains(&secs)
+        {
+            return Err(ExchangeError::InvalidTtl);
+        }
+
         let mut offers = self.offers.write();
 
         if offers.len() >= self.max_offers {
@@ -126,6 +182,11 @@ impl ExchangeBroker {
     /// The responder provides their `response` payload which is stored
     /// for the initiator to retrieve via [`complete_offer`].
     pub fn claim_offer(&self, code: &str, response: String) -> Result<String, ExchangeError> {
+        // S4: Reject oversized response payloads before acquiring the lock.
+        if response.len() > MAX_EXCHANGE_PAYLOAD_BYTES {
+            return Err(ExchangeError::PayloadTooLarge);
+        }
+
         let mut offers = self.offers.write();
         let offer = offers.get_mut(code).ok_or(ExchangeError::CodeNotFound)?;
 
@@ -196,6 +257,7 @@ impl ExchangeBroker {
     }
 }
 
+// INLINE_TEST_REQUIRED: tests access private field `default_ttl`
 #[cfg(test)]
 mod tests {
     use super::*;

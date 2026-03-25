@@ -571,6 +571,12 @@ fn handle_exchange_claim_logic(
     if !is_valid_exchange_code(&req.code) {
         return serde_json::json!({ "status": "error", "error": "code must be exactly 6 digits" });
     }
+    // S6: Global rate limit on claim attempts prevents distributed brute-force
+    // across many codes. An attacker trying random codes is throttled globally,
+    // not just per-code.
+    if !state.rate_limiter.consume("exchange_claim_global") {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
     if !state
         .rate_limiter
         .consume(&format!("exchange:{}", req.code))
@@ -589,6 +595,10 @@ fn handle_exchange_complete_logic(
 ) -> serde_json::Value {
     if !is_valid_exchange_code(&req.code) {
         return serde_json::json!({ "status": "error", "error": "code must be exactly 6 digits" });
+    }
+    // S6: Global rate limit on complete (same bucket as claim — both guess codes).
+    if !state.rate_limiter.consume("exchange_claim_global") {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
     }
     if !state
         .rate_limiter

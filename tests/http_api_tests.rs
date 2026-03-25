@@ -832,35 +832,51 @@ async fn test_v2_exchange_complete_flow() {
 }
 
 #[tokio::test]
-async fn test_v2_exchange_expired_code_rejected() {
+async fn test_v2_exchange_invalid_ttl_rejected() {
     let state = create_test_state();
     let app = create_v2_router(state.clone());
 
-    // Create an offer with TTL=0 (immediately expired)
-    let offer_resp = post_json(
+    // S5: TTL=0 is below the minimum and must be rejected
+    let resp = post_json(
         &app,
         "/v2/exchange/offer",
         &serde_json::json!({ "payload": "data", "expires_secs": 0 }),
     )
     .await;
-    let code = response_json(offer_resp).await["code"]
-        .as_str()
-        .unwrap()
-        .to_string();
 
-    // Claim should fail because it's expired
-    let claim_resp = post_json(
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"], "error");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("TTL must be between"),
+        "error must describe TTL bounds, got: {}",
+        body["error"]
+    );
+}
+
+#[tokio::test]
+async fn test_v2_exchange_oversized_payload_rejected() {
+    let state = create_test_state();
+    let app = create_v2_router(state.clone());
+
+    // S4: Payload exceeding 64 KiB must be rejected
+    let huge = "X".repeat(64 * 1024 + 1);
+    let resp = post_json(
         &app,
-        "/v2/exchange/claim",
-        &serde_json::json!({ "code": code, "response": "resp" }),
+        "/v2/exchange/offer",
+        &serde_json::json!({ "payload": huge }),
     )
     .await;
 
-    assert_eq!(claim_resp.status(), StatusCode::BAD_REQUEST);
-    let body = response_json(claim_resp).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = response_json(resp).await;
     assert_eq!(body["status"], "error");
     assert!(
-        body["error"].as_str().unwrap().contains("expired"),
-        "error must mention expiration"
+        body["error"].as_str().unwrap().contains("too large"),
+        "error must mention size, got: {}",
+        body["error"]
     );
 }
