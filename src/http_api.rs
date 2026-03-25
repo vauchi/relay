@@ -545,8 +545,12 @@ fn handle_exchange_offer_logic(
     state: &HttpApiState,
     req: V2ExchangeOfferRequest,
 ) -> serde_json::Value {
-    // Rate-limit by truncated payload hash to distinguish clients without
-    // using a global bucket (which would let one client block all others).
+    // S3: Global rate limit on offer creation prevents a single attacker from
+    // exhausting the code namespace with many distinct payloads.
+    if !state.rate_limiter.consume("exchange_offer_global") {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
+    // Per-payload rate limit to prevent the same offer from being resubmitted.
     let key = format!("exchange_offer:{:x}", rate_limit_hash(&req.payload));
     if !state.rate_limiter.consume(&key) {
         return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });

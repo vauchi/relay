@@ -21,7 +21,9 @@ use parking_lot::RwLock;
 use rand::Rng;
 
 /// Maximum retry attempts when generating a unique 6-digit code.
-const MAX_CODE_RETRIES: usize = 10;
+/// At 10k offers (max_offers default), collision probability per try is ~1%.
+/// 100 retries gives P(all collide) ≈ 10^-200, effectively zero.
+const MAX_CODE_RETRIES: usize = 100;
 
 /// In-memory broker for short-code mediated exchange offers.
 pub struct ExchangeBroker {
@@ -66,8 +68,10 @@ pub enum ExchangeError {
 impl fmt::Display for ExchangeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CodeNotFound => write!(f, "code not found"),
-            Self::CodeExpired => write!(f, "code expired"),
+            // S1: Merge not-found and expired messages to prevent code enumeration.
+            // An attacker cannot distinguish "code doesn't exist" from "code expired",
+            // so they learn nothing about which codes were recently active.
+            Self::CodeNotFound | Self::CodeExpired => write!(f, "invalid or expired code"),
             Self::AlreadyClaimed => write!(f, "already claimed"),
             Self::AlreadyCompleted => write!(f, "already completed"),
             Self::TooManyOffers => write!(f, "too many offers"),
