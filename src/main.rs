@@ -23,14 +23,17 @@ use tracing::{error, info};
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_limit::ConnectionLimiter;
 use vauchi_relay::connection_registry::ConnectionRegistry;
+use vauchi_relay::exchange_broker::ExchangeBroker;
 use vauchi_relay::federation_connector::{self, OffloadManager};
 use vauchi_relay::federation_handler::{self, FederationDeps};
 use vauchi_relay::federation_tls;
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
 use vauchi_relay::handler;
 use vauchi_relay::http::{HttpState, create_router};
+use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key;
+use vauchi_relay::ohttp_gateway::OhttpGateway;
 use vauchi_relay::peer_registry::PeerRegistry;
 use vauchi_relay::peer_registry::gossip;
 use vauchi_relay::rate_limit::RateLimiter;
@@ -431,13 +434,70 @@ async fn main() {
         info!("Consider setting RELAY_METRICS_TOKEN for production use");
     }
 
-    // Start HTTP server for health/metrics
+    // Start HTTP server for health/metrics (+ optional v2 API)
     let http_state = HttpState {
         metrics: metrics.clone(),
         metrics_token,
         noise_pubkey: Some(noise_pubkey_b64),
     };
-    let http_router = create_router(http_state);
+    let mut http_router = create_router(http_state);
+
+    // Conditionally enable v2 HTTP API (REST, OHTTP, exchange broker)
+    if config.http_api.enabled {
+        let ohttp_gateway = if config.http_api.ohttp_enabled {
+            match OhttpGateway::with_rotation_hours(config.http_api.ohttp_key_rotation_hours) {
+                Ok(gw) => {
+                    info!(
+                        "OHTTP gateway enabled (key rotation: {}h)",
+                        config.http_api.ohttp_key_rotation_hours
+                    );
+                    Some(Arc::new(gw))
+                }
+                Err(e) => {
+                    error!("Failed to initialize OHTTP gateway: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let exchange_broker = Arc::new(ExchangeBroker::new(
+            config.http_api.exchange_max_offers,
+            config.http_api.exchange_default_ttl_secs,
+        ));
+
+        // S7: Spawn exchange broker cleanup task
+        let cleanup_exchange = exchange_broker.clone();
+        let exchange_cleanup_interval = config.cleanup_interval();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(exchange_cleanup_interval).await;
+                let removed = cleanup_exchange.cleanup_expired();
+                if removed > 0 {
+                    info!("Cleaned up {} expired exchange offers", removed);
+                }
+            }
+        });
+
+        let api_state = HttpApiState {
+            storage: storage.clone(),
+            rate_limiter: rate_limiter.clone(),
+            metrics: metrics.clone(),
+            quota: V2QuotaLimits {
+                max_blobs: config.storage.max_blobs_per_user,
+                max_bytes: config.storage.max_storage_per_user,
+            },
+            ohttp_gateway,
+            exchange_broker,
+        };
+
+        http_router = http_router.merge(create_v2_router(api_state));
+        info!(
+            "HTTP API v2 enabled (exchange: max_offers={}, ttl={}s)",
+            config.http_api.exchange_max_offers, config.http_api.exchange_default_ttl_secs
+        );
+    }
 
     let http_listener = TcpListener::bind(&http_addr)
         .await

@@ -178,6 +178,33 @@ impl Default for SecurityConfig {
     }
 }
 
+/// HTTP API v2 configuration (REST endpoints, OHTTP, exchange broker).
+#[derive(Debug, Clone)]
+pub struct HttpApiConfig {
+    /// Whether the v2 HTTP API is enabled (adds /v2/* endpoints to the HTTP server).
+    pub enabled: bool,
+    /// Whether the OHTTP gateway is enabled (requires `enabled = true`).
+    pub ohttp_enabled: bool,
+    /// OHTTP key rotation interval in hours.
+    pub ohttp_key_rotation_hours: u64,
+    /// Maximum active exchange offers (must be ≤ 500,000).
+    pub exchange_max_offers: usize,
+    /// Default TTL for exchange offers in seconds (when client doesn't specify).
+    pub exchange_default_ttl_secs: u64,
+}
+
+impl Default for HttpApiConfig {
+    fn default() -> Self {
+        HttpApiConfig {
+            enabled: false,
+            ohttp_enabled: false,
+            ohttp_key_rotation_hours: 24,
+            exchange_max_offers: 10_000,
+            exchange_default_ttl_secs: 300, // 5 minutes
+        }
+    }
+}
+
 /// Relay server configuration.
 #[derive(Debug, Clone, Default)]
 pub struct RelayConfig {
@@ -189,6 +216,8 @@ pub struct RelayConfig {
     pub federation: FederationConfig,
     /// Security settings (rate limiting, encryption).
     pub security: SecurityConfig,
+    /// HTTP API v2 settings (REST, OHTTP, exchange broker).
+    pub http_api: HttpApiConfig,
 }
 
 impl RelayConfig {
@@ -489,6 +518,45 @@ impl RelayConfig {
 
         // Load or generate relay_id
         config.federation.relay_id = load_relay_id(&config.storage.data_dir);
+
+        // HTTP API v2 configuration
+        if let Ok(val) = std::env::var("RELAY_HTTP_API_ENABLED") {
+            config.http_api.enabled = val == "true" || val == "1";
+        }
+
+        if let Ok(val) = std::env::var("RELAY_OHTTP_ENABLED") {
+            config.http_api.ohttp_enabled = val == "true" || val == "1";
+        }
+
+        if let Ok(val) = std::env::var("RELAY_OHTTP_KEY_ROTATION_HOURS") {
+            match val.parse() {
+                Ok(parsed) => config.http_api.ohttp_key_rotation_hours = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_OHTTP_KEY_ROTATION_HOURS: invalid value '{}', using default {}",
+                    val, config.http_api.ohttp_key_rotation_hours
+                )),
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_EXCHANGE_MAX_OFFERS") {
+            match val.parse() {
+                Ok(parsed) => config.http_api.exchange_max_offers = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_EXCHANGE_MAX_OFFERS: invalid value '{}', using default {}",
+                    val, config.http_api.exchange_max_offers
+                )),
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_EXCHANGE_DEFAULT_TTL_SECS") {
+            match val.parse() {
+                Ok(parsed) => config.http_api.exchange_default_ttl_secs = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_EXCHANGE_DEFAULT_TTL_SECS: invalid value '{}', using default {}",
+                    val, config.http_api.exchange_default_ttl_secs
+                )),
+            }
+        }
 
         (config, warnings)
     }

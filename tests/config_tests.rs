@@ -172,6 +172,7 @@ fn test_nested_config_construction_with_overrides() {
             rate_limit_per_min: 120,
             ..Default::default()
         },
+        ..Default::default()
     };
     assert_eq!(config.network.listen_addr.port(), 9090);
     assert_eq!(config.network.max_connections, 500);
