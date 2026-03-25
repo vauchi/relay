@@ -20,6 +20,7 @@ use axum::{
 use base64::Engine;
 use serde::Deserialize;
 
+use crate::exchange_broker::ExchangeBroker;
 use crate::metrics::RelayMetrics;
 use crate::ohttp_gateway::OhttpGateway;
 use crate::rate_limit::RateLimiter;
@@ -41,6 +42,8 @@ pub struct HttpApiState {
     pub quota: V2QuotaLimits,
     /// When `Some`, the OHTTP gateway endpoints are enabled.
     pub ohttp_gateway: Option<Arc<OhttpGateway>>,
+    /// Exchange broker for short-code mediated contact exchange.
+    pub exchange_broker: Arc<ExchangeBroker>,
     // TODO: recovery_storage will be added when /v2/recovery endpoint is implemented
 }
 
@@ -78,6 +81,26 @@ pub struct V2PurgeRequest {
     pub recipient_id: String,
 }
 
+/// v2 exchange offer request body.
+#[derive(Debug, Deserialize)]
+pub struct V2ExchangeOfferRequest {
+    pub payload: String,
+    pub expires_secs: Option<u64>,
+}
+
+/// v2 exchange claim request body.
+#[derive(Debug, Deserialize)]
+pub struct V2ExchangeClaimRequest {
+    pub code: String,
+    pub response: String,
+}
+
+/// v2 exchange complete request body.
+#[derive(Debug, Deserialize)]
+pub struct V2ExchangeCompleteRequest {
+    pub code: String,
+}
+
 /// Envelope used inside an OHTTP request body.
 ///
 /// The client encapsulates a JSON object with this shape and the relay
@@ -100,6 +123,9 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .route("/v2/ack", post(ack_handler))
         .route("/v2/register", post(register_handler))
         .route("/v2/purge", post(purge_handler))
+        .route("/v2/exchange/offer", post(exchange_offer_handler))
+        .route("/v2/exchange/claim", post(exchange_claim_handler))
+        .route("/v2/exchange/complete", post(exchange_complete_handler))
         .route("/v2/ohttp-key", get(ohttp_key_handler))
         .route("/v2/ohttp", post(ohttp_handler))
         .with_state(state)
@@ -168,6 +194,32 @@ async fn purge_handler(
     Json(req): Json<V2PurgeRequest>,
 ) -> impl IntoResponse {
     logic_response(handle_purge_logic(&state, req))
+}
+
+// ── Exchange ────────────────────────────────────────────────────────
+
+/// Create an exchange offer and return a 6-digit code.
+async fn exchange_offer_handler(
+    State(state): State<HttpApiState>,
+    Json(req): Json<V2ExchangeOfferRequest>,
+) -> impl IntoResponse {
+    logic_response(handle_exchange_offer_logic(&state, req))
+}
+
+/// Claim an exchange offer by code. Returns the initiator's payload.
+async fn exchange_claim_handler(
+    State(state): State<HttpApiState>,
+    Json(req): Json<V2ExchangeClaimRequest>,
+) -> impl IntoResponse {
+    logic_response(handle_exchange_claim_logic(&state, req))
+}
+
+/// Complete an exchange — initiator retrieves the responder's payload.
+async fn exchange_complete_handler(
+    State(state): State<HttpApiState>,
+    Json(req): Json<V2ExchangeCompleteRequest>,
+) -> impl IntoResponse {
+    logic_response(handle_exchange_complete_logic(&state, req))
 }
 
 // ── OHTTP ───────────────────────────────────────────────────────────
@@ -295,6 +347,33 @@ async fn dispatch_ohttp_action(
             };
             handle_purge_logic(state, req)
         }
+        "exchange_offer" => {
+            let req: V2ExchangeOfferRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad exchange_offer payload: {e}") });
+                }
+            };
+            handle_exchange_offer_logic(state, req)
+        }
+        "exchange_claim" => {
+            let req: V2ExchangeClaimRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad exchange_claim payload: {e}") });
+                }
+            };
+            handle_exchange_claim_logic(state, req)
+        }
+        "exchange_complete" => {
+            let req: V2ExchangeCompleteRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad exchange_complete payload: {e}") });
+                }
+            };
+            handle_exchange_complete_logic(state, req)
+        }
         unknown => {
             serde_json::json!({ "status": "error", "error": format!("unknown action: {unknown}") })
         }
@@ -391,6 +470,53 @@ fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> serde_json::
         .blobs_stored
         .set(state.storage.blob_count() as i64);
     serde_json::json!({ "status": "ok" })
+}
+
+// ── Exchange handler logic ───────────────────────────────────────────
+
+fn handle_exchange_offer_logic(
+    state: &HttpApiState,
+    req: V2ExchangeOfferRequest,
+) -> serde_json::Value {
+    match state
+        .exchange_broker
+        .create_offer(req.payload, req.expires_secs)
+    {
+        Ok(code) => serde_json::json!({ "status": "ok", "code": code }),
+        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+    }
+}
+
+fn handle_exchange_claim_logic(
+    state: &HttpApiState,
+    req: V2ExchangeClaimRequest,
+) -> serde_json::Value {
+    if !state
+        .rate_limiter
+        .consume(&format!("exchange:{}", req.code))
+    {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
+    match state.exchange_broker.claim_offer(&req.code, req.response) {
+        Ok(payload) => serde_json::json!({ "status": "ok", "payload": payload }),
+        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+    }
+}
+
+fn handle_exchange_complete_logic(
+    state: &HttpApiState,
+    req: V2ExchangeCompleteRequest,
+) -> serde_json::Value {
+    if !state
+        .rate_limiter
+        .consume(&format!("exchange:{}", req.code))
+    {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
+    match state.exchange_broker.complete_offer(&req.code) {
+        Ok(response) => serde_json::json!({ "status": "ok", "response": response }),
+        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+    }
 }
 
 // Tests moved to tests/http_api_tests.rs

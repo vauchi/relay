@@ -12,6 +12,7 @@ use axum::http::{Request, StatusCode};
 use base64::Engine;
 use tower::ServiceExt;
 
+use vauchi_relay::exchange_broker::ExchangeBroker;
 use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::ohttp_gateway::OhttpGateway;
@@ -28,6 +29,7 @@ fn create_test_state() -> HttpApiState {
             max_bytes: 50 * 1024 * 1024,
         },
         ohttp_gateway: None,
+        exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
     }
 }
 
@@ -42,6 +44,7 @@ fn create_test_state_with_ohttp() -> HttpApiState {
             max_bytes: 50 * 1024 * 1024,
         },
         ohttp_gateway: Some(Arc::new(gw)),
+        exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
     }
 }
 
@@ -573,6 +576,7 @@ async fn test_v2_send_quota_enforced() {
             max_bytes: 50 * 1024 * 1024,
         },
         ohttp_gateway: None,
+        exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
     };
     let app = create_v2_router(state);
 
@@ -603,5 +607,132 @@ async fn test_v2_send_quota_enforced() {
     assert!(
         body["error"].as_str().unwrap().contains("quota exceeded"),
         "error message must mention quota"
+    );
+}
+
+// ── Exchange endpoints ──
+
+#[tokio::test]
+async fn test_v2_exchange_offer_returns_code() {
+    let app = create_v2_router(create_test_state());
+
+    let resp = post_json(
+        &app,
+        "/v2/exchange/offer",
+        &serde_json::json!({ "payload": "encrypted-contact-data" }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"], "ok");
+    let code = body["code"].as_str().expect("response must contain code");
+    assert_eq!(code.len(), 6, "code must be 6 digits");
+    assert!(
+        code.chars().all(|c| c.is_ascii_digit()),
+        "code must be numeric"
+    );
+}
+
+#[tokio::test]
+async fn test_v2_exchange_claim_returns_payload() {
+    let state = create_test_state();
+    let app = create_v2_router(state.clone());
+
+    // Create an offer
+    let offer_resp = post_json(
+        &app,
+        "/v2/exchange/offer",
+        &serde_json::json!({ "payload": "initiator-data" }),
+    )
+    .await;
+    let offer_body = response_json(offer_resp).await;
+    let code = offer_body["code"].as_str().unwrap();
+
+    // Claim the offer
+    let claim_resp = post_json(
+        &app,
+        "/v2/exchange/claim",
+        &serde_json::json!({ "code": code, "response": "responder-data" }),
+    )
+    .await;
+
+    assert_eq!(claim_resp.status(), StatusCode::OK);
+    let claim_body = response_json(claim_resp).await;
+    assert_eq!(claim_body["status"], "ok");
+    assert_eq!(claim_body["payload"], "initiator-data");
+}
+
+#[tokio::test]
+async fn test_v2_exchange_complete_flow() {
+    let state = create_test_state();
+    let app = create_v2_router(state.clone());
+
+    // Step 1: Create offer
+    let offer_resp = post_json(
+        &app,
+        "/v2/exchange/offer",
+        &serde_json::json!({ "payload": "alice-contact" }),
+    )
+    .await;
+    let code = response_json(offer_resp).await["code"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Step 2: Claim offer (responder)
+    let claim_resp = post_json(
+        &app,
+        "/v2/exchange/claim",
+        &serde_json::json!({ "code": code, "response": "bob-contact" }),
+    )
+    .await;
+    assert_eq!(response_json(claim_resp).await["payload"], "alice-contact");
+
+    // Step 3: Complete (initiator retrieves responder data)
+    let complete_resp = post_json(
+        &app,
+        "/v2/exchange/complete",
+        &serde_json::json!({ "code": code }),
+    )
+    .await;
+
+    assert_eq!(complete_resp.status(), StatusCode::OK);
+    let complete_body = response_json(complete_resp).await;
+    assert_eq!(complete_body["status"], "ok");
+    assert_eq!(complete_body["response"], "bob-contact");
+}
+
+#[tokio::test]
+async fn test_v2_exchange_expired_code_rejected() {
+    let state = create_test_state();
+    let app = create_v2_router(state.clone());
+
+    // Create an offer with TTL=0 (immediately expired)
+    let offer_resp = post_json(
+        &app,
+        "/v2/exchange/offer",
+        &serde_json::json!({ "payload": "data", "expires_secs": 0 }),
+    )
+    .await;
+    let code = response_json(offer_resp).await["code"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Claim should fail because it's expired
+    let claim_resp = post_json(
+        &app,
+        "/v2/exchange/claim",
+        &serde_json::json!({ "code": code, "response": "resp" }),
+    )
+    .await;
+
+    assert_eq!(claim_resp.status(), StatusCode::BAD_REQUEST);
+    let body = response_json(claim_resp).await;
+    assert_eq!(body["status"], "error");
+    assert!(
+        body["error"].as_str().unwrap().contains("expired"),
+        "error must mention expiration"
     );
 }
