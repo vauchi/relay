@@ -19,6 +19,10 @@ use axum::{
 };
 use base64::Engine;
 use serde::Deserialize;
+use vauchi_protocol::v2::{
+    V2AckRequest, V2ExchangeClaimRequest, V2ExchangeCompleteRequest, V2ExchangeOfferRequest,
+    V2FetchRequest, V2PurgeRequest, V2RegisterRequest, V2SendRequest,
+};
 
 use crate::exchange_broker::ExchangeBroker;
 use crate::handler::NonceTracker;
@@ -50,67 +54,6 @@ pub struct HttpApiState {
     /// Separate rate limiter for OHTTP-routed exchange requests (higher capacity).
     pub ohttp_exchange_rate_limiter: Arc<RateLimiter>,
     // TODO: recovery_storage will be added when /v2/recovery endpoint is implemented
-}
-
-// ── Request / Response types ────────────────────────────────────────
-
-/// v2 send request body.
-#[derive(Debug, Deserialize)]
-pub struct V2SendRequest {
-    pub recipient_id: String,
-    pub ciphertext: String, // base64-encoded
-}
-
-/// v2 fetch request body.
-#[derive(Debug, Deserialize)]
-pub struct V2FetchRequest {
-    pub mailbox_tokens: Vec<String>,
-}
-
-/// v2 acknowledge request body.
-#[derive(Debug, Deserialize)]
-pub struct V2AckRequest {
-    pub recipient_id: String,
-    pub blob_id: String,
-}
-
-/// v2 register request body.
-#[derive(Debug, Deserialize)]
-pub struct V2RegisterRequest {
-    pub mailbox_tokens: Vec<String>,
-}
-
-/// v2 purge request body.
-///
-/// Purge is destructive — requires Ed25519 signature over
-/// `public_key || purge_token || timestamp` (same as WebSocket purge auth).
-#[derive(Debug, Deserialize)]
-pub struct V2PurgeRequest {
-    pub recipient_id: String,
-    pub public_key: String,  // hex-encoded Ed25519 public key (32 bytes)
-    pub purge_token: String, // hex-encoded purge token (32 bytes)
-    pub signature: String,   // hex-encoded Ed25519 signature (64 bytes)
-    pub timestamp: u64,      // Unix timestamp (must be within 60s of server time)
-}
-
-/// v2 exchange offer request body.
-#[derive(Debug, Deserialize)]
-pub struct V2ExchangeOfferRequest {
-    pub payload: String,
-    pub expires_secs: Option<u64>,
-}
-
-/// v2 exchange claim request body.
-#[derive(Debug, Deserialize)]
-pub struct V2ExchangeClaimRequest {
-    pub code: String,
-    pub response: String,
-}
-
-/// v2 exchange complete request body.
-#[derive(Debug, Deserialize)]
-pub struct V2ExchangeCompleteRequest {
-    pub code: String,
 }
 
 /// Envelope used inside an OHTTP request body.
