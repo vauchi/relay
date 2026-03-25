@@ -18,7 +18,7 @@ use axum::{
     routing::{get, post},
 };
 use base64::Engine;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::metrics::RelayMetrics;
 use crate::ohttp_gateway::OhttpGateway;
@@ -89,20 +89,10 @@ pub struct OhttpInnerRequest {
     pub payload: serde_json::Value,
 }
 
-/// Standard v2 success response.
-#[derive(Debug, Serialize)]
-pub struct V2Response {
-    pub status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<serde_json::Value>,
-}
-
-/// Standard v2 error response.
-#[derive(Debug, Serialize)]
-pub struct V2ErrorResponse {
-    pub status: &'static str,
-    pub error: String,
-}
+// Note: Handler functions return `serde_json::Value` directly rather than
+// typed response structs, because each endpoint has a different response shape
+// (blob_id, blobs, acknowledged, registered). The wire format is defined by
+// the `serde_json::json!()` calls in each `handle_*_logic` function.
 
 // ── Router ──────────────────────────────────────────────────────────
 
@@ -135,7 +125,7 @@ fn logic_response(result: serde_json::Value) -> (StatusCode, Json<serde_json::Va
     let status = if result["status"] == "error" {
         if result["error"]
             .as_str()
-            .is_some_and(|e| e.contains("quota exceeded"))
+            .is_some_and(|e| e.contains("quota exceeded") || e.contains("rate limit"))
         {
             StatusCode::TOO_MANY_REQUESTS
         } else {
@@ -319,6 +309,9 @@ async fn dispatch_ohttp_action(
 // ── Extracted handler logic (shared with OHTTP dispatcher) ──────────
 
 fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> serde_json::Value {
+    if !state.rate_limiter.consume(&req.recipient_id) {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
     if req.recipient_id.len() != 64 || !req.recipient_id.chars().all(|c| c.is_ascii_hexdigit()) {
         return serde_json::json!({ "status": "error", "error": "recipient_id must be 64 hex characters" });
     }
@@ -351,6 +344,12 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> serde_json::Va
 }
 
 fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> serde_json::Value {
+    // Rate-limit by first token (representative of the client session).
+    if let Some(first) = req.mailbox_tokens.first()
+        && !state.rate_limiter.consume(first)
+    {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
     if req.mailbox_tokens.is_empty() || req.mailbox_tokens.len() > 100 {
         return serde_json::json!({ "status": "error", "error": "mailbox_tokens must contain 1-100 entries" });
     }
@@ -370,6 +369,9 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> serde_json::
 }
 
 fn handle_ack_logic(state: &HttpApiState, req: V2AckRequest) -> serde_json::Value {
+    if !state.rate_limiter.consume(&req.recipient_id) {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
     let removed = state.storage.acknowledge(&req.recipient_id, &req.blob_id);
     if removed {
         state
@@ -385,6 +387,9 @@ fn handle_register_logic(req: V2RegisterRequest) -> serde_json::Value {
 }
 
 fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> serde_json::Value {
+    if !state.rate_limiter.consume(&req.recipient_id) {
+        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+    }
     state.storage.delete_all_for(&req.recipient_id);
     state
         .metrics

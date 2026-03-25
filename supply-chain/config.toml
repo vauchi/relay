@@ -223,6 +223,10 @@ criteria = "safe-to-deploy"
 version = "0.2.1"
 criteria = "safe-to-run"
 
+[[exemptions.num-conv]]
+version = "0.2.1"
+criteria = "safe-to-run"
+
 [[exemptions.oid-registry]]
 version = "0.8.1"
 criteria = "safe-to-run"
@@ -263,6 +267,10 @@ notes = "Well-known /proc filesystem parser used by prometheus; exempted pending
 [[exemptions.prometheus]]
 version = "0.14.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.proptest]]
+version = "1.10.0"
+criteria = "safe-to-run"
 
 [[exemptions.proptest]]
 version = "1.11.0"
