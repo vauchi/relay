@@ -4,6 +4,10 @@
 
 //! Tests for the exchange broker (short-code mediated contact exchange).
 
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::thread;
+
 use vauchi_relay::exchange_broker::{
     ExchangeBroker, ExchangeError, MAX_EXCHANGE_PAYLOAD_BYTES, MAX_EXCHANGE_TTL_SECS,
     MIN_EXCHANGE_TTL_SECS,
@@ -313,4 +317,278 @@ fn test_display_merges_not_found_and_expired() {
         ExchangeError::CodeNotFound.to_string(),
         "invalid or expired code"
     );
+}
+
+// ── Concurrency tests (CC-13) ──────────────────────────────────────
+
+#[test]
+fn test_concurrent_claim_only_one_wins() {
+    let broker = Arc::new(ExchangeBroker::new(100, 300));
+    let code = broker.create_offer("payload".to_string(), None).unwrap();
+
+    let mut handles = Vec::new();
+    for i in 0..10 {
+        let broker = Arc::clone(&broker);
+        let code = code.clone();
+        handles.push(thread::spawn(move || {
+            broker.claim_offer(&code, format!("resp-{i}"))
+        }));
+    }
+
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let successes: Vec<_> = results.iter().filter(|r| r.is_ok()).collect();
+    let already_claimed: Vec<_> = results
+        .iter()
+        .filter(|r| r == &&Err(ExchangeError::AlreadyClaimed))
+        .collect();
+
+    assert_eq!(successes.len(), 1, "exactly one thread must succeed");
+    assert_eq!(
+        already_claimed.len(),
+        9,
+        "all others must get AlreadyClaimed"
+    );
+}
+
+#[test]
+fn test_concurrent_complete_only_one_wins() {
+    let broker = Arc::new(ExchangeBroker::new(100, 300));
+    let code = broker.create_offer("payload".to_string(), None).unwrap();
+    broker.claim_offer(&code, "response".to_string()).unwrap();
+
+    let mut handles = Vec::new();
+    for _ in 0..10 {
+        let broker = Arc::clone(&broker);
+        let code = code.clone();
+        handles.push(thread::spawn(move || broker.complete_offer(&code)));
+    }
+
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let successes: Vec<_> = results.iter().filter(|r| r.is_ok()).collect();
+    let not_found: Vec<_> = results
+        .iter()
+        .filter(|r| r == &&Err(ExchangeError::CodeNotFound))
+        .collect();
+
+    assert_eq!(successes.len(), 1, "exactly one thread must succeed");
+    assert_eq!(not_found.len(), 9, "others see CodeNotFound (removed)");
+}
+
+#[test]
+fn test_concurrent_create_offers_all_unique_codes() {
+    let broker = Arc::new(ExchangeBroker::new(200, 300));
+
+    let mut handles = Vec::new();
+    for i in 0..100 {
+        let broker = Arc::clone(&broker);
+        handles.push(thread::spawn(move || {
+            broker.create_offer(format!("payload-{i}"), None)
+        }));
+    }
+
+    let codes: Vec<String> = handles
+        .into_iter()
+        .map(|h| h.join().unwrap().unwrap())
+        .collect();
+
+    let unique: HashSet<&String> = codes.iter().collect();
+    assert_eq!(unique.len(), 100, "all 100 codes must be unique");
+    assert_eq!(broker.offer_count(), 100);
+}
+
+// ── State machine violation tests ──────────────────────────────────
+
+#[test]
+fn test_double_complete_rejected() {
+    let broker = ExchangeBroker::new(100, 300);
+    let code = broker.create_offer("p".to_string(), None).unwrap();
+    broker.claim_offer(&code, "r".to_string()).unwrap();
+    broker.complete_offer(&code).unwrap();
+
+    // Offer was removed — second complete sees CodeNotFound
+    let err = broker
+        .complete_offer(&code)
+        .expect_err("double complete must fail");
+    assert_eq!(err, ExchangeError::CodeNotFound);
+}
+
+#[test]
+fn test_claim_after_complete_rejected() {
+    let broker = ExchangeBroker::new(100, 300);
+    let code = broker.create_offer("p".to_string(), None).unwrap();
+    broker.claim_offer(&code, "r".to_string()).unwrap();
+    broker.complete_offer(&code).unwrap();
+
+    let err = broker
+        .claim_offer(&code, "late-claim".to_string())
+        .expect_err("claim after complete must fail");
+    assert_eq!(err, ExchangeError::CodeNotFound);
+}
+
+#[test]
+fn test_expired_complete_after_valid_claim() {
+    // Broker with default TTL=0 (immediately expired)
+    let broker = ExchangeBroker::new(100, 0);
+    let code = broker.create_offer("p".to_string(), None).unwrap();
+
+    // Claim succeeds or fails depending on timing — either is valid.
+    // But complete must fail because the offer is expired.
+    let _ = broker.claim_offer(&code, "r".to_string());
+    let result = broker.complete_offer(&code);
+
+    // Whether claim succeeded or not, complete should fail (expired or not claimed)
+    assert!(
+        result.is_err(),
+        "complete of expired offer must fail, got: {result:?}"
+    );
+}
+
+#[test]
+fn test_capacity_exhaustion_and_recovery() {
+    let broker = ExchangeBroker::new(3, 0); // max 3, TTL=0 (immediately expired)
+
+    // Fill to capacity
+    broker.create_offer("a".to_string(), None).unwrap();
+    broker.create_offer("b".to_string(), None).unwrap();
+    broker.create_offer("c".to_string(), None).unwrap();
+
+    // Next offer fails
+    let err = broker.create_offer("d".to_string(), None).unwrap_err();
+    assert_eq!(err, ExchangeError::TooManyOffers);
+
+    // Cleanup expired offers
+    let removed = broker.cleanup_expired();
+    assert_eq!(removed, 3);
+
+    // Now new offers succeed
+    broker
+        .create_offer("recovered".to_string(), Some(MIN_EXCHANGE_TTL_SECS))
+        .expect("must succeed after cleanup");
+    assert_eq!(broker.offer_count(), 1);
+}
+
+// ── Payload integrity tests ────────────────────────────────────────
+
+#[test]
+fn test_payload_roundtrip_integrity() {
+    let broker = ExchangeBroker::new(100, 300);
+
+    // Various payloads that could trip up string handling
+    let payloads = [
+        "",                                      // empty
+        "simple",                                // ASCII
+        "null\0embedded",                        // null bytes
+        "\n\r\t",                                // whitespace
+        &"x".repeat(MAX_EXCHANGE_PAYLOAD_BYTES), // max size
+        "emoji🎉🔑",                             // multi-byte unicode
+        "{\"json\": true}",                      // JSON-like
+        "<script>alert(1)</script>",             // XSS-like
+        "'; DROP TABLE offers; --",              // SQL injection-like
+        &"A".repeat(1000),                       // medium
+    ];
+
+    for (i, payload) in payloads.iter().enumerate() {
+        let code = broker
+            .create_offer(payload.to_string(), None)
+            .unwrap_or_else(|e| panic!("offer {i} failed: {e}"));
+
+        let response = format!("resp-{i}");
+        let returned_payload = broker
+            .claim_offer(&code, response.clone())
+            .unwrap_or_else(|e| panic!("claim {i} failed: {e}"));
+
+        assert_eq!(
+            &returned_payload, payload,
+            "payload {i} corrupted in roundtrip"
+        );
+
+        let returned_response = broker
+            .complete_offer(&code)
+            .unwrap_or_else(|e| panic!("complete {i} failed: {e}"));
+
+        assert_eq!(
+            returned_response, response,
+            "response {i} corrupted in roundtrip"
+        );
+    }
+}
+
+#[test]
+fn test_s4_payload_boundary_off_by_one() {
+    let broker = ExchangeBroker::new(100, 300);
+
+    // Exactly at limit: accepted
+    let at_limit = "X".repeat(MAX_EXCHANGE_PAYLOAD_BYTES);
+    broker.create_offer(at_limit, None).unwrap();
+
+    // One byte over: rejected
+    let over_limit = "X".repeat(MAX_EXCHANGE_PAYLOAD_BYTES + 1);
+    assert_eq!(
+        broker.create_offer(over_limit, None).unwrap_err(),
+        ExchangeError::PayloadTooLarge
+    );
+
+    // One byte under: accepted
+    let under_limit = "X".repeat(MAX_EXCHANGE_PAYLOAD_BYTES - 1);
+    broker.create_offer(under_limit, None).unwrap();
+}
+
+#[test]
+fn test_s4_claim_response_boundary_off_by_one() {
+    let broker = ExchangeBroker::new(100, 300);
+    let code = broker.create_offer("p".to_string(), None).unwrap();
+
+    // One byte over limit: rejected
+    let over = "R".repeat(MAX_EXCHANGE_PAYLOAD_BYTES + 1);
+    assert_eq!(
+        broker.claim_offer(&code, over).unwrap_err(),
+        ExchangeError::PayloadTooLarge
+    );
+
+    // At limit: accepted (offer is still unclaimed because oversized was rejected)
+    let at_limit = "R".repeat(MAX_EXCHANGE_PAYLOAD_BYTES);
+    broker.claim_offer(&code, at_limit).unwrap();
+}
+
+// ── Error variant exhaustiveness ───────────────────────────────────
+
+#[test]
+fn test_all_error_variants_have_display() {
+    // Ensures every ExchangeError variant produces a non-empty message.
+    let errors = [
+        ExchangeError::CodeNotFound,
+        ExchangeError::CodeExpired,
+        ExchangeError::AlreadyClaimed,
+        ExchangeError::AlreadyCompleted,
+        ExchangeError::TooManyOffers,
+        ExchangeError::NotYetClaimed,
+        ExchangeError::PayloadTooLarge,
+        ExchangeError::InvalidTtl,
+    ];
+    for err in &errors {
+        let msg = err.to_string();
+        assert!(!msg.is_empty(), "{err:?} has empty display");
+        assert!(msg.len() > 3, "{err:?} display too short: {msg}");
+    }
+}
+
+#[test]
+fn test_cleanup_idempotent() {
+    let broker = ExchangeBroker::new(100, 0);
+    broker.create_offer("a".to_string(), None).unwrap();
+
+    let first = broker.cleanup_expired();
+    assert_eq!(first, 1);
+
+    // Second cleanup with nothing to clean
+    let second = broker.cleanup_expired();
+    assert_eq!(second, 0);
+    assert_eq!(broker.offer_count(), 0);
+}
+
+#[test]
+fn test_cleanup_empty_broker() {
+    let broker = ExchangeBroker::new(100, 300);
+    assert_eq!(broker.cleanup_expired(), 0);
+    assert_eq!(broker.offer_count(), 0);
 }
