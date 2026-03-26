@@ -99,7 +99,7 @@ lint:machete:
 # ============================================================
 
 # MR: fast nextest (no coverage overhead)
-test:
+test:unit:
   extends: [.rust-runner, .validation-rust, .timeout-standard]
   stage: test
   needs:
@@ -114,7 +114,7 @@ test:
     expire_in: 1 week
 
 # Main: full coverage with llvm-cov
-coverage:
+coverage:workspace:
   extends: [.coverage-job, .rust-runner, .timeout-long]
   before_script:
     - !reference [.self-hosted, before_script]
@@ -435,7 +435,7 @@ build:release:
   extends: [.linux-runner, .timeout-standard]
   stage: build
   needs:
-    - job: test
+    - job: test:unit
       optional: true
     - job: lint:format
       optional: true
