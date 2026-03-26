@@ -70,11 +70,11 @@ impl Default for StorageConfig {
         StorageConfig {
             backend: StorageBackend::Sqlite, // Persistent by default
             data_dir: PathBuf::from("./data"),
-            blob_ttl_secs: 30 * 24 * 60 * 60, // 30 days
-            cleanup_interval_secs: 3600,      // 1 hour
-            max_blobs_per_user: 1000,         // 1000 blobs per recipient
-            max_storage_per_user: 50_000_000, // 50 MB per recipient
-            max_storage_bytes: 1_073_741_824, // 1 GB
+            blob_ttl_secs: 120 * 24 * 60 * 60, // 120 days
+            cleanup_interval_secs: 3600,       // 1 hour
+            max_blobs_per_user: 1000,          // 1000 blobs per recipient
+            max_storage_per_user: 50_000_000,  // 50 MB per recipient
+            max_storage_bytes: 1_073_741_824,  // 1 GB
         }
     }
 }

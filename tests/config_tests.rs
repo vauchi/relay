@@ -26,7 +26,7 @@ fn test_default_config() {
     assert_eq!(config.network.listen_addr.port(), 8080);
     assert_eq!(config.network.max_connections, 1000);
     assert_eq!(config.network.max_message_size, 1_048_576);
-    assert_eq!(config.storage.blob_ttl_secs, 30 * 24 * 60 * 60); // 30 days
+    assert_eq!(config.storage.blob_ttl_secs, 120 * 24 * 60 * 60); // 30 days
     assert_eq!(config.security.rate_limit_per_min, 60);
     assert_eq!(config.storage.cleanup_interval_secs, 3600);
     assert_eq!(config.storage.backend, StorageBackend::Sqlite);
@@ -39,7 +39,7 @@ fn test_default_config() {
 #[test]
 fn test_blob_ttl_duration() {
     let config = RelayConfig::default();
-    assert_eq!(config.blob_ttl(), Duration::from_secs(30 * 24 * 60 * 60));
+    assert_eq!(config.blob_ttl(), Duration::from_secs(120 * 24 * 60 * 60));
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn test_nested_storage_config_defaults() {
     let config = RelayConfig::default();
     assert_eq!(config.storage.backend, StorageBackend::Sqlite);
     assert_eq!(config.storage.data_dir, PathBuf::from("./data"));
-    assert_eq!(config.storage.blob_ttl_secs, 30 * 24 * 60 * 60);
+    assert_eq!(config.storage.blob_ttl_secs, 120 * 24 * 60 * 60);
     assert_eq!(config.storage.cleanup_interval_secs, 3600);
     assert_eq!(config.storage.max_blobs_per_user, 1000);
     assert_eq!(config.storage.max_storage_per_user, 50_000_000);
@@ -139,7 +139,7 @@ fn test_nested_config_storage_has_blob_ttl_method() {
     let config = RelayConfig::default();
     assert_eq!(
         config.storage.blob_ttl(),
-        Duration::from_secs(30 * 24 * 60 * 60)
+        Duration::from_secs(120 * 24 * 60 * 60)
     );
 }
 

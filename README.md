@@ -53,7 +53,7 @@ Environment variables:
 |----------|---------|-------------|
 | `RELAY_LISTEN_ADDR` | `0.0.0.0:8080` | Address to listen on |
 | `RELAY_MAX_MESSAGE_SIZE` | `1048576` | Maximum message size in bytes (1 MB) |
-| `RELAY_BLOB_TTL_SECS` | `2592000` | Blob expiration time in seconds (30 days) |
+| `RELAY_BLOB_TTL_SECS` | `10368000` | Blob expiration time in seconds (120 days) |
 | `RELAY_RATE_LIMIT` | `60` | Messages per minute per client |
 | `RELAY_CLEANUP_INTERVAL` | `3600` | Cleanup interval in seconds (1 hour) |
 | `RELAY_STORAGE_BACKEND` | `sqlite` | Storage backend: `sqlite` (persistent) or `memory` |
@@ -74,7 +74,7 @@ Environment variables:
 | `RELAY_FEDERATION_PEER_TIMEOUT` | `30` | Peer handshake timeout in seconds |
 | `RELAY_FEDERATION_CAPACITY_INTERVAL` | `60` | Capacity check interval in seconds |
 
-**Note:** The 30-day TTL balances storage efficiency with allowing infrequent sync.
+**Note:** The 120-day TTL balances storage efficiency with allowing infrequent sync.
 SQLite storage (default) persists messages across server restarts.
 
 ## Protocol
@@ -241,7 +241,7 @@ Federation preserves zero-knowledge:
 
 ## Storage Considerations
 
-The default 90-day TTL enables users who rarely open the app to still receive contact updates.
+The default 120-day TTL enables users who rarely open the app to still receive contact updates.
 
 **Storage backends:**
 - `sqlite` (default): Persistent storage, survives restarts, disk-based
