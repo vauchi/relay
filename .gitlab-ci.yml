@@ -37,6 +37,7 @@ include:
       - '/ci-templates/perf.yml'
       - '/ci-templates/image-lint.yml'
       - '/ci-templates/badges.yml'
+      - '/ci-templates/github-mirror.yml'
   # Container scanning is relay-specific (not included in shared security.yml)
   - template: Security/Container-Scanning.gitlab-ci.yml
 
@@ -524,3 +525,6 @@ verify:upstream-prerelease:
 
 pages:
   extends: .badges-pages
+
+github-mirror:
+  extends: .github-mirror
