@@ -69,7 +69,7 @@ fn contract_all_payload_variants_exist() {
             MessagePayload::RecoveryProofResponse(_) => "RecoveryProofResponse",
             MessagePayload::PurgeRequest(_) => "PurgeRequest",
             MessagePayload::PurgeResponse(_) => "PurgeResponse",
-            MessagePayload::AccountRevoked(_) => "AccountRevoked",
+            MessagePayload::IdentityRevoked(_) => "IdentityRevoked",
             MessagePayload::ForwardingHints(_) => "ForwardingHints",
             MessagePayload::DeviceLinkRelay(_) => "DeviceLinkRelay",
             MessagePayload::RegisterMailbox(_) => "RegisterMailbox",
@@ -283,12 +283,12 @@ fn contract_recovery_proof_response_has_entries() {
 }
 
 // ============================================================
-// AccountRevoked contracts
+// IdentityRevoked contracts
 // ============================================================
 
 #[test]
-fn contract_account_revoked_has_sender_recipient_signature() {
-    let rev = AccountRevoked {
+fn contract_identity_revoked_has_sender_recipient_signature() {
+    let rev = IdentityRevoked {
         sender_id: "sender1".to_string(),
         recipient_id: "recipient1".to_string(),
         timestamp: 1700000000,

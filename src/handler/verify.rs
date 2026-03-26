@@ -143,7 +143,7 @@ pub(super) mod protocol {
             "suppress_presence".to_string(),
             "purge".to_string(),
             "recovery_proof".to_string(),
-            "account_revoked".to_string(),
+            "identity_revoked".to_string(),
             "forwarding_hints".to_string(),
             "authenticated_handshake".to_string(),
         ];

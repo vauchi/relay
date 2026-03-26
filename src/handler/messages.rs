@@ -398,10 +398,10 @@ pub(super) fn handle_message(
         protocol::MessagePayload::PurgeRequest(purge) => {
             handle_purge_request(ctx, purge, &envelope.message_id)
         }
-        protocol::MessagePayload::AccountRevoked(_) => {
-            // AccountRevoked is now carried inside EncryptedUpdate blobs and verified client-side.
+        protocol::MessagePayload::IdentityRevoked(_) => {
+            // IdentityRevoked is now carried inside EncryptedUpdate blobs and verified client-side.
             debug!(
-                "[{}] Unexpected AccountRevoked (handled client-side)",
+                "[{}] Unexpected IdentityRevoked (handled client-side)",
                 ctx.session
             );
             HandleResult::empty()
