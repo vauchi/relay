@@ -72,8 +72,8 @@ user-login = "Darksonn"
 user-name = "Alice Ryhl"
 
 [[publisher.cc]]
-version = "1.2.57"
-when = "2026-03-14"
+version = "1.2.58"
+when = "2026-03-27"
 trusted-publisher = "github:rust-lang/cc-rs"
 
 [[publisher.chacha20]]
@@ -112,8 +112,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.cmake]]
-version = "0.1.57"
-when = "2025-12-17"
+version = "0.1.58"
+when = "2026-03-26"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -227,8 +227,8 @@ user-login = "Amanieu"
 user-name = "Amanieu d'Antras"
 
 [[publisher.mio]]
-version = "1.1.1"
-when = "2025-12-04"
+version = "1.2.0"
+when = "2026-03-27"
 user-id = 6025
 user-login = "Thomasdezeeuw"
 user-name = "Thomas de Zeeuw"
@@ -458,8 +458,8 @@ user-login = "Manishearth"
 user-name = "Manish Goregaokar"
 
 [[publisher.uuid]]
-version = "1.22.0"
-when = "2026-03-05"
+version = "1.23.0"
+when = "2026-03-27"
 user-id = 3204
 user-login = "KodrAus"
 user-name = "Ashley Mannix"
@@ -2122,23 +2122,6 @@ aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-ch
 who = "Erich Gubler <erichdongubler@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "0.4.26 -> 0.4.29"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.num-conv]]
-who = "Alex Franchuk <afranchuk@mozilla.com>"
-criteria = "safe-to-deploy"
-version = "0.1.0"
-notes = """
-Very straightforward, simple crate. No dependencies, unsafe, extern,
-side-effectful std functions, etc.
-"""
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.num-conv]]
-who = "Lars Eggert <lars@eggert.org>"
-criteria = "safe-to-deploy"
-delta = "0.1.0 -> 0.2.0"
-notes = "Revision only removes code"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.oorandom]]

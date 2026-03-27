@@ -67,10 +67,6 @@ criteria = "safe-to-deploy"
 version = "0.10.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.cmake]]
-version = "0.1.58"
-criteria = "safe-to-deploy"
-
 [[exemptions.criterion]]
 version = "0.5.1"
 criteria = "safe-to-run"
@@ -273,10 +269,6 @@ version = "0.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.proptest]]
-version = "1.10.0"
-criteria = "safe-to-run"
-
-[[exemptions.proptest]]
 version = "1.11.0"
 criteria = "safe-to-run"
 
@@ -422,10 +414,6 @@ criteria = "safe-to-run"
 
 [[exemptions.untrusted]]
 version = "0.9.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.uuid]]
-version = "1.23.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.walkdir]]
