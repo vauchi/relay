@@ -51,6 +51,10 @@ criteria = "safe-to-run"
 version = "0.2.0"
 criteria = "safe-to-run"
 
+[[exemptions.aws-lc-sys]]
+version = "0.39.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.axum]]
 version = "0.7.9"
 criteria = "safe-to-deploy"
