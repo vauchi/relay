@@ -60,3 +60,42 @@ pub fn generate_test_client_id_wide(seed: u16) -> String {
 pub fn generate_test_ciphertext(size: usize, seed: u8) -> Vec<u8> {
     (0..size).map(|i| seed.wrapping_add(i as u8)).collect()
 }
+
+/// Polls a condition until it returns true, with timeout.
+///
+/// Replaces bare `tokio::time::sleep` in tests. Adapts to actual
+/// timing instead of guessing a fixed delay.
+#[allow(dead_code)]
+pub async fn poll_until<F, Fut>(mut check: F, timeout_ms: u64)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    loop {
+        if check().await {
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("poll_until timed out after {}ms", timeout_ms);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+}
+
+/// Waits for a TCP server to accept connections.
+///
+/// Replaces `start_full_server()` + `sleep(50ms)` pattern.
+/// Returns when a TCP connection to the address succeeds.
+#[allow(dead_code)]
+pub async fn wait_for_tcp(addr: &str) {
+    let addr = addr
+        .strip_prefix("ws://")
+        .or_else(|| addr.strip_prefix("wss://"))
+        .unwrap_or(addr);
+    poll_until(
+        || async { tokio::net::TcpStream::connect(addr).await.is_ok() },
+        2000,
+    )
+    .await;
+}
