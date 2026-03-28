@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::Notify;
 use tokio::time::timeout;
 use tokio_tungstenite::{accept_async, connect_async};
 
@@ -56,7 +57,12 @@ async fn start_full_server(
     let limiter_clone = limiter.clone();
     let storage_clone = storage.clone();
 
+    // Signal readiness once the accept loop starts — avoids ghost TCP probes
+    let ready = Arc::new(Notify::new());
+    let ready_tx = ready.clone();
+
     tokio::spawn(async move {
+        ready_tx.notify_one();
         loop {
             let (stream, _) = match listener.accept().await {
                 Ok(s) => s,
@@ -178,6 +184,9 @@ async fn start_full_server(
         }
     });
 
+    // Wait until the accept loop is running — prevents ghost TCP probe races
+    ready.notified().await;
+
     (url, limiter, storage, relay_pub)
 }
 
@@ -223,7 +232,6 @@ async fn raw_http_get(addr: &str, path: &str) -> String {
 #[tokio::test]
 async fn test_health_endpoint_returns_json() {
     let (url, _, _, _) = start_full_server(100).await;
-    common::wait_for_tcp(&url).await;
 
     let response = raw_http_get(&url, "/health").await;
 
@@ -241,7 +249,6 @@ async fn test_health_endpoint_returns_json() {
 #[tokio::test]
 async fn test_up_endpoint_returns_json() {
     let (url, _, _, _) = start_full_server(100).await;
-    common::wait_for_tcp(&url).await;
 
     let response = raw_http_get(&url, "/up").await;
 
@@ -257,7 +264,6 @@ async fn test_up_endpoint_returns_json() {
 #[tokio::test]
 async fn test_ready_endpoint_returns_json() {
     let (url, _, _, _) = start_full_server(100).await;
-    common::wait_for_tcp(&url).await;
 
     let response = raw_http_get(&url, "/ready").await;
 
@@ -273,7 +279,6 @@ async fn test_ready_endpoint_returns_json() {
 #[tokio::test]
 async fn test_unknown_http_path_returns_error() {
     let (url, _, _, _) = start_full_server(100).await;
-    common::wait_for_tcp(&url).await;
 
     let response = raw_http_get(&url, "/unknown").await;
 
@@ -293,7 +298,6 @@ async fn test_unknown_http_path_returns_error() {
 #[tokio::test]
 async fn test_websocket_upgrade_works_through_peek() {
     let (url, _, _, relay_pub) = start_full_server(100).await;
-    common::wait_for_tcp(&url).await;
 
     // Perform a full Noise NK handshake to verify the full pipeline works
     let mut client = connect_noise(&url, &relay_pub).await;
@@ -312,7 +316,6 @@ async fn test_websocket_upgrade_works_through_peek() {
 #[tokio::test]
 async fn test_connection_limit_rejects_excess() {
     let (url, limiter, _, _) = start_full_server(2).await;
-    common::wait_for_tcp(&url).await;
 
     // Open 2 connections (at limit) — raw WS connect without Noise protocol
     let (ws1, _) = connect_async(&url).await.unwrap();
@@ -368,7 +371,6 @@ async fn test_connection_limit_rejects_excess() {
 #[tokio::test]
 async fn test_connection_limit_releases_on_disconnect() {
     let (url, limiter, _, relay_pub) = start_full_server(1).await;
-    common::wait_for_tcp(&url).await;
 
     // First connection
     {
@@ -415,7 +417,6 @@ async fn test_connection_limit_releases_on_disconnect() {
 #[tokio::test]
 async fn test_non_http_non_ws_falls_through() {
     let (url, _, _, _) = start_full_server(100).await;
-    common::wait_for_tcp(&url).await;
 
     let port: u16 = url
         .strip_prefix("ws://127.0.0.1:")
