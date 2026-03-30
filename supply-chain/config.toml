@@ -468,14 +468,6 @@ criteria = "safe-to-run"
 version = "0.3.92"
 criteria = "safe-to-run"
 
-[[exemptions.winnow]]
-version = "0.7.15"
-criteria = "safe-to-deploy"
-
-[[exemptions.winnow]]
-version = "1.0.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.x509-parser]]
 version = "0.18.1"
 criteria = "safe-to-run"

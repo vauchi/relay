@@ -592,6 +592,20 @@ user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
+[[publisher.winnow]]
+version = "0.7.15"
+when = "2026-03-05"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
+[[publisher.winnow]]
+version = "1.0.1"
+when = "2026-03-30"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
 [[publisher.wit-bindgen]]
 version = "0.51.0"
 when = "2026-01-12"
@@ -630,15 +644,15 @@ user-login = "rozbb"
 user-name = "Michael Rosenberg"
 
 [[publisher.zerocopy]]
-version = "0.8.47"
-when = "2026-03-19"
+version = "0.8.48"
+when = "2026-03-28"
 user-id = 7178
 user-login = "joshlf"
 user-name = "Joshua Liebow-Feeser"
 
 [[publisher.zerocopy-derive]]
-version = "0.8.47"
-when = "2026-03-19"
+version = "0.8.48"
+when = "2026-03-28"
 user-id = 7178
 user-login = "joshlf"
 user-name = "Joshua Liebow-Feeser"
