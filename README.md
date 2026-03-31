@@ -3,17 +3,19 @@
 
 > **Mirror:** This repo is a read-only mirror of [gitlab.com/vauchi/relay](https://gitlab.com/vauchi/relay). Please open issues and merge requests there.
 
-[![Pipeline](https://vauchi.gitlab.io/relay/badges/pipeline.svg)](https://gitlab.com/vauchi/relay/-/pipelines)
-[![Coverage](https://vauchi.gitlab.io/relay/badges/coverage.svg)](https://gitlab.com/vauchi/relay/-/pipelines)
+[![Pipeline](https://img.shields.io/endpoint?url=https://vauchi.gitlab.io/relay/badges/pipeline.json&label=pipeline)](https://gitlab.com/vauchi/relay/-/pipelines)
+[![Coverage](https://img.shields.io/endpoint?url=https://vauchi.gitlab.io/relay/badges/coverage.json&label=coverage)](https://gitlab.com/vauchi/relay/-/pipelines)
 [![REUSE](https://api.reuse.software/badge/gitlab.com/vauchi/relay)](https://api.reuse.software/info/gitlab.com/vauchi/relay)
 
 > [!WARNING]
-> **Pre-Alpha Software** - This project is under heavy development and not ready for production use.
+> **Pre-Alpha Software** - This project is under heavy
+> development and not ready for production use.
 > APIs may change without notice. Use at your own risk.
 
 # Vauchi Relay
 
-Lightweight WebSocket relay server for Vauchi - stores and forwards encrypted blobs between clients.
+Lightweight WebSocket relay server for Vauchi - stores
+and forwards encrypted blobs between clients.
 
 ## Overview
 
@@ -25,7 +27,9 @@ The relay server is a zero-knowledge message broker. It:
 - Automatically expires old messages (30 days default)
 - Rate limits clients to prevent abuse
 
-**Privacy**: The server only sees encrypted blobs. It cannot read message contents, identify contacts, or access any user data.
+**Privacy**: The server only sees encrypted blobs.
+It cannot read message contents, identify contacts,
+or access any user data.
 
 ## Installation
 
@@ -76,8 +80,9 @@ Environment variables:
 | `RELAY_FEDERATION_PEER_TIMEOUT` | `30` | Peer handshake timeout in seconds |
 | `RELAY_FEDERATION_CAPACITY_INTERVAL` | `60` | Capacity check interval in seconds |
 
-**Note:** The 120-day TTL balances storage efficiency with allowing infrequent sync.
-SQLite storage (default) persists messages across server restarts.
+**Note:** The 120-day TTL balances storage efficiency
+with allowing infrequent sync. SQLite storage (default)
+persists messages across server restarts.
 
 ## Protocol
 
@@ -87,13 +92,14 @@ The relay uses a simple JSON protocol over WebSocket binary frames.
 
 Messages are length-prefixed JSON:
 
-```
+```text
 [4 bytes: length][JSON payload]
 ```
 
 ### Message Types
 
 **Handshake** (client → server):
+
 ```json
 {
   "version": 1,
@@ -107,6 +113,7 @@ Messages are length-prefixed JSON:
 ```
 
 **EncryptedUpdate** (client → server):
+
 ```json
 {
   "version": 1,
@@ -121,6 +128,7 @@ Messages are length-prefixed JSON:
 ```
 
 **Acknowledgment** (server → client):
+
 ```json
 {
   "version": 1,
@@ -136,7 +144,7 @@ Messages are length-prefixed JSON:
 
 ## Architecture
 
-```
+```text
 vauchi-relay/
 ├── src/
 │   ├── main.rs                  # Server entry point, WS routing
@@ -154,14 +162,21 @@ vauchi-relay/
 
 ### Components
 
-- **Handler**: Manages client WebSocket connections, parses messages, routes to storage
-- **Storage**: Thread-safe blob store with automatic TTL expiration (Memory or SQLite)
+- **Handler**: Manages client WebSocket connections,
+  parses messages, routes to storage
+- **Storage**: Thread-safe blob store with automatic
+  TTL expiration (Memory or SQLite)
 - **Rate Limiter**: Token bucket algorithm per client ID
-- **Federation Handler**: Accepts incoming peer relay connections, validates and stores offloaded blobs
-- **Federation Connector**: Maintains persistent connections to peer relays with exponential backoff
-- **OffloadManager**: Monitors storage usage and offloads blobs when above threshold
-- **Peer Registry**: Tracks connected peers, capacity, and communication channels
-- **Forwarding Hints**: Stores routing_id to peer relay mappings for client retrieval
+- **Federation Handler**: Accepts incoming peer relay
+  connections, validates and stores offloaded blobs
+- **Federation Connector**: Maintains persistent
+  connections to peer relays with exponential backoff
+- **OffloadManager**: Monitors storage usage and
+  offloads blobs when above threshold
+- **Peer Registry**: Tracks connected peers, capacity,
+  and communication channels
+- **Forwarding Hints**: Stores routing_id to peer relay
+  mappings for client retrieval
 
 ## Deployment
 
@@ -198,23 +213,37 @@ WantedBy=multi-user.target
 
 ## Security Considerations
 
-- **No Authentication**: The relay is open by design; security comes from E2E encryption
+- **No Authentication**: The relay is open by design;
+  security comes from E2E encryption
 - **Rate Limiting**: Prevents abuse and DoS
-- **SQLite Storage**: Messages persist across restarts (use `memory` backend for volatile storage)
-- **TLS**: Deploy behind a reverse proxy (nginx, caddy) for TLS termination
+- **SQLite Storage**: Messages persist across restarts
+  (use `memory` backend for volatile storage)
+- **TLS**: Deploy behind a reverse proxy (nginx, caddy)
+  for TLS termination
 
 ## Federation
 
-The relay supports static federation with peer relays for redundancy and scalability. When storage exceeds a configurable threshold (default 80%), the relay offloads its oldest blobs to peer relays and stores forwarding hints so clients can find their data.
+The relay supports static federation with peer relays
+for redundancy and scalability. When storage exceeds a
+configurable threshold (default 80%), the relay offloads
+its oldest blobs to peer relays and stores forwarding
+hints so clients can find their data.
 
 ### How It Works
 
-1. Configure peer relay URLs via `RELAY_FEDERATION_PEERS`
-2. The relay maintains persistent WebSocket connections to peers (`/federation` endpoint)
-3. When storage exceeds the offload threshold, the `OffloadManager` sends blobs to peers with available capacity
-4. Source relay stores forwarding hints (routing_id to peer relay mapping)
-5. When clients connect, they receive forwarding hints alongside any pending blobs
-6. Clients follow hints to retrieve offloaded blobs from peer relays
+1. Configure peer relay URLs via
+   `RELAY_FEDERATION_PEERS`
+2. The relay maintains persistent WebSocket connections
+   to peers (`/federation` endpoint)
+3. When storage exceeds the offload threshold, the
+   `OffloadManager` sends blobs to peers with
+   available capacity
+4. Source relay stores forwarding hints
+   (routing_id to peer relay mapping)
+5. When clients connect, they receive forwarding hints
+   alongside any pending blobs
+6. Clients follow hints to retrieve offloaded blobs
+   from peer relays
 
 ### Example: Two-Relay Setup
 
@@ -235,6 +264,7 @@ vauchi-relay
 ### Privacy Guarantees
 
 Federation preserves zero-knowledge:
+
 - Blobs are transferred as opaque ciphertext — peer relays cannot decrypt
 - `hop_count` prevents re-offloading loops (max 1 hop)
 - SHA-256 integrity hashing verifies blob data during transfer
@@ -243,13 +273,18 @@ Federation preserves zero-knowledge:
 
 ## Storage Considerations
 
-The default 120-day TTL enables users who rarely open the app to still receive contact updates.
+The default 120-day TTL enables users who rarely open
+the app to still receive contact updates.
 
 **Storage backends:**
-- `sqlite` (default): Persistent storage, survives restarts, disk-based
-- `memory`: Fast but volatile, lost on restart, RAM-based
+
+- `sqlite` (default): Persistent storage, survives
+  restarts, disk-based
+- `memory`: Fast but volatile, lost on restart,
+  RAM-based
 
 **For production deployments:**
+
 - Use SQLite (default) for message persistence
 - Set `RELAY_DATA_DIR` to a persistent volume
 - Monitor disk usage with long TTLs
