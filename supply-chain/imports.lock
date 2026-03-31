@@ -199,6 +199,13 @@ when = "2025-08-23"
 user-id = 55123
 user-login = "rust-lang-owner"
 
+[[publisher.js-sys]]
+version = "0.3.93"
+when = "2026-03-31"
+user-id = 145038
+user-login = "guybedford"
+user-name = "Guy Bedford"
+
 [[publisher.libc]]
 version = "0.2.183"
 when = "2026-03-08"
@@ -492,6 +499,34 @@ user-id = 1
 user-login = "alexcrichton"
 user-name = "Alex Crichton"
 
+[[publisher.wasm-bindgen]]
+version = "0.2.116"
+when = "2026-03-31"
+user-id = 145038
+user-login = "guybedford"
+user-name = "Guy Bedford"
+
+[[publisher.wasm-bindgen-macro]]
+version = "0.2.116"
+when = "2026-03-31"
+user-id = 145038
+user-login = "guybedford"
+user-name = "Guy Bedford"
+
+[[publisher.wasm-bindgen-macro-support]]
+version = "0.2.116"
+when = "2026-03-31"
+user-id = 145038
+user-login = "guybedford"
+user-name = "Guy Bedford"
+
+[[publisher.wasm-bindgen-shared]]
+version = "0.2.116"
+when = "2026-03-31"
+user-id = 145038
+user-login = "guybedford"
+user-name = "Guy Bedford"
+
 [[publisher.wasm-encoder]]
 version = "0.244.0"
 when = "2026-01-06"
@@ -507,6 +542,13 @@ user-login = "wasmtime-publish"
 version = "0.244.0"
 when = "2026-01-06"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
+
+[[publisher.web-sys]]
+version = "0.3.93"
+when = "2026-03-31"
+user-id = 145038
+user-login = "guybedford"
+user-name = "Guy Bedford"
 
 [[publisher.windows-sys]]
 version = "0.52.0"
