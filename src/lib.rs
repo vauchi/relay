@@ -5,6 +5,7 @@
 pub mod config;
 pub mod connection_limit;
 pub mod connection_registry;
+pub mod escrow;
 pub mod exchange_broker;
 pub mod federation_connector;
 pub mod federation_handler;
