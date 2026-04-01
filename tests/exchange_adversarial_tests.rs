@@ -15,6 +15,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
+use vauchi_relay::escrow::EscrowStore;
 use vauchi_relay::exchange_broker::ExchangeBroker;
 use vauchi_relay::handler::NonceTracker;
 use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
@@ -35,6 +36,7 @@ fn test_state() -> HttpApiState {
         exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
         nonce_tracker: Arc::new(NonceTracker::new()),
         ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(300)),
+        escrow_store: Arc::new(EscrowStore::new(100)),
     }
 }
 
@@ -52,6 +54,7 @@ fn test_state_strict_rate_limit() -> HttpApiState {
         exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
         nonce_tracker: Arc::new(NonceTracker::new()),
         ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(300)),
+        escrow_store: Arc::new(EscrowStore::new(100)),
     }
 }
 

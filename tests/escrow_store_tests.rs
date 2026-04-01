@@ -4,7 +4,7 @@
 
 //! Tests for the escrow store (gated blob exchange).
 
-use vauchi_protocol::escrow::{EscrowMessage, EscrowResponse, MAX_BLOB_BYTES, MAX_TTL_SECONDS};
+use vauchi_protocol::escrow::{EscrowMessage, EscrowResponse, MAX_TTL_SECONDS};
 use vauchi_relay::escrow::{EscrowStore, MAX_ACTIVE_GATES};
 
 fn gate_hash() -> String {

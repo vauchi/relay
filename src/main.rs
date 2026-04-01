@@ -23,6 +23,7 @@ use tracing::{error, info};
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_limit::ConnectionLimiter;
 use vauchi_relay::connection_registry::ConnectionRegistry;
+use vauchi_relay::escrow::{self, EscrowStore};
 use vauchi_relay::exchange_broker::ExchangeBroker;
 use vauchi_relay::federation_connector::{self, OffloadManager};
 use vauchi_relay::federation_handler::{self, FederationDeps};
@@ -480,6 +481,20 @@ async fn main() {
             }
         });
 
+        let escrow_store = Arc::new(EscrowStore::new(escrow::MAX_ACTIVE_GATES));
+
+        // Spawn escrow store cleanup task (60s interval per spec)
+        let cleanup_escrow = escrow_store.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                let removed = cleanup_escrow.cleanup_expired();
+                if removed > 0 {
+                    info!("Cleaned up {} expired escrow gates", removed);
+                }
+            }
+        });
+
         let api_state = HttpApiState {
             storage: storage.clone(),
             rate_limiter: rate_limiter.clone(),
@@ -492,6 +507,7 @@ async fn main() {
             exchange_broker,
             nonce_tracker: nonce_tracker.clone(),
             ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(300)),
+            escrow_store,
         };
 
         http_router = http_router.merge(create_v2_router(api_state));

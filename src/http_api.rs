@@ -24,6 +24,7 @@ use vauchi_protocol::v2::{
     V2FetchRequest, V2PurgeRequest, V2RegisterRequest, V2SendRequest,
 };
 
+use crate::escrow::EscrowStore;
 use crate::exchange_broker::ExchangeBroker;
 use crate::handler::NonceTracker;
 use crate::metrics::RelayMetrics;
@@ -53,6 +54,8 @@ pub struct HttpApiState {
     pub nonce_tracker: Arc<NonceTracker>,
     /// Separate rate limiter for OHTTP-routed exchange requests (higher capacity).
     pub ohttp_exchange_rate_limiter: Arc<RateLimiter>,
+    /// Escrow store for gated blob exchange (Link mode + relay fallback).
+    pub escrow_store: Arc<EscrowStore>,
     // TODO: recovery_storage will be added when /v2/recovery endpoint is implemented
 }
 
@@ -402,6 +405,23 @@ async fn dispatch_ohttp_action(
                 return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
             }
             handle_ohttp_exchange_complete_logic(state, req)
+        }
+        "escrow" => {
+            let msg: vauchi_protocol::escrow::EscrowMessage = match serde_json::from_value(payload)
+            {
+                Ok(m) => m,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad escrow payload: {e}") });
+                }
+            };
+            if let Err(errors) = msg.validate() {
+                let detail: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+                return serde_json::json!({ "status": "error", "error": detail.join("; ") });
+            }
+            let resp = state.escrow_store.handle(msg);
+            serde_json::to_value(resp).unwrap_or_else(
+                |e| serde_json::json!({ "status": "error", "error": format!("serialize: {e}") }),
+            )
         }
         unknown => {
             serde_json::json!({ "status": "error", "error": format!("unknown action: {unknown}") })

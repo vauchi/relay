@@ -12,6 +12,7 @@ use axum::http::{Request, StatusCode};
 use base64::Engine;
 use tower::ServiceExt;
 
+use vauchi_relay::escrow::EscrowStore;
 use vauchi_relay::exchange_broker::ExchangeBroker;
 use vauchi_relay::handler::NonceTracker;
 use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
@@ -33,6 +34,7 @@ fn create_test_state() -> HttpApiState {
         exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
         nonce_tracker: Arc::new(NonceTracker::new()),
         ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(300)),
+        escrow_store: Arc::new(EscrowStore::new(100)),
     }
 }
 
@@ -50,6 +52,7 @@ fn create_test_state_with_ohttp() -> HttpApiState {
         exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
         nonce_tracker: Arc::new(NonceTracker::new()),
         ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(300)),
+        escrow_store: Arc::new(EscrowStore::new(100)),
     }
 }
 
@@ -720,6 +723,7 @@ async fn test_v2_send_quota_enforced() {
         exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
         nonce_tracker: Arc::new(NonceTracker::new()),
         ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(300)),
+        escrow_store: Arc::new(EscrowStore::new(100)),
     };
     let app = create_v2_router(state);
 
