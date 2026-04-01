@@ -549,6 +549,12 @@ user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-08-20"
 end = "2027-03-10"
 
+[[trusted.serde_spanned]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-01-20"
+end = "2027-04-01"
+
 [[trusted.slab]]
 criteria = "safe-to-deploy"
 user-id = 6741 # Alice Ryhl (Darksonn)
@@ -656,6 +662,18 @@ criteria = "safe-to-deploy"
 user-id = 6743 # Ed Page (epage)
 start = "2021-09-13"
 end = "2027-03-10"
+
+[[trusted.toml_parser]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2025-07-08"
+end = "2027-04-01"
+
+[[trusted.toml_writer]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2025-07-08"
+end = "2027-04-01"
 
 [[trusted.tower]]
 criteria = "safe-to-deploy"

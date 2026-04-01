@@ -51,8 +51,8 @@ user-login = "justsmth"
 user-name = "Justin W Smith"
 
 [[publisher.aws-lc-sys]]
-version = "0.39.0"
-when = "2026-03-19"
+version = "0.39.1"
+when = "2026-03-27"
 user-id = 156764
 user-login = "justsmth"
 user-name = "Justin W Smith"
@@ -198,13 +198,6 @@ version = "0.1.34"
 when = "2025-08-23"
 user-id = 55123
 user-login = "rust-lang-owner"
-
-[[publisher.js-sys]]
-version = "0.3.93"
-when = "2026-03-31"
-user-id = 145038
-user-login = "guybedford"
-user-name = "Guy Bedford"
 
 [[publisher.libc]]
 version = "0.2.183"
@@ -359,6 +352,13 @@ user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
+[[publisher.serde_spanned]]
+version = "1.1.1"
+when = "2026-03-31"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
 [[publisher.slab]]
 version = "0.4.12"
 when = "2026-01-31"
@@ -425,6 +425,20 @@ user-name = "Alice Ryhl"
 [[publisher.toml]]
 version = "0.9.12+spec-1.1.0"
 when = "2026-02-10"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
+[[publisher.toml_parser]]
+version = "1.1.1+spec-1.1.0"
+when = "2026-03-31"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
+[[publisher.toml_writer]]
+version = "1.1.1+spec-1.1.0"
+when = "2026-03-31"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -499,34 +513,6 @@ user-id = 1
 user-login = "alexcrichton"
 user-name = "Alex Crichton"
 
-[[publisher.wasm-bindgen]]
-version = "0.2.116"
-when = "2026-03-31"
-user-id = 145038
-user-login = "guybedford"
-user-name = "Guy Bedford"
-
-[[publisher.wasm-bindgen-macro]]
-version = "0.2.116"
-when = "2026-03-31"
-user-id = 145038
-user-login = "guybedford"
-user-name = "Guy Bedford"
-
-[[publisher.wasm-bindgen-macro-support]]
-version = "0.2.116"
-when = "2026-03-31"
-user-id = 145038
-user-login = "guybedford"
-user-name = "Guy Bedford"
-
-[[publisher.wasm-bindgen-shared]]
-version = "0.2.116"
-when = "2026-03-31"
-user-id = 145038
-user-login = "guybedford"
-user-name = "Guy Bedford"
-
 [[publisher.wasm-encoder]]
 version = "0.244.0"
 when = "2026-01-06"
@@ -542,13 +528,6 @@ user-login = "wasmtime-publish"
 version = "0.244.0"
 when = "2026-01-06"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
-
-[[publisher.web-sys]]
-version = "0.3.93"
-when = "2026-03-31"
-user-id = 145038
-user-login = "guybedford"
-user-name = "Guy Bedford"
 
 [[publisher.windows-sys]]
 version = "0.52.0"
@@ -954,11 +933,6 @@ This crate is a single-file crate that does what it says on the tin. There are
 a few `unsafe` blocks related to utf-8 validation which are locally verifiable
 as correct and otherwise this crate is good to go.
 """
-
-[[audits.bytecode-alliance.audits.pin-utils]]
-who = "Pat Hickey <phickey@fastly.com>"
-criteria = "safe-to-deploy"
-version = "0.1.0"
 
 [[audits.bytecode-alliance.audits.pkg-config]]
 who = "Pat Hickey <phickey@fastly.com>"
