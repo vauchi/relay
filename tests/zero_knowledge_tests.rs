@@ -9,14 +9,17 @@
 //! ADR-029 (daily rotating tokens prevent correlation) hold in practice.
 //!
 //! P1 scenarios from: `_private/docs/problems/2026-03-29-relay-zero-knowledge-e2e`
+//! P2 scenarios: log redaction audit, cross-epoch unlinkability
 
 mod common;
 
 use std::io::Read;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tempfile::TempDir;
+use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::layer::SubscriberExt;
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::mailbox_registry::MailboxRegistry;
@@ -226,6 +229,181 @@ async fn test_duress_indistinguishable_from_card_update() {
     // This test verifies the protocol-level indistinguishability.
 
     client.close().await;
+}
+
+// ============================================================================
+// P2: Log redaction — no PII in relay log output
+// ============================================================================
+
+/// Shared buffer that captures tracing output.
+#[derive(Clone)]
+struct LogCapture(Arc<Mutex<Vec<u8>>>);
+
+impl LogCapture {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new(Vec::new())))
+    }
+
+    fn contents(&self) -> String {
+        let buf = self.0.lock().unwrap();
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+}
+
+impl std::io::Write for LogCapture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> MakeWriter<'a> for LogCapture {
+    type Writer = LogCapture;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+// @scenario: zero_knowledge.feature - Relay logs contain no PII or tokens
+#[tokio::test]
+async fn test_log_redaction_no_pii_in_debug_logs() {
+    let (deps, relay_pub, _, _, _dir) = test_deps_with_file_storage();
+
+    // Set up tracing subscriber that captures all log output to a buffer.
+    let capture = LogCapture::new();
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_writer(capture.clone())
+        .with_ansi(false);
+    let subscriber = tracing_subscriber::registry().with(fmt_layer);
+
+    let url = {
+        // Install our capturing subscriber for the duration of the test.
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let url = start_test_server(deps).await;
+
+        let mut client = connect_noise(&url, &relay_pub).await;
+        let client_id = common::generate_test_client_id(1);
+        let _ack = client.do_handshake(&client_id).await;
+
+        // Send a blob with recognizable content
+        let recipient_token = common::generate_test_client_id(2);
+        let secret_content = b"SuperSecretContactCard12345";
+        let update = make_encrypted_update(&recipient_token, secret_content);
+        let resp = client.send_recv(&update).await;
+        assert_eq!(resp["payload"]["status"], "Stored");
+
+        client.close().await;
+        // Short delay for async log flushing
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        url
+    };
+    let _ = url;
+
+    let logs = capture.contents();
+
+    // The relay SHOULD have logged something (connection, handshake, stored blob).
+    assert!(
+        !logs.is_empty(),
+        "Expected relay to produce debug/info log output"
+    );
+
+    // Critical assertions: no client-provided secrets appear in logs.
+    let client_id = common::generate_test_client_id(1);
+    let recipient_token = common::generate_test_client_id(2);
+    let secret_content = "SuperSecretContactCard12345";
+
+    assert!(
+        !logs.contains(&client_id),
+        "Client ID must NOT appear in relay logs.\nLogs:\n{logs}"
+    );
+    assert!(
+        !logs.contains(&recipient_token),
+        "Recipient token must NOT appear in relay logs.\nLogs:\n{logs}"
+    );
+    assert!(
+        !logs.contains(secret_content),
+        "Blob content must NOT appear in relay logs.\nLogs:\n{logs}"
+    );
+}
+
+// ============================================================================
+// P2: Cross-epoch unlinkability — token rotation breaks correlation
+// ============================================================================
+
+// @scenario: zero_knowledge.feature - Daily token rotation prevents contact graph correlation
+#[tokio::test]
+async fn test_cross_epoch_token_rotation_unlinkability() {
+    // Simulates the effect of ADR-029 daily token rotation.
+    // The client registers with different tokens at different "epochs".
+    // The relay should have no way to link the two tokens.
+    let (deps, relay_pub, storage, _, _dir) = test_deps_with_file_storage();
+    let url = start_multi_server(deps).await;
+
+    // Epoch N: Alice sends to Bob using Bob's epoch-N token.
+    let mut alice_e1 = connect_noise(&url, &relay_pub).await;
+    let alice_id_e1 = common::generate_test_client_id(1);
+    let _ack = alice_e1.do_handshake(&alice_id_e1).await;
+
+    let bob_token_epoch_n = common::generate_test_client_id(100);
+    let blob_epoch_n = make_encrypted_update(&bob_token_epoch_n, b"epoch-n-card-update");
+    let resp = alice_e1.send_recv(&blob_epoch_n).await;
+    assert_eq!(resp["payload"]["status"], "Stored");
+    alice_e1.close().await;
+
+    // Epoch N+1: Alice sends to Bob using Bob's rotated epoch-N+1 token.
+    // The new token is completely unrelated to the old one (derived from
+    // a different daily seed via HKDF, per ADR-029).
+    let mut alice_e2 = connect_noise(&url, &relay_pub).await;
+    let alice_id_e2 = common::generate_test_client_id(3);
+    let _ack = alice_e2.do_handshake(&alice_id_e2).await;
+
+    let bob_token_epoch_n1 = common::generate_test_client_id(101);
+    let blob_epoch_n1 = make_encrypted_update(&bob_token_epoch_n1, b"epoch-n1-card-update");
+    let resp = alice_e2.send_recv(&blob_epoch_n1).await;
+    assert_eq!(resp["payload"]["status"], "Stored");
+    alice_e2.close().await;
+
+    // Relay perspective: it has blobs under two different tokens.
+    // There must be NO stored field that links these tokens together.
+    let blobs_epoch_n = storage.peek(&bob_token_epoch_n);
+    let blobs_epoch_n1 = storage.peek(&bob_token_epoch_n1);
+
+    assert_eq!(blobs_epoch_n.len(), 1, "Epoch N should have 1 blob");
+    assert_eq!(blobs_epoch_n1.len(), 1, "Epoch N+1 should have 1 blob");
+
+    // The relay cannot know these belong to the same recipient because:
+    // 1. The tokens are unrelated (independent HKDF derivations)
+    // 2. No sender identity links them (client_id is not stored)
+    // 3. No metadata field connects the two token namespaces
+    // Verify: neither epoch's token appears in the other's blob data.
+    let blob_n_data = &blobs_epoch_n[0].data;
+    let blob_n1_data = &blobs_epoch_n1[0].data;
+
+    assert!(
+        !contains_subsequence(blob_n_data, bob_token_epoch_n1.as_bytes()),
+        "Epoch N blob must not reference epoch N+1 token"
+    );
+    assert!(
+        !contains_subsequence(blob_n1_data, bob_token_epoch_n.as_bytes()),
+        "Epoch N+1 blob must not reference epoch N token"
+    );
+
+    // Also verify: neither Alice identity from either epoch appears in storage.
+    let db_bytes = read_db_bytes(_dir.path());
+    assert!(
+        !contains_subsequence(&db_bytes, alice_id_e1.as_bytes()),
+        "Alice epoch N client_id must NOT appear in storage"
+    );
+    assert!(
+        !contains_subsequence(&db_bytes, alice_id_e2.as_bytes()),
+        "Alice epoch N+1 client_id must NOT appear in storage"
+    );
 }
 
 // ============================================================================
