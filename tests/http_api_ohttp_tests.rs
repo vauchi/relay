@@ -75,16 +75,16 @@ async fn test_ohttp_gateway_decrypt_and_route_send() {
     let (enc_req, client_resp) = ohttp_encrypt(&key_bytes, &inner);
 
     let resp = post_ohttp_bytes(&app, enc_req).await;
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .expect("content-type must be present");
-    assert_eq!(ct, "message/ohttp-res");
-
-    let enc_resp_bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
-    let body = ohttp_decrypt(client_resp, &enc_resp_bytes);
+    let status = resp.status();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+    if status != StatusCode::OK {
+        panic!(
+            "OHTTP request failed with status {status}: {}",
+            String::from_utf8_lossy(&body_bytes)
+        );
+    }
+    assert_eq!(status, StatusCode::OK);
+    let body = ohttp_decrypt(client_resp, &body_bytes);
     assert_eq!(body["status"], "ok", "inner response status must be ok");
     assert!(
         body["blob_id"].is_string(),

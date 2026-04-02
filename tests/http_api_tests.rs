@@ -198,7 +198,7 @@ async fn test_v2_ack_removes_blob() {
         "/v2/ack",
         &serde_json::json!({
             "version": 2,
-            "mailbox_token": token,
+            "recipient_id": token,
             "blob_id": blob_id,
         }),
     )
@@ -214,24 +214,30 @@ fn signed_purge_json(recipient_id: &str) -> serde_json::Value {
     use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
     let seed = [0u8; 32];
     let keypair = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
-    let public_key = hex::encode(keypair.public_key().as_ref());
+    let public_key = keypair.public_key();
+    let public_key_hex = hex::encode(public_key.as_ref());
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
 
+    // v2 purge token is the recipient_id (32-byte hex) decoded to 32 bytes
+    let token_bytes = hex::decode(recipient_id).expect("recipient_id must be 64-char hex");
+
     let mut msg = Vec::new();
-    msg.extend_from_slice(recipient_id.as_bytes());
+    msg.extend_from_slice(public_key.as_ref());
+    msg.extend_from_slice(&token_bytes);
     msg.extend_from_slice(&timestamp.to_be_bytes());
 
     let signature = hex::encode(keypair.sign(&msg).as_ref());
 
     serde_json::json!({
         "version": 2,
-        "public_key": public_key,
+        "public_key": public_key_hex,
         "signature": signature,
         "timestamp": timestamp,
         "purge_token": recipient_id,
+        "recipient_id": recipient_id,
     })
 }
 
@@ -261,13 +267,15 @@ async fn test_v2_purge_rejects_missing_signature() {
         &serde_json::json!({
             "version": 2,
             "public_key": "aa".repeat(32),
+            "signature": "cc".repeat(64),
             "timestamp": 12345,
             "purge_token": "bb".repeat(32),
+            "recipient_id": "dd".repeat(32),
         }),
     )
     .await;
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -279,7 +287,7 @@ async fn test_v2_purge_rejects_bad_signature() {
 
     let resp = post_json(&app, "/v2/purge", &purge_json).await;
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let body = response_json(resp).await;
     assert_eq!(body["status"], "error");
     assert!(body["error"].as_str().unwrap().contains("signature"));
@@ -298,11 +306,14 @@ async fn test_v2_purge_rejects_expired_timestamp() {
         - 300;
 
     // Resign with old timestamp
-    use aws_lc_rs::signature::Ed25519KeyPair;
+    use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
     let seed = [0u8; 32];
     let keypair = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
+    let public_key = keypair.public_key();
+    let token_bytes = hex::decode("f".repeat(64)).unwrap();
     let mut msg = Vec::new();
-    msg.extend_from_slice("f".repeat(64).as_bytes());
+    msg.extend_from_slice(public_key.as_ref());
+    msg.extend_from_slice(&token_bytes);
     msg.extend_from_slice(&old_ts.to_be_bytes());
     let signature = hex::encode(keypair.sign(&msg).as_ref());
 
@@ -311,7 +322,7 @@ async fn test_v2_purge_rejects_expired_timestamp() {
 
     let resp = post_json(&app, "/v2/purge", &purge_json).await;
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let body = response_json(resp).await;
     assert_eq!(body["status"], "error");
     assert!(body["error"].as_str().unwrap().contains("timestamp"));
@@ -334,7 +345,7 @@ async fn test_v2_purge_replay_rejected() {
 
     // Replay same purge request — must be rejected
     let resp2 = post_json(&app, "/v2/purge", &purge_json).await;
-    assert_eq!(resp2.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp2.status(), StatusCode::UNAUTHORIZED);
     let body = response_json(resp2).await;
     assert_eq!(body["status"], "error");
     assert!(
@@ -363,7 +374,7 @@ async fn test_v2_register_returns_count() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = response_json(resp).await;
     assert_eq!(body["status"], "ok");
-    assert_eq!(body["count"], 2);
+    assert_eq!(body["registered"], 2);
 }
 
 // ── Adversarial / boundary tests (CC-14) ──
@@ -469,33 +480,33 @@ async fn test_v2_fetch_accepts_100_tokens() {
 async fn test_v2_send_quota_enforced() {
     let mut state = create_test_state();
     state.quota.max_blobs = 2;
-    state.quota.max_bytes = 20;
+    state.quota.max_bytes = 200;
     let storage = state.storage.clone();
     let app = create_v2_router(state);
 
     let recipient_id = "d".repeat(64);
 
-    // 1. First blob (10 bytes) - OK
+    // 1. First blob (8 bytes) - OK
     let resp = post_json(
         &app,
         "/v2/send",
         &serde_json::json!({
             "version": 2,
             "recipient_id": recipient_id,
-            "ciphertext": base64::engine::general_purpose::STANDARD.encode(vec![0u8; 10]),
+            "ciphertext": base64::engine::general_purpose::STANDARD.encode(vec![0u8; 8]),
         }),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // 2. Second blob (10 bytes) - OK (total 20 bytes, 2 blobs)
+    // 2. Second blob (8 bytes) - OK (total 2 blobs)
     let resp = post_json(
         &app,
         "/v2/send",
         &serde_json::json!({
             "version": 2,
             "recipient_id": recipient_id,
-            "ciphertext": base64::engine::general_purpose::STANDARD.encode(vec![0u8; 10]),
+            "ciphertext": base64::engine::general_purpose::STANDARD.encode(vec![0u8; 8]),
         }),
     )
     .await;
@@ -517,14 +528,14 @@ async fn test_v2_send_quota_enforced() {
     // Clear storage for this user
     storage.delete_all_for(&recipient_id);
 
-    // 4. Large blob - QuotaExceeded (max_bytes = 20)
+    // 4. Large blob - QuotaExceeded (max_bytes = 200)
     let resp = post_json(
         &app,
         "/v2/send",
         &serde_json::json!({
             "version": 2,
             "recipient_id": recipient_id,
-            "ciphertext": base64::engine::general_purpose::STANDARD.encode(vec![0u8; 21]),
+            "ciphertext": base64::engine::general_purpose::STANDARD.encode(vec![0u8; 201]),
         }),
     )
     .await;

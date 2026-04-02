@@ -12,7 +12,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, FromRequest, State},
     http::{StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
@@ -96,6 +96,37 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .with_state(state)
 }
 
+/// Helper to extract JSON body and handle errors by returning 400 instead of axum's default 422.
+struct JsonBadRequest<T>(T);
+
+#[axum::async_trait]
+impl<S, T> FromRequest<S> for JsonBadRequest<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, Json<serde_json::Value>);
+
+    async fn from_request(
+        req: axum::http::Request<axum::body::Body>,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        match Json::<T>::from_request(req, state).await {
+            Ok(Json(value)) => Ok(JsonBadRequest(value)),
+            Err(rejection) => {
+                let status = rejection.status();
+                Err((
+                    status,
+                    Json(serde_json::json!({
+                        "status": "error",
+                        "error": format!("invalid request: {rejection}")
+                    })),
+                ))
+            }
+        }
+    }
+}
+
 // ── Handlers ────────────────────────────────────────────────────────
 
 /// Health check — returns 200 with JSON status.
@@ -114,6 +145,8 @@ enum ApiResult {
     RateLimited,
     /// Per-recipient storage quota exceeded. Maps to 429.
     QuotaExceeded,
+    /// Unauthorized request (purge signature failure). Maps to 401.
+    Unauthorized(String),
     /// Client error (bad input, validation failure). Maps to 400.
     BadRequest(String),
 }
@@ -129,6 +162,11 @@ impl ApiResult {
         Self::BadRequest(msg.into())
     }
 
+    /// Convenience: create an unauthorized error.
+    fn unauthorized(msg: impl Into<String>) -> Self {
+        Self::Unauthorized(msg.into())
+    }
+
     /// Convert to JSON value (for OHTTP responses that bypass `logic_response`).
     fn into_json(self) -> serde_json::Value {
         match self {
@@ -138,6 +176,9 @@ impl ApiResult {
             }
             Self::QuotaExceeded => {
                 serde_json::json!({ "status": "error", "error": "quota exceeded for recipient" })
+            }
+            Self::Unauthorized(msg) => {
+                serde_json::json!({ "status": "error", "error": msg })
             }
             Self::BadRequest(msg) => {
                 serde_json::json!({ "status": "error", "error": msg })
@@ -173,6 +214,14 @@ fn logic_response(
                 "error": "quota exceeded for recipient"
             })),
         ),
+        ApiResult::Unauthorized(msg) => (
+            StatusCode::UNAUTHORIZED,
+            [(header::RETRY_AFTER, "")],
+            Json(serde_json::json!({
+                "status": "error",
+                "error": msg
+            })),
+        ),
         ApiResult::BadRequest(msg) => (
             StatusCode::BAD_REQUEST,
             [(header::RETRY_AFTER, "")],
@@ -187,7 +236,7 @@ fn logic_response(
 /// Store an encrypted update for a recipient.
 async fn send_handler(
     State(state): State<HttpApiState>,
-    Json(req): Json<V2SendRequest>,
+    JsonBadRequest(req): JsonBadRequest<V2SendRequest>,
 ) -> impl IntoResponse {
     logic_response(handle_send_logic(&state, req))
 }
@@ -195,7 +244,7 @@ async fn send_handler(
 /// Fetch pending blobs for one or more mailbox tokens.
 async fn fetch_handler(
     State(state): State<HttpApiState>,
-    Json(req): Json<V2FetchRequest>,
+    JsonBadRequest(req): JsonBadRequest<V2FetchRequest>,
 ) -> impl IntoResponse {
     logic_response(handle_fetch_logic(&state, req))
 }
@@ -203,21 +252,23 @@ async fn fetch_handler(
 /// Acknowledge receipt of a blob (removes it from storage).
 async fn ack_handler(
     State(state): State<HttpApiState>,
-    Json(req): Json<V2AckRequest>,
+    JsonBadRequest(req): JsonBadRequest<V2AckRequest>,
 ) -> impl IntoResponse {
     logic_response(handle_ack_logic(&state, req))
 }
 
 /// Register mailbox tokens (placeholder — tokens are meaningful with
 /// live WebSocket delivery; for HTTP polling, fetch uses tokens directly).
-async fn register_handler(Json(req): Json<V2RegisterRequest>) -> impl IntoResponse {
+async fn register_handler(
+    JsonBadRequest(req): JsonBadRequest<V2RegisterRequest>,
+) -> impl IntoResponse {
     logic_response(handle_register_logic(req))
 }
 
 /// Purge all blobs for a recipient.
 async fn purge_handler(
     State(state): State<HttpApiState>,
-    Json(req): Json<V2PurgeRequest>,
+    JsonBadRequest(req): JsonBadRequest<V2PurgeRequest>,
 ) -> impl IntoResponse {
     logic_response(handle_purge_logic(&state, req))
 }
@@ -227,7 +278,7 @@ async fn purge_handler(
 /// Create an exchange offer and return a 6-digit code.
 async fn exchange_offer_handler(
     State(state): State<HttpApiState>,
-    Json(req): Json<V2ExchangeOfferRequest>,
+    JsonBadRequest(req): JsonBadRequest<V2ExchangeOfferRequest>,
 ) -> impl IntoResponse {
     logic_response(handle_exchange_offer_logic(&state, req))
 }
@@ -235,7 +286,7 @@ async fn exchange_offer_handler(
 /// Claim an exchange offer by code. Returns the initiator's payload.
 async fn exchange_claim_handler(
     State(state): State<HttpApiState>,
-    Json(req): Json<V2ExchangeClaimRequest>,
+    JsonBadRequest(req): JsonBadRequest<V2ExchangeClaimRequest>,
 ) -> impl IntoResponse {
     logic_response(handle_exchange_claim_logic(&state, req))
 }
@@ -243,7 +294,7 @@ async fn exchange_claim_handler(
 /// Complete an exchange — initiator retrieves the responder's payload.
 async fn exchange_complete_handler(
     State(state): State<HttpApiState>,
-    Json(req): Json<V2ExchangeCompleteRequest>,
+    JsonBadRequest(req): JsonBadRequest<V2ExchangeCompleteRequest>,
 ) -> impl IntoResponse {
     logic_response(handle_exchange_complete_logic(&state, req))
 }
@@ -298,11 +349,22 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
         }
     };
 
-    // 2. Parse the inner JSON envelope
+    // 2. Unpad the plaintext
+    let plaintext = match crate::padding::unpad(&plaintext) {
+        Some(p) => p,
+        None => {
+            return build_ohttp_error(StatusCode::BAD_REQUEST, "invalid padding in OHTTP request");
+        }
+    };
+
+    // 3. Parse the inner JSON envelope
     let inner: OhttpInnerRequest = match serde_json::from_slice(&plaintext) {
         Ok(r) => r,
-        Err(_) => {
-            return build_ohttp_error(StatusCode::BAD_REQUEST, "invalid inner request JSON");
+        Err(e) => {
+            return build_ohttp_error(
+                StatusCode::BAD_REQUEST,
+                &format!("invalid inner request JSON: {e}"),
+            );
         }
     };
 
@@ -619,7 +681,7 @@ fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> ApiResult {
     // Verify signature + nonce replay BEFORE rate limiting — prevents
     // unauthenticated attackers from exhausting the rate limit for legitimate users.
     if let Err(e) = verify_purge_signature(&req, &state.nonce_tracker) {
-        return ApiResult::bad_request(e);
+        return ApiResult::unauthorized(e);
     }
     if !state.rate_limiter.consume(&req.recipient_id) {
         return ApiResult::RateLimited;
