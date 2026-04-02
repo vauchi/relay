@@ -119,18 +119,6 @@ criteria = "safe-to-deploy"
 version = "0.3.32"
 criteria = "safe-to-deploy"
 
-[[exemptions.futures-core]]
-version = "0.3.32"
-criteria = "safe-to-deploy"
-
-[[exemptions.futures-macro]]
-version = "0.3.32"
-criteria = "safe-to-deploy"
-
-[[exemptions.futures-sink]]
-version = "0.3.32"
-criteria = "safe-to-deploy"
-
 [[exemptions.futures-task]]
 version = "0.3.32"
 criteria = "safe-to-deploy"
@@ -203,10 +191,6 @@ criteria = "safe-to-deploy"
 version = "0.3.94"
 criteria = "safe-to-deploy"
 
-[[exemptions.libc]]
-version = "0.2.184"
-criteria = "safe-to-deploy"
-
 [[exemptions.libsqlite3-sys]]
 version = "0.30.1"
 criteria = "safe-to-deploy"
@@ -224,10 +208,6 @@ version = "0.3.17"
 criteria = "safe-to-deploy"
 
 [[exemptions.minimal-lexical]]
-version = "0.2.1"
-criteria = "safe-to-run"
-
-[[exemptions.num-conv]]
 version = "0.2.1"
 criteria = "safe-to-run"
 
@@ -370,10 +350,6 @@ criteria = "safe-to-run"
 
 [[exemptions.tokio-tungstenite]]
 version = "0.24.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.toml_parser]]
-version = "1.1.2+spec-1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tower-layer]]
