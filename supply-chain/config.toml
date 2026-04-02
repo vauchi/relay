@@ -372,6 +372,10 @@ criteria = "safe-to-run"
 version = "0.24.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.toml_parser]]
+version = "1.1.2+spec-1.1.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.tower-layer]]
 version = "0.3.3"
 criteria = "safe-to-deploy"
