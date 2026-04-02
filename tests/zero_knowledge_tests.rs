@@ -20,6 +20,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::handler::{self, ConnectionDeps, QuotaLimits};
 use vauchi_relay::mailbox_registry::MailboxRegistry;
@@ -283,7 +284,7 @@ async fn test_log_redaction_no_pii_in_debug_logs() {
 
     let url = {
         // Install our capturing subscriber for the duration of the test.
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let _guard = subscriber.set_default();
         let url = start_test_server(deps).await;
 
         let mut client = connect_noise(&url, &relay_pub).await;
@@ -299,7 +300,7 @@ async fn test_log_redaction_no_pii_in_debug_logs() {
 
         client.close().await;
         // Short delay for async log flushing
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
         url
     };

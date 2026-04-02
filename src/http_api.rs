@@ -462,6 +462,10 @@ async fn dispatch_ohttp_action(
             if !state.ohttp_exchange_rate_limiter.consume("ohttp_escrow") {
                 return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
             }
+            let mut payload = payload;
+            if let Some(escrow_action) = payload.get_mut("escrow_action") {
+                payload["action"] = escrow_action.take();
+            }
             let msg: vauchi_protocol::escrow::EscrowMessage = match serde_json::from_value(payload)
             {
                 Ok(m) => m,

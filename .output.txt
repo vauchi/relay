@@ -1,0 +1,580 @@
+=== Pre-commit checks ===
+[1/4] Checking spelling...
+  Spelling OK
+[2/4] Checking Rust formatting...
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/http_api_exchange_tests.rs:11:
+
+ use vauchi_relay::http_api::create_v2_router;
+
+-use common::http_helpers::{
+-    create_test_state_with_ohttp, post_json, response_json,
+-};
++use common::http_helpers::{create_test_state_with_ohttp, post_json, response_json};
+
+ // ── Exchange ──
+
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/http_api_exchange_tests.rs:55:
+         }),
+     )
+     .await;
+-    let code = response_json(resp).await["code"].as_str().unwrap().to_string();
++    let code = response_json(resp).await["code"]
++        .as_str()
++        .unwrap()
++        .to_string();
+
+     // 2. Claim
+     let resp = post_json(
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/http_api_exchange_tests.rs:89:
+     )
+     .await;
+     let body = response_json(resp).await;
+-    let code = body["code"].as_str().expect(&format!("No code in offer response: {body}")).to_string();
++    let code = body["code"]
++        .as_str()
++        .expect(&format!("No code in offer response: {body}"))
++        .to_string();
+
+     // Bob claims
+     let resp = post_json(
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/http_api_exchange_tests.rs:134:
+     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+     let body = response_json(resp).await;
+     assert_eq!(body["status"], "error", "Should have error status: {body}");
+-    assert!(body["error"].as_str().unwrap().contains("TTL"), "Error should mention TTL: {body}");
++    assert!(
++        body["error"].as_str().unwrap().contains("TTL"),
++        "Error should mention TTL: {body}"
++    );
+ }
+
+ #[tokio::test]
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/http_api_ohttp_tests.rs:172:
+ async fn test_ohttp_missing_version_field_rejected() {
+     let app = create_v2_router(create_test_state_with_ohttp());
+     let key_resp = get_ohttp_key(&app).await;
+-    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536).await.unwrap();
++    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
++        .await
++        .unwrap();
+
+     let inner = serde_json::json!({
+         "action": "send",
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/http_api_ohttp_tests.rs:193:
+ async fn test_ohttp_version_1_rejected() {
+     let app = create_v2_router(create_test_state_with_ohttp());
+     let key_resp = get_ohttp_key(&app).await;
+-    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536).await.unwrap();
++    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
++        .await
++        .unwrap();
+
+     let inner = serde_json::json!({
+         "version": 1,
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/http_api_ohttp_tests.rs:221:
+     let app = create_v2_router(state);
+
+     let key_resp = get_ohttp_key(&app).await;
+-    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536).await.unwrap();
++    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
++        .await
++        .unwrap();
+
+     let recipient_id = "b".repeat(64);
+     let inner = serde_json::json!({
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/http_api_tests.rs:13:
+ use vauchi_relay::http_api::create_v2_router;
+ use vauchi_relay::storage::StoredBlob;
+
+-use common::http_helpers::{
+-    ax_body::Body, create_test_state, post_json, response_json,
+-};
++use common::http_helpers::{ax_body::Body, create_test_state, post_json, response_json};
+
+ // ── Health ──
+
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/http_helpers.rs:116:
+ }
+
+ /// Helper: encapsulate a JSON message in an OHTTP request.
+-pub fn ohttp_encrypt(encoded_key: &[u8], inner: &serde_json::Value) -> (Vec<u8>, ohttp::ClientResponse) {
++pub fn ohttp_encrypt(
++    encoded_key: &[u8],
++    inner: &serde_json::Value,
++) -> (Vec<u8>, ohttp::ClientResponse) {
+     let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
+     let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
+     let plaintext = serde_json::to_vec(inner).unwrap();
+Diff in /home/megloff1/Workspace/vauchi/relay/tests/common/mod.rs:4:
+
+ //! Common test utilities for relay integration tests.
+
++pub mod http_helpers;
+ #[allow(dead_code, unused_imports)]
+ pub mod ws_helpers;
+-pub mod http_helpers;
+
+ use std::sync::Arc;
+ use vauchi_relay::rate_limit::RateLimiter;
+ERROR: Rust formatting check failed.
+Run 'cargo fmt --all' to fix.

@@ -4,6 +4,7 @@
 
 //! Common test utilities for relay integration tests.
 
+pub mod http_helpers;
 #[allow(dead_code, unused_imports)]
 pub mod ws_helpers;
 
