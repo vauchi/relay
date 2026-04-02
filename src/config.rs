@@ -360,15 +360,6 @@ impl RelayConfig {
             }
         }
 
-        if std::env::var("RELAY_REQUIRE_NOISE_ENCRYPTION").is_ok() {
-            // SP-33: removed — Noise NK is now mandatory for all connections since v0.1.
-            // Log a warning at startup; the value is ignored.
-            eprintln!(
-                "WARNING: RELAY_REQUIRE_NOISE_ENCRYPTION is deprecated — \
-                 Noise NK is now mandatory for all connections"
-            );
-        }
-
         if let Ok(val) = std::env::var("RELAY_DELIVERY_JITTER_MIN_MS") {
             match val.parse() {
                 Ok(parsed) => config.security.delivery_jitter_min_ms = parsed,

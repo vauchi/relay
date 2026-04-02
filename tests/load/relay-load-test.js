@@ -5,8 +5,7 @@
 // k6 Load Test for Vauchi Relay (PI-10)
 //
 // Tests WebSocket connection throughput and latency under load.
-// Requires relay running with RELAY_REQUIRE_NOISE_ENCRYPTION=false
-// for plaintext v1 protocol (Noise NK handshake is not practical in k6).
+// Uses plaintext WebSocket (Noise NK handshake is not practical in k6).
 //
 // Usage:
 //   k6 run relay/tests/load/relay-load-test.js
