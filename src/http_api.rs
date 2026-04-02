@@ -103,34 +103,85 @@ async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
 }
 
-/// Map a `*_logic` result to an HTTP response with appropriate status code.
+/// Typed result from `*_logic` handler functions.
+///
+/// Replaces the previous `serde_json::Value` return type to avoid
+/// string-based error detection in `logic_response()`.
+enum ApiResult {
+    /// Successful response — body is the JSON value to return.
+    Ok(serde_json::Value),
+    /// Request rate exceeded. Maps to 429.
+    RateLimited,
+    /// Per-recipient storage quota exceeded. Maps to 429.
+    QuotaExceeded,
+    /// Client error (bad input, validation failure). Maps to 400.
+    BadRequest(String),
+}
+
+impl ApiResult {
+    /// Convenience: create a successful JSON response.
+    fn ok(body: serde_json::Value) -> Self {
+        Self::Ok(body)
+    }
+
+    /// Convenience: create a bad-request error.
+    fn bad_request(msg: impl Into<String>) -> Self {
+        Self::BadRequest(msg.into())
+    }
+
+    /// Convert to JSON value (for OHTTP responses that bypass `logic_response`).
+    fn into_json(self) -> serde_json::Value {
+        match self {
+            Self::Ok(body) => body,
+            Self::RateLimited => {
+                serde_json::json!({ "status": "error", "error": "rate limit exceeded" })
+            }
+            Self::QuotaExceeded => {
+                serde_json::json!({ "status": "error", "error": "quota exceeded for recipient" })
+            }
+            Self::BadRequest(msg) => {
+                serde_json::json!({ "status": "error", "error": msg })
+            }
+        }
+    }
+}
+
+/// Map an `ApiResult` to an HTTP response with appropriate status code.
 /// Rate-limited responses include a `Retry-After` header (RFC 6585 §4).
 fn logic_response(
-    result: serde_json::Value,
+    result: ApiResult,
 ) -> (
     StatusCode,
     [(axum::http::header::HeaderName, &'static str); 1],
     Json<serde_json::Value>,
 ) {
-    let is_rate_limited = result["error"]
-        .as_str()
-        .is_some_and(|e| e.contains("quota exceeded") || e.contains("rate limit"));
-
-    let status = if result["status"] == "error" {
-        if is_rate_limited {
-            StatusCode::TOO_MANY_REQUESTS
-        } else {
-            StatusCode::BAD_REQUEST
-        }
-    } else {
-        StatusCode::OK
-    };
-
-    // Retry-After: seconds until the token bucket refills (only meaningful on 429)
-    let retry_after = if is_rate_limited { "10" } else { "" };
-    let headers = [(axum::http::header::RETRY_AFTER, retry_after)];
-
-    (status, headers, Json(result))
+    match result {
+        ApiResult::Ok(body) => (StatusCode::OK, [(header::RETRY_AFTER, "")], Json(body)),
+        ApiResult::RateLimited => (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, "10")],
+            Json(serde_json::json!({
+                "status": "error",
+                "error": "rate limit exceeded"
+            })),
+        ),
+        ApiResult::QuotaExceeded => (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, "10")],
+            Json(serde_json::json!({
+                "status": "error",
+                "error": "quota exceeded for recipient"
+            })),
+        ),
+        ApiResult::BadRequest(msg) => (
+            StatusCode::BAD_REQUEST,
+            [(header::RETRY_AFTER, "")],
+            Json(serde_json::json!({
+                "status": "error",
+                "error": msg
+            })),
+        ),
+    }
 }
 
 /// Store an encrypted update for a recipient.
@@ -320,7 +371,7 @@ async fn dispatch_ohttp_action(
                     return serde_json::json!({ "status": "error", "error": format!("bad send payload: {e}") });
                 }
             };
-            handle_send_logic(state, req)
+            handle_send_logic(state, req).into_json()
         }
         "fetch" => {
             let req: V2FetchRequest = match serde_json::from_value(payload) {
@@ -329,7 +380,7 @@ async fn dispatch_ohttp_action(
                     return serde_json::json!({ "status": "error", "error": format!("bad fetch payload: {e}") });
                 }
             };
-            handle_fetch_logic(state, req)
+            handle_fetch_logic(state, req).into_json()
         }
         "ack" => {
             let req: V2AckRequest = match serde_json::from_value(payload) {
@@ -338,7 +389,7 @@ async fn dispatch_ohttp_action(
                     return serde_json::json!({ "status": "error", "error": format!("bad ack payload: {e}") });
                 }
             };
-            handle_ack_logic(state, req)
+            handle_ack_logic(state, req).into_json()
         }
         "register" => {
             let req: V2RegisterRequest = match serde_json::from_value(payload) {
@@ -347,7 +398,7 @@ async fn dispatch_ohttp_action(
                     return serde_json::json!({ "status": "error", "error": format!("bad register payload: {e}") });
                 }
             };
-            handle_register_logic(req)
+            handle_register_logic(req).into_json()
         }
         "purge" => {
             let req: V2PurgeRequest = match serde_json::from_value(payload) {
@@ -356,7 +407,7 @@ async fn dispatch_ohttp_action(
                     return serde_json::json!({ "status": "error", "error": format!("bad purge payload: {e}") });
                 }
             };
-            handle_purge_logic(state, req)
+            handle_purge_logic(state, req).into_json()
         }
         "exchange_offer" => {
             let req: V2ExchangeOfferRequest = match serde_json::from_value(payload) {
@@ -372,7 +423,7 @@ async fn dispatch_ohttp_action(
             {
                 return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
             }
-            handle_ohttp_exchange_offer_logic(state, req)
+            handle_ohttp_exchange_offer_logic(state, req).into_json()
         }
         "exchange_claim" => {
             let req: V2ExchangeClaimRequest = match serde_json::from_value(payload) {
@@ -388,7 +439,7 @@ async fn dispatch_ohttp_action(
             {
                 return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
             }
-            handle_ohttp_exchange_claim_logic(state, req)
+            handle_ohttp_exchange_claim_logic(state, req).into_json()
         }
         "exchange_complete" => {
             let req: V2ExchangeCompleteRequest = match serde_json::from_value(payload) {
@@ -404,7 +455,7 @@ async fn dispatch_ohttp_action(
             {
                 return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
             }
-            handle_ohttp_exchange_complete_logic(state, req)
+            handle_ohttp_exchange_complete_logic(state, req).into_json()
         }
         "escrow" => {
             // Rate limit escrow requests (same limiter as exchange actions)
@@ -482,17 +533,17 @@ fn verify_purge_signature(
 
 // ── Extracted handler logic (shared with OHTTP dispatcher) ──────────
 
-fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> serde_json::Value {
+fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
     if !state.rate_limiter.consume(&req.recipient_id) {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     if req.recipient_id.len() != 64 || !req.recipient_id.chars().all(|c| c.is_ascii_hexdigit()) {
-        return serde_json::json!({ "status": "error", "error": "recipient_id must be 64 hex characters" });
+        return ApiResult::bad_request("recipient_id must be 64 hex characters");
     }
     let ciphertext = match base64::engine::general_purpose::STANDARD.decode(&req.ciphertext) {
         Ok(d) => d,
         Err(_) => {
-            return serde_json::json!({ "status": "error", "error": "ciphertext must be valid base64" });
+            return ApiResult::bad_request("ciphertext must be valid base64");
         }
     };
     if (state.quota.max_blobs > 0
@@ -504,7 +555,7 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> serde_json::Va
                 .saturating_add(ciphertext.len())
                 > state.quota.max_bytes)
     {
-        return serde_json::json!({ "status": "error", "error": "quota exceeded for recipient" });
+        return ApiResult::QuotaExceeded;
     }
     let blob = StoredBlob::new(ciphertext);
     let blob_id = blob.id.clone();
@@ -514,18 +565,18 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> serde_json::Va
         .metrics
         .blobs_stored
         .set(state.storage.blob_count() as i64);
-    serde_json::json!({ "status": "ok", "blob_id": blob_id })
+    ApiResult::ok(serde_json::json!({ "status": "ok", "blob_id": blob_id }))
 }
 
-fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> serde_json::Value {
+fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
     // Rate-limit by first token (representative of the client session).
     if let Some(first) = req.mailbox_tokens.first()
         && !state.rate_limiter.consume(first)
     {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     if req.mailbox_tokens.is_empty() || req.mailbox_tokens.len() > 100 {
-        return serde_json::json!({ "status": "error", "error": "mailbox_tokens must contain 1-100 entries" });
+        return ApiResult::bad_request("mailbox_tokens must contain 1-100 entries");
     }
     let token_refs: Vec<&str> = req.mailbox_tokens.iter().map(String::as_str).collect();
     let blobs = state.storage.peek_many(&token_refs);
@@ -539,12 +590,12 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> serde_json::
             })
         })
         .collect();
-    serde_json::json!({ "status": "ok", "blobs": blob_data })
+    ApiResult::ok(serde_json::json!({ "status": "ok", "blobs": blob_data }))
 }
 
-fn handle_ack_logic(state: &HttpApiState, req: V2AckRequest) -> serde_json::Value {
+fn handle_ack_logic(state: &HttpApiState, req: V2AckRequest) -> ApiResult {
     if !state.rate_limiter.consume(&req.recipient_id) {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     let removed = state.storage.acknowledge(&req.recipient_id, &req.blob_id);
     if removed {
@@ -553,100 +604,94 @@ fn handle_ack_logic(state: &HttpApiState, req: V2AckRequest) -> serde_json::Valu
             .blobs_stored
             .set(state.storage.blob_count() as i64);
     }
-    serde_json::json!({ "status": "ok", "acknowledged": removed })
+    ApiResult::ok(serde_json::json!({ "status": "ok", "acknowledged": removed }))
 }
 
-fn handle_register_logic(req: V2RegisterRequest) -> serde_json::Value {
-    serde_json::json!({ "status": "ok", "registered": req.mailbox_tokens.len() })
+fn handle_register_logic(req: V2RegisterRequest) -> ApiResult {
+    ApiResult::ok(serde_json::json!({ "status": "ok", "registered": req.mailbox_tokens.len() }))
 }
 
-fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> serde_json::Value {
+fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> ApiResult {
     // Verify signature + nonce replay BEFORE rate limiting — prevents
     // unauthenticated attackers from exhausting the rate limit for legitimate users.
     if let Err(e) = verify_purge_signature(&req, &state.nonce_tracker) {
-        return serde_json::json!({ "status": "error", "error": e });
+        return ApiResult::bad_request(e);
     }
     if !state.rate_limiter.consume(&req.recipient_id) {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     state.storage.delete_all_for(&req.recipient_id);
     state
         .metrics
         .blobs_stored
         .set(state.storage.blob_count() as i64);
-    serde_json::json!({ "status": "ok" })
+    ApiResult::ok(serde_json::json!({ "status": "ok" }))
 }
 
 // ── Exchange handler logic ───────────────────────────────────────────
 
-fn handle_exchange_offer_logic(
-    state: &HttpApiState,
-    req: V2ExchangeOfferRequest,
-) -> serde_json::Value {
+fn handle_exchange_offer_logic(state: &HttpApiState, req: V2ExchangeOfferRequest) -> ApiResult {
     // S3: Global rate limit on offer creation prevents a single attacker from
     // exhausting the code namespace with many distinct payloads.
     if !state.rate_limiter.consume("exchange_offer_global") {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     // Per-payload rate limit to prevent the same offer from being resubmitted.
     let key = format!("exchange_offer:{:x}", rate_limit_hash(&req.payload));
     if !state.rate_limiter.consume(&key) {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     match state
         .exchange_broker
         .create_offer(req.payload, req.expires_secs)
     {
-        Ok(code) => serde_json::json!({ "status": "ok", "code": code }),
-        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+        Ok(code) => ApiResult::ok(serde_json::json!({ "status": "ok", "code": code })),
+        Err(e) => ApiResult::bad_request(e.to_string()),
     }
 }
 
-fn handle_exchange_claim_logic(
-    state: &HttpApiState,
-    req: V2ExchangeClaimRequest,
-) -> serde_json::Value {
+fn handle_exchange_claim_logic(state: &HttpApiState, req: V2ExchangeClaimRequest) -> ApiResult {
     if !is_valid_exchange_code(&req.code) {
-        return serde_json::json!({ "status": "error", "error": "code must be exactly 6 digits" });
+        return ApiResult::bad_request("code must be exactly 6 digits");
     }
     // S6: Global rate limit on claim attempts prevents distributed brute-force
     // across many codes. An attacker trying random codes is throttled globally,
     // not just per-code.
     if !state.rate_limiter.consume("exchange_claim_global") {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     if !state
         .rate_limiter
         .consume(&format!("exchange:{}", req.code))
     {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     match state.exchange_broker.claim_offer(&req.code, req.response) {
-        Ok(payload) => serde_json::json!({ "status": "ok", "payload": payload }),
-        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+        Ok(payload) => ApiResult::ok(serde_json::json!({ "status": "ok", "payload": payload })),
+        Err(e) => ApiResult::bad_request(e.to_string()),
     }
 }
 
 fn handle_exchange_complete_logic(
     state: &HttpApiState,
     req: V2ExchangeCompleteRequest,
-) -> serde_json::Value {
+) -> ApiResult {
     if !is_valid_exchange_code(&req.code) {
-        return serde_json::json!({ "status": "error", "error": "code must be exactly 6 digits" });
+        return ApiResult::bad_request("code must be exactly 6 digits");
     }
     // S6: Global rate limit on complete (same bucket as claim — both guess codes).
     if !state.rate_limiter.consume("exchange_claim_global") {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     if !state
         .rate_limiter
         .consume(&format!("exchange:{}", req.code))
     {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     match state.exchange_broker.complete_offer(&req.code) {
-        Ok(response) => serde_json::json!({ "status": "ok", "response": response }),
-        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+        Ok(response) => ApiResult::ok(serde_json::json!({ "status": "ok", "response": response })),
+        Err(e) => ApiResult::bad_request(e.to_string()),
     }
 }
 
@@ -659,51 +704,51 @@ fn handle_exchange_complete_logic(
 fn handle_ohttp_exchange_offer_logic(
     state: &HttpApiState,
     req: V2ExchangeOfferRequest,
-) -> serde_json::Value {
+) -> ApiResult {
     match state
         .exchange_broker
         .create_offer(req.payload, req.expires_secs)
     {
-        Ok(code) => serde_json::json!({ "status": "ok", "code": code }),
-        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+        Ok(code) => ApiResult::ok(serde_json::json!({ "status": "ok", "code": code })),
+        Err(e) => ApiResult::bad_request(e.to_string()),
     }
 }
 
 fn handle_ohttp_exchange_claim_logic(
     state: &HttpApiState,
     req: V2ExchangeClaimRequest,
-) -> serde_json::Value {
+) -> ApiResult {
     if !is_valid_exchange_code(&req.code) {
-        return serde_json::json!({ "status": "error", "error": "code must be exactly 6 digits" });
+        return ApiResult::bad_request("code must be exactly 6 digits");
     }
     if !state
         .rate_limiter
         .consume(&format!("exchange:{}", req.code))
     {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     match state.exchange_broker.claim_offer(&req.code, req.response) {
-        Ok(payload) => serde_json::json!({ "status": "ok", "payload": payload }),
-        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+        Ok(payload) => ApiResult::ok(serde_json::json!({ "status": "ok", "payload": payload })),
+        Err(e) => ApiResult::bad_request(e.to_string()),
     }
 }
 
 fn handle_ohttp_exchange_complete_logic(
     state: &HttpApiState,
     req: V2ExchangeCompleteRequest,
-) -> serde_json::Value {
+) -> ApiResult {
     if !is_valid_exchange_code(&req.code) {
-        return serde_json::json!({ "status": "error", "error": "code must be exactly 6 digits" });
+        return ApiResult::bad_request("code must be exactly 6 digits");
     }
     if !state
         .rate_limiter
         .consume(&format!("exchange:{}", req.code))
     {
-        return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
+        return ApiResult::RateLimited;
     }
     match state.exchange_broker.complete_offer(&req.code) {
-        Ok(response) => serde_json::json!({ "status": "ok", "response": response }),
-        Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
+        Ok(response) => ApiResult::ok(serde_json::json!({ "status": "ok", "response": response })),
+        Err(e) => ApiResult::bad_request(e.to_string()),
     }
 }
 
