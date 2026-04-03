@@ -17,6 +17,7 @@ use common::http_helpers::{ax_body::Body, create_test_state, post_json, response
 
 // ── Health ──
 
+// @internal
 #[tokio::test]
 async fn test_v2_health_endpoint_returns_ok() {
     let app = create_v2_router(create_test_state());

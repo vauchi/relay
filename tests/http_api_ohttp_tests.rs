@@ -17,6 +17,7 @@ use common::http_helpers::{
     post_ohttp_bytes, response_json,
 };
 
+// @scenario: relay_ohttp :: key endpoint returns valid OHTTP config
 #[tokio::test]
 async fn test_ohttp_key_endpoint_returns_valid_config() {
     let app = create_v2_router(create_test_state_with_ohttp());
@@ -53,6 +54,7 @@ async fn test_ohttp_key_endpoint_returns_valid_config() {
     );
 }
 
+// @scenario: relay_ohttp :: gateway decrypts and routes send action
 #[tokio::test]
 async fn test_ohttp_gateway_decrypt_and_route_send() {
     let state = create_test_state_with_ohttp();
@@ -97,6 +99,7 @@ async fn test_ohttp_gateway_decrypt_and_route_send() {
     assert_eq!(blobs[0].data, b"ohttp-blob");
 }
 
+// @scenario: relay_ohttp :: gateway decrypts and routes fetch action
 #[tokio::test]
 async fn test_ohttp_gateway_decrypt_and_route_fetch() {
     let state = create_test_state_with_ohttp();
@@ -131,6 +134,7 @@ async fn test_ohttp_gateway_decrypt_and_route_fetch() {
     assert!(blobs[0]["blob_id"].is_string());
 }
 
+// @internal
 #[tokio::test]
 async fn test_ohttp_invalid_encrypted_data_rejected() {
     let app = create_v2_router(create_test_state_with_ohttp());
@@ -140,6 +144,7 @@ async fn test_ohttp_invalid_encrypted_data_rejected() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @scenario: relay_ohttp :: disabled gateway returns 404
 #[tokio::test]
 async fn test_ohttp_disabled_returns_404() {
     // State with ohttp_gateway: None
@@ -154,6 +159,7 @@ async fn test_ohttp_disabled_returns_404() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+// @internal
 #[tokio::test]
 async fn test_ohttp_empty_body_rejected() {
     let app = create_v2_router(create_test_state_with_ohttp());
@@ -161,6 +167,7 @@ async fn test_ohttp_empty_body_rejected() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @internal
 #[tokio::test]
 async fn test_ohttp_single_byte_rejected() {
     let app = create_v2_router(create_test_state_with_ohttp());
@@ -168,6 +175,7 @@ async fn test_ohttp_single_byte_rejected() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @internal
 #[tokio::test]
 async fn test_ohttp_missing_version_field_rejected() {
     let app = create_v2_router(create_test_state_with_ohttp());
@@ -191,6 +199,7 @@ async fn test_ohttp_missing_version_field_rejected() {
     assert!(body["error"].as_str().unwrap().contains("JSON"));
 }
 
+// @internal
 #[tokio::test]
 async fn test_ohttp_version_1_rejected() {
     let app = create_v2_router(create_test_state_with_ohttp());
@@ -218,6 +227,7 @@ async fn test_ohttp_version_1_rejected() {
     assert!(body["error"].as_str().unwrap().contains("version"));
 }
 
+// @scenario: relay_ohttp :: version 2 request accepted
 #[tokio::test]
 async fn test_ohttp_version_2_accepted() {
     let state = create_test_state_with_ohttp();
@@ -251,6 +261,7 @@ async fn test_ohttp_version_2_accepted() {
     assert_eq!(blobs[0].data, b"v2-data");
 }
 
+// @scenario: relay_ohttp :: response padded to bucket size
 #[tokio::test]
 async fn test_ohttp_response_is_padded_to_bucket_size() {
     let app = create_v2_router(create_test_state_with_ohttp());

@@ -15,6 +15,7 @@ use common::http_helpers::{create_test_state_with_ohttp, post_json, response_jso
 
 // ── Exchange ──
 
+// @scenario: relay_exchange :: offer returns 6-digit code
 #[tokio::test]
 async fn test_v2_exchange_offer_returns_code() {
     let app = create_v2_router(create_test_state_with_ohttp());
@@ -38,6 +39,7 @@ async fn test_v2_exchange_offer_returns_code() {
     assert!(code.chars().all(|c| c.is_ascii_digit()));
 }
 
+// @scenario: relay_exchange :: claim returns initiator payload
 #[tokio::test]
 async fn test_v2_exchange_claim_returns_payload() {
     let app = create_v2_router(create_test_state_with_ohttp());
@@ -75,6 +77,7 @@ async fn test_v2_exchange_claim_returns_payload() {
     assert_eq!(body["payload"], payload);
 }
 
+// @scenario: relay_exchange :: complete flow offer-claim-complete
 #[tokio::test]
 async fn test_v2_exchange_complete_flow() {
     let app = create_v2_router(create_test_state_with_ohttp());
@@ -121,6 +124,7 @@ async fn test_v2_exchange_complete_flow() {
     assert_eq!(body["response"], p2, "Alice complete failed: {body}");
 }
 
+// @scenario: relay_exchange :: TTL above 3600s rejected
 #[tokio::test]
 async fn test_v2_exchange_invalid_ttl_rejected() {
     let app = create_v2_router(create_test_state_with_ohttp());
@@ -144,6 +148,7 @@ async fn test_v2_exchange_invalid_ttl_rejected() {
     );
 }
 
+// @scenario: relay_exchange :: oversized payload rejected
 #[tokio::test]
 async fn test_v2_exchange_oversized_payload_rejected() {
     let app = create_v2_router(create_test_state_with_ohttp());
