@@ -261,6 +261,147 @@ async fn test_ohttp_version_2_accepted() {
     assert_eq!(blobs[0].data, b"v2-data");
 }
 
+// ── OHTTP escrow integration ───────────────────────────────────────
+
+/// Helper: send an escrow action through OHTTP and return the decrypted response.
+async fn send_escrow_ohttp(
+    app: &axum::Router,
+    key_bytes: &[u8],
+    escrow_msg: serde_json::Value,
+) -> serde_json::Value {
+    let mut inner = escrow_msg;
+    inner["version"] = serde_json::json!(2);
+    inner["action"] = serde_json::json!("escrow");
+    let (enc_req, client_resp) = ohttp_encrypt(key_bytes, &inner);
+    let resp = post_ohttp_bytes(app, enc_req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let enc_resp_bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+    ohttp_decrypt(client_resp, &enc_resp_bytes)
+}
+
+// @scenario: relay_escrow :: OHTTP escrow full put-count-get flow
+#[tokio::test]
+async fn test_ohttp_escrow_full_flow_put_count_get() {
+    let state = create_test_state_with_ohttp();
+    let app = create_v2_router(state);
+
+    let key_resp = get_ohttp_key(&app).await;
+    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
+        .await
+        .unwrap();
+
+    let gate = "aa".repeat(32);
+    let slot_init = "bb".repeat(32);
+    let slot_resp = "cc".repeat(32);
+    let blob_a = base64::engine::general_purpose::STANDARD.encode(b"alice-card");
+    let blob_b = base64::engine::general_purpose::STANDARD.encode(b"bob-card");
+
+    // PUT: initiator deposits
+    let body = send_escrow_ohttp(
+        &app,
+        &key_bytes,
+        serde_json::json!({
+            "escrow_action": "Put",
+            "gate_hash": gate,
+            "slot_hash": slot_init,
+            "blob": blob_a,
+            "ttl_seconds": 3600
+        }),
+    )
+    .await;
+    assert_eq!(body["status"], "Stored", "first PUT must succeed: {body}");
+
+    // COUNT: 1 deposit
+    let body = send_escrow_ohttp(
+        &app,
+        &key_bytes,
+        serde_json::json!({
+            "escrow_action": "Count",
+            "gate_hash": gate
+        }),
+    )
+    .await;
+    assert_eq!(body["status"], "Count");
+    assert_eq!(body["count"], 1);
+
+    // PUT: responder deposits
+    let body = send_escrow_ohttp(
+        &app,
+        &key_bytes,
+        serde_json::json!({
+            "escrow_action": "Put",
+            "gate_hash": gate,
+            "slot_hash": slot_resp,
+            "blob": blob_b,
+            "ttl_seconds": 3600
+        }),
+    )
+    .await;
+    assert_eq!(body["status"], "Stored", "second PUT must succeed: {body}");
+
+    // GET: initiator retrieves responder's blob
+    let body = send_escrow_ohttp(
+        &app,
+        &key_bytes,
+        serde_json::json!({
+            "escrow_action": "Get",
+            "gate_hash": gate,
+            "slot_hash": slot_init
+        }),
+    )
+    .await;
+    assert_eq!(body["status"], "Blob", "GET must return Blob: {body}");
+    assert_eq!(body["blob"], blob_b, "must return the OTHER party's blob");
+}
+
+// @scenario: relay_escrow :: OHTTP escrow GET before both deposits returns NotReady
+#[tokio::test]
+async fn test_ohttp_escrow_get_before_both_deposits_returns_not_ready() {
+    let state = create_test_state_with_ohttp();
+    let app = create_v2_router(state);
+
+    let key_resp = get_ohttp_key(&app).await;
+    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
+        .await
+        .unwrap();
+
+    let gate = "dd".repeat(32);
+    let slot = "ee".repeat(32);
+    let blob = base64::engine::general_purpose::STANDARD.encode(b"solo");
+
+    // PUT one deposit
+    let body = send_escrow_ohttp(
+        &app,
+        &key_bytes,
+        serde_json::json!({
+            "escrow_action": "Put",
+            "gate_hash": gate,
+            "slot_hash": slot,
+            "blob": blob,
+            "ttl_seconds": 3600
+        }),
+    )
+    .await;
+    assert_eq!(body["status"], "Stored");
+
+    // GET with only 1 deposit → NotReady
+    let body = send_escrow_ohttp(
+        &app,
+        &key_bytes,
+        serde_json::json!({
+            "escrow_action": "Get",
+            "gate_hash": gate,
+            "slot_hash": slot
+        }),
+    )
+    .await;
+    assert_eq!(
+        body["status"], "NotReady",
+        "GET before 2 deposits must return NotReady: {body}"
+    );
+    assert_eq!(body["count"], 1);
+}
+
 // @scenario: relay_ohttp :: response padded to bucket size
 #[tokio::test]
 async fn test_ohttp_response_is_padded_to_bucket_size() {
