@@ -17,5 +17,5 @@ tests/federation_integration_test.rs 1380
 # SPLIT — Phase 3: split http_api_tests.rs per service area
 tests/http_api_tests.rs 544
 tests/http_api_exchange_tests.rs 171
-tests/http_api_ohttp_tests.rs 299
+tests/http_api_ohttp_tests.rs 440
 tests/common/http_helpers.rs 143
