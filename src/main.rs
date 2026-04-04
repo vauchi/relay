@@ -506,7 +506,9 @@ async fn main() {
             ohttp_gateway,
             exchange_broker,
             nonce_tracker: nonce_tracker.clone(),
-            ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(300)),
+            ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(
+                config.http_api.ohttp_exchange_rate_limit_per_min,
+            )),
             escrow_store,
         };
 

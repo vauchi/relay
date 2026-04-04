@@ -187,6 +187,10 @@ pub struct HttpApiConfig {
     pub ohttp_enabled: bool,
     /// OHTTP key rotation interval in hours.
     pub ohttp_key_rotation_hours: u64,
+    /// OHTTP exchange rate limit (requests per minute, shared across all clients).
+    /// Applies to OHTTP-wrapped exchange broker endpoints.  Default 300/min
+    /// for production; set higher for E2E tests via `RELAY_OHTTP_EXCHANGE_RATE_LIMIT`.
+    pub ohttp_exchange_rate_limit_per_min: u32,
     /// Maximum active exchange offers (must be ≤ 500,000).
     pub exchange_max_offers: usize,
     /// Default TTL for exchange offers in seconds (when client doesn't specify).
@@ -199,6 +203,7 @@ impl Default for HttpApiConfig {
             enabled: false,
             ohttp_enabled: false,
             ohttp_key_rotation_hours: 24,
+            ohttp_exchange_rate_limit_per_min: 300,
             exchange_max_offers: 10_000,
             exchange_default_ttl_secs: 300, // 5 minutes
         }
@@ -525,6 +530,16 @@ impl RelayConfig {
                 Err(_) => warnings.push(format!(
                     "RELAY_OHTTP_KEY_ROTATION_HOURS: invalid value '{}', using default {}",
                     val, config.http_api.ohttp_key_rotation_hours
+                )),
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_OHTTP_EXCHANGE_RATE_LIMIT") {
+            match val.parse() {
+                Ok(parsed) => config.http_api.ohttp_exchange_rate_limit_per_min = parsed,
+                Err(_) => warnings.push(format!(
+                    "RELAY_OHTTP_EXCHANGE_RATE_LIMIT: invalid value '{}', using default {}",
+                    val, config.http_api.ohttp_exchange_rate_limit_per_min
                 )),
             }
         }
