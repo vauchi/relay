@@ -37,6 +37,7 @@ include:
       - '/ci-templates/perf.yml'
       - '/ci-templates/image-lint.yml'
       - '/ci-templates/badges.yml'
+      - '/ci-templates/freshness.yml'
       - '/ci-templates/github-mirror.yml'
   # Container scanning is relay-specific (not included in shared security.yml)
   - template: Security/Container-Scanning.gitlab-ci.yml
@@ -74,6 +75,10 @@ auto-tag:version:
 # ============================================================
 # Cheapest checks run first. Test + security jobs wait for these
 # to pass before starting (PI-13 fail-fast DAG).
+
+# Blocks MRs with non-main branch refs in Cargo.toml git dependencies.
+check:branch-refs:
+  extends: .check-git-branch-refs
 
 lint:images:
   extends: .image-lint
