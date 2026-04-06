@@ -178,48 +178,92 @@ vauchi-relay/
 - **Forwarding Hints**: Stores routing_id to peer relay
   mappings for client retrieval
 
+## Operational Capabilities
+
+Everything listed below is **implemented and tested**
+— not planned.
+
+### Endpoints
+
+| Endpoint | Port | Purpose |
+|----------|------|---------|
+| `/health` | 8080 (main) | Liveness (no info leak) |
+| `/health` | 8081 (ops) | Health check |
+| `/metrics` | 8081 (ops) | Prometheus (optional auth) |
+| `/pubkey` | 8081 (ops) | Noise NK public key |
+| `/build-info` | 8081 (ops) | Git SHA, ref, build time |
+
+### Graceful Shutdown
+
+SIGTERM/SIGINT → stop accepting → drain connections
+(30s timeout) → WAL checkpoint → exit. See
+`src/main.rs:610-893`.
+
+### Rate Limiting
+
+- Per-client: token bucket (default 60 req/min)
+- Recovery queries: stricter (default 10 req/min)
+- Federation: per-peer (default 300 msg/min)
+- Connections: hard cap (default 1000)
+- Message size: 1 MB max
+
+### Observability
+
+- **Logging**: `tracing` crate, text or JSON
+  (`RELAY_LOG_FORMAT=json`), levels via `RUST_LOG`
+- **Metrics**: 30+ Prometheus metrics (connections,
+  messages, blobs, federation, rate limits, panics)
+- **Privacy**: zero PII logging, no IP logging,
+  routing IDs only
+
+### Security
+
+- TLS enforced for non-localhost (`RELAY_TLS_VERIFIED`)
+- Noise NK inner encryption (defense-in-depth)
+- Ed25519 signature verification + nonce replay
+  protection (±60s window)
+- SSRF validation on federation peer URLs
+  (blocks private/loopback/link-local)
+- OHTTP gateway (RFC 9458) for IP privacy
+- Delivery jitter for traffic analysis resistance
+
+### Container Image
+
+Multi-stage build → `distroless/cc-debian12` runtime.
+Non-root user. No shell. See `Dockerfile`.
+
+### Runbooks
+
+`deploy/RUNBOOKS.md` (618 lines): deployment, incident
+response, operations, privacy-safe debugging, emergency
+hotfix procedures, operator observability matrix.
+
 ## Deployment
 
-### Docker (planned)
-
-```dockerfile
-FROM rust:1.75 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build -p vauchi-relay --release
-
-FROM debian:bookworm-slim
-COPY --from=builder /app/target/release/vauchi-relay /usr/local/bin/
-EXPOSE 8080
-CMD ["vauchi-relay"]
+```bash
+# Docker (production)
+docker build -t vauchi-relay .
+docker run -d \
+  -p 8080:8080 -p 127.0.0.1:8081:8081 \
+  -v relay-data:/data \
+  -e RELAY_TLS_VERIFIED=true \
+  -e RUST_LOG=vauchi_relay=info \
+  vauchi-relay
 ```
 
-### Systemd
-
-```ini
-[Unit]
-Description=Vauchi Relay Server
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/vauchi-relay
-Restart=always
-Environment=RUST_LOG=info
-
-[Install]
-WantedBy=multi-user.target
-```
+See `deploy/RUNBOOKS.md` for full deployment,
+rolling upgrade, and rollback procedures.
 
 ## Security Considerations
 
-- **No Authentication**: The relay is open by design;
-  security comes from E2E encryption
-- **Rate Limiting**: Prevents abuse and DoS
-- **SQLite Storage**: Messages persist across restarts
-  (use `memory` backend for volatile storage)
-- **TLS**: Deploy behind a reverse proxy (nginx, caddy)
-  for TLS termination
+- **Zero-knowledge relay**: sees encrypted blobs only
+- **Rate limiting**: per-client, per-peer, per-recovery
+- **TLS mandatory**: startup refuses without
+  `RELAY_TLS_VERIFIED=true` on non-localhost
+- **Noise NK**: inner transport encryption even if
+  TLS compromised
+- **SQLite storage**: persistent, WAL-backed,
+  `secure_delete=ON`
 
 ## Federation
 
