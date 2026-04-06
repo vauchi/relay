@@ -686,12 +686,12 @@ fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> ApiResult {
     if !state.rate_limiter.consume(&req.recipient_id) {
         return ApiResult::RateLimited;
     }
-    state.storage.delete_all_for(&req.recipient_id);
+    let deleted = state.storage.delete_all_for(&req.recipient_id);
     state
         .metrics
         .blobs_stored
         .set(state.storage.blob_count() as i64);
-    ApiResult::ok(serde_json::json!({ "status": "ok" }))
+    ApiResult::ok(serde_json::json!({ "status": "ok", "blobs_deleted": deleted }))
 }
 
 // ── Exchange handler logic ───────────────────────────────────────────
