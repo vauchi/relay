@@ -46,6 +46,7 @@ impl VersionPolicyConfig {
 }
 
 /// Runtime state combining config with persistence.
+#[derive(Debug)]
 pub struct VersionPolicyState {
     config: VersionPolicyConfig,
     min_version_changed_at: Option<u64>,
@@ -79,11 +80,13 @@ impl VersionPolicyState {
 
     /// Enforce the version policy against a client's declared protocol version.
     ///
+    /// `now_secs` is the current time as seconds since the UNIX epoch.
+    ///
     /// - Missing header → treated as version 0
     /// - Version < min_version AND grace expired (or no grace) → `Rejected`
     /// - Version < min_version AND grace active → `AllowedWithDeadline`
     /// - Version >= min_version → `Allowed`
-    pub fn enforce(&self, client_version: Option<u16>) -> VersionEnforcement {
+    pub fn enforce(&self, client_version: Option<u16>, now_secs: u64) -> VersionEnforcement {
         let version = client_version.unwrap_or(0);
         let min = self.config.min_version;
         let warn = self.config.warn_version;
@@ -96,22 +99,33 @@ impl VersionPolicyState {
         }
 
         // Version is below min — check grace period.
-        if let Some(deadline) = self.grace_deadline() {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system clock before UNIX epoch")
-                .as_secs();
-
-            if now < deadline {
-                return VersionEnforcement::AllowedWithDeadline {
-                    min_version: min,
-                    warn_version: warn,
-                    deadline,
-                };
-            }
+        if self.is_grace_active(now_secs) {
+            let deadline = self
+                .grace_deadline()
+                .expect("grace_active implies grace_deadline is Some");
+            return VersionEnforcement::AllowedWithDeadline {
+                min_version: min,
+                warn_version: warn,
+                deadline,
+            };
         }
 
         VersionEnforcement::Rejected { min_version: min }
+    }
+
+    /// Convenience wrapper that uses the real system clock.
+    pub fn enforce_now(&self, client_version: Option<u16>) -> VersionEnforcement {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before UNIX epoch")
+            .as_secs();
+        self.enforce(client_version, now)
+    }
+
+    /// Returns `true` if the grace period is active at the given time.
+    fn is_grace_active(&self, now_secs: u64) -> bool {
+        self.grace_deadline()
+            .is_some_and(|deadline| now_secs < deadline)
     }
 }
 
