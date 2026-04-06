@@ -510,6 +510,10 @@ async fn main() {
                 config.http_api.ohttp_exchange_rate_limit_per_min,
             )),
             escrow_store,
+            version_policy: Arc::new(vauchi_relay::version_policy::VersionPolicyState::new(
+                config.version_policy.clone(),
+                None, // TODO: persist min_version_changed_at timestamp
+            )),
         };
 
         http_router = http_router.merge(create_v2_router(api_state));

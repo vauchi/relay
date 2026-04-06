@@ -20,6 +20,7 @@ use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::ohttp_gateway::OhttpGateway;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::storage::SqliteBlobStore;
+use vauchi_relay::version_policy::{VersionPolicyConfig, VersionPolicyState};
 
 /// Body and Response types for tests
 pub use axum::body as ax_body;
@@ -42,6 +43,10 @@ pub fn create_test_state() -> HttpApiState {
         nonce_tracker: Arc::new(NonceTracker::new()),
         ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(100_000)),
         escrow_store: Arc::new(EscrowStore::new(100)),
+        version_policy: Arc::new(VersionPolicyState::new(
+            VersionPolicyConfig::default(),
+            None,
+        )),
     }
 }
 
@@ -62,6 +67,10 @@ pub fn create_test_state_with_ohttp() -> HttpApiState {
         nonce_tracker: Arc::new(NonceTracker::new()),
         ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(100_000)),
         escrow_store: Arc::new(EscrowStore::new(100)),
+        version_policy: Arc::new(VersionPolicyState::new(
+            VersionPolicyConfig::default(),
+            None,
+        )),
     }
 }
 

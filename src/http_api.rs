@@ -13,8 +13,9 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::{DefaultBodyLimit, FromRequest, State},
-    http::{StatusCode, header},
-    response::IntoResponse,
+    http::{HeaderValue, StatusCode, header},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use base64::Engine;
@@ -31,6 +32,7 @@ use crate::metrics::RelayMetrics;
 use crate::ohttp_gateway::OhttpGateway;
 use crate::rate_limit::RateLimiter;
 use crate::storage::{BlobStore, StoredBlob};
+use crate::version_policy::{VersionEnforcement, VersionPolicyState};
 
 /// Per-recipient quota limits for v2 API.
 #[derive(Debug, Clone, Copy)]
@@ -56,6 +58,8 @@ pub struct HttpApiState {
     pub ohttp_exchange_rate_limiter: Arc<RateLimiter>,
     /// Escrow store for gated blob exchange (Link mode + relay fallback).
     pub escrow_store: Arc<EscrowStore>,
+    /// Version policy state for client compatibility enforcement.
+    pub version_policy: Arc<VersionPolicyState>,
     // TODO: recovery_storage will be added when /v2/recovery endpoint is implemented
 }
 
@@ -79,6 +83,9 @@ pub struct OhttpInnerRequest {
 /// Applies a 128 KiB body size limit to all endpoints. This is a transport-layer
 /// defense against memory exhaustion — the broker enforces tighter per-field limits
 /// (e.g., 64 KiB for exchange payloads).
+///
+/// All endpoints pass through `version_check_middleware` which enforces the
+/// version policy based on the `X-App-Compat-Version` request header.
 pub fn create_v2_router(state: HttpApiState) -> Router {
     Router::new()
         .route("/v2/health", get(health_handler))
@@ -92,8 +99,76 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .route("/v2/exchange/complete", post(exchange_complete_handler))
         .route("/v2/ohttp-key", get(ohttp_key_handler))
         .route("/v2/ohttp", post(ohttp_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            version_check_middleware,
+        ))
         .layer(DefaultBodyLimit::max(128 * 1024))
         .with_state(state)
+}
+
+/// Axum middleware that enforces the version policy on every v2 request.
+///
+/// Reads `X-App-Compat-Version` from the request header, parses it as `u16`,
+/// and delegates to `VersionPolicyState::enforce_now()`. Returns HTTP 426
+/// for rejected clients, or forwards the request with version info headers.
+async fn version_check_middleware(
+    State(state): State<HttpApiState>,
+    request: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let client_version: Option<u16> = request
+        .headers()
+        .get("X-App-Compat-Version")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok());
+
+    match state.version_policy.enforce_now(client_version) {
+        VersionEnforcement::Rejected { min_version } => {
+            let body = serde_json::json!({
+                "error": "upgrade_required",
+                "min_version": min_version,
+            });
+            (
+                StatusCode::UPGRADE_REQUIRED,
+                [(header::CONTENT_TYPE, "application/json")],
+                serde_json::to_string(&body).unwrap_or_default(),
+            )
+                .into_response()
+        }
+        VersionEnforcement::AllowedWithDeadline {
+            min_version,
+            warn_version,
+            deadline,
+        } => {
+            let mut response = next.run(request).await;
+            let headers = response.headers_mut();
+            if let Ok(v) = HeaderValue::from_str(&min_version.to_string()) {
+                headers.insert("X-Min-Version", v);
+            }
+            if let Ok(v) = HeaderValue::from_str(&warn_version.to_string()) {
+                headers.insert("X-Warn-Version", v);
+            }
+            if let Ok(v) = HeaderValue::from_str(&deadline.to_string()) {
+                headers.insert("X-Upgrade-Deadline", v);
+            }
+            response
+        }
+        VersionEnforcement::Allowed {
+            min_version,
+            warn_version,
+        } => {
+            let mut response = next.run(request).await;
+            let headers = response.headers_mut();
+            if let Ok(v) = HeaderValue::from_str(&min_version.to_string()) {
+                headers.insert("X-Min-Version", v);
+            }
+            if let Ok(v) = HeaderValue::from_str(&warn_version.to_string()) {
+                headers.insert("X-Warn-Version", v);
+            }
+            response
+        }
+    }
 }
 
 /// Helper to extract JSON body and handle errors by returning 400 instead of axum's default 422.

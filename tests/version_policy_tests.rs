@@ -341,6 +341,232 @@ fn config_warns_on_invalid_version_policy_validation() {
 
 // ── Property-based tests ──────────────────────────────────────────────────
 
+// ── Middleware integration tests ───────────────────────────────────────────
+
+mod middleware {
+    use std::sync::Arc;
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    use vauchi_relay::escrow::EscrowStore;
+    use vauchi_relay::exchange_broker::ExchangeBroker;
+    use vauchi_relay::handler::NonceTracker;
+    use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
+    use vauchi_relay::metrics::RelayMetrics;
+    use vauchi_relay::rate_limit::RateLimiter;
+    use vauchi_relay::storage::SqliteBlobStore;
+    use vauchi_relay::version_policy::{VersionPolicyConfig, VersionPolicyState};
+
+    /// Build a minimal `HttpApiState` with a custom version policy.
+    fn state_with_policy(config: VersionPolicyConfig, changed_at: Option<u64>) -> HttpApiState {
+        HttpApiState {
+            storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
+            rate_limiter: Arc::new(RateLimiter::new(100_000)),
+            metrics: RelayMetrics::new(),
+            quota: V2QuotaLimits {
+                max_blobs: 1000,
+                max_bytes: 50 * 1024 * 1024,
+            },
+            ohttp_gateway: None,
+            exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
+            nonce_tracker: Arc::new(NonceTracker::new()),
+            ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(100_000)),
+            escrow_store: Arc::new(EscrowStore::new(100)),
+            version_policy: Arc::new(VersionPolicyState::new(config, changed_at)),
+        }
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn middleware_rejects_old_client_after_grace() {
+        // min=2, no grace (changed_at=None) → version 1 is rejected with 426
+        let config = VersionPolicyConfig {
+            min_version: 2,
+            warn_version: 3,
+            grace_period_days: 14,
+        };
+        let app = create_v2_router(state_with_policy(config, None));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v2/health")
+                    .header("X-App-Compat-Version", "1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["error"], "upgrade_required");
+        assert_eq!(body["min_version"], 2);
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn middleware_allows_current_client() {
+        // min=1, warn=2 → version 2 is allowed with version headers
+        let config = VersionPolicyConfig {
+            min_version: 1,
+            warn_version: 2,
+            grace_period_days: 14,
+        };
+        let app = create_v2_router(state_with_policy(config, None));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v2/health")
+                    .header("X-App-Compat-Version", "2")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("X-Min-Version")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "1"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("X-Warn-Version")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "2"
+        );
+        assert!(
+            response.headers().get("X-Upgrade-Deadline").is_none(),
+            "should not have deadline header when version is above min"
+        );
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn middleware_includes_deadline_during_grace() {
+        // min=2, changed_at=now → version 1 is within grace, gets 200 + deadline
+        // Use a changed_at far in the future so grace is active at current system time.
+        let far_future: u64 = 4_000_000_000; // ~2096
+        let config = VersionPolicyConfig {
+            min_version: 2,
+            warn_version: 3,
+            grace_period_days: 14,
+        };
+        let app = create_v2_router(state_with_policy(config, Some(far_future)));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v2/health")
+                    .header("X-App-Compat-Version", "1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("X-Min-Version")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "2"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("X-Warn-Version")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "3"
+        );
+        let deadline_str = response
+            .headers()
+            .get("X-Upgrade-Deadline")
+            .expect("should have X-Upgrade-Deadline during grace")
+            .to_str()
+            .unwrap();
+        let deadline: u64 = deadline_str
+            .parse()
+            .expect("deadline should be a valid u64");
+        let expected_deadline = far_future + 14 * 86400;
+        assert_eq!(deadline, expected_deadline);
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn middleware_treats_missing_header_as_version_zero() {
+        // min=1, no grace → missing header means version 0 → rejected
+        let config = VersionPolicyConfig {
+            min_version: 1,
+            warn_version: 2,
+            grace_period_days: 14,
+        };
+        let app = create_v2_router(state_with_policy(config, None));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v2/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn middleware_allows_all_when_min_is_zero() {
+        // Default config (min=0) → even missing header passes
+        let config = VersionPolicyConfig::default();
+        let app = create_v2_router(state_with_policy(config, None));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v2/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("X-Min-Version")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "0"
+        );
+    }
+}
+
 proptest! {
     // @internal
     #[test]
