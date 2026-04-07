@@ -1,7 +1,11 @@
 
 # cargo-vet audits file
 
-[audits]
+[[audits.fastrand]]
+who = "Mattia Egloff <mattia.egloff@pm.me>"
+criteria = "safe-to-deploy"
+delta = "2.4.0 -> 2.4.1"
+notes = "Only change: getrandom::getrandom() renamed to getrandom::fill() (API compat fix for js feature) + CI-only additions. No logic changes."
 
 [[trusted.aead]]
 criteria = "safe-to-deploy"
