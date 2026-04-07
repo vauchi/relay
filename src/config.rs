@@ -568,38 +568,45 @@ impl RelayConfig {
         }
 
         // Version policy configuration
+        let defaults = VersionPolicyConfig::default();
+        let mut vp_min = defaults.min_version();
+        let mut vp_warn = defaults.warn_version();
+        let mut vp_grace = defaults.grace_period_days();
+
         if let Ok(val) = std::env::var("RELAY_VERSION_MIN") {
             match val.parse() {
-                Ok(parsed) => config.version_policy.min_version = parsed,
+                Ok(parsed) => vp_min = parsed,
                 Err(_) => warnings.push(format!(
                     "RELAY_VERSION_MIN: invalid value '{}', using default {}",
-                    val, config.version_policy.min_version
+                    val, vp_min
                 )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_VERSION_WARN") {
             match val.parse() {
-                Ok(parsed) => config.version_policy.warn_version = parsed,
+                Ok(parsed) => vp_warn = parsed,
                 Err(_) => warnings.push(format!(
                     "RELAY_VERSION_WARN: invalid value '{}', using default {}",
-                    val, config.version_policy.warn_version
+                    val, vp_warn
                 )),
             }
         }
 
         if let Ok(val) = std::env::var("RELAY_VERSION_GRACE_DAYS") {
             match val.parse() {
-                Ok(parsed) => config.version_policy.grace_period_days = parsed,
+                Ok(parsed) => vp_grace = parsed,
                 Err(_) => warnings.push(format!(
                     "RELAY_VERSION_GRACE_DAYS: invalid value '{}', using default {}",
-                    val, config.version_policy.grace_period_days
+                    val, vp_grace
                 )),
             }
         }
 
+        config.version_policy = VersionPolicyConfig::from_env_unchecked(vp_min, vp_warn, vp_grace);
+
         // Validate version policy if min_version is set (non-zero).
-        if config.version_policy.min_version > 0
+        if config.version_policy.min_version() > 0
             && let Err(err) = config.version_policy.validate()
         {
             warnings.push(format!("version_policy: {err}"));

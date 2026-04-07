@@ -13,23 +13,13 @@ use vauchi_relay::version_policy::{VersionEnforcement, VersionPolicyConfig, Vers
 // @internal
 #[test]
 fn valid_config_accepted() {
-    let config = VersionPolicyConfig {
-        min_version: 1,
-        warn_version: 2,
-        grace_period_days: 14,
-    };
-    assert!(config.validate().is_ok());
+    assert!(VersionPolicyConfig::new(1, 2, 14).is_ok());
 }
 
 // @internal
 #[test]
 fn warn_below_min_rejected() {
-    let config = VersionPolicyConfig {
-        min_version: 3,
-        warn_version: 2,
-        grace_period_days: 14,
-    };
-    let err = config.validate().unwrap_err();
+    let err = VersionPolicyConfig::new(3, 2, 14).unwrap_err();
     assert!(
         err.contains("warn_version"),
         "error should mention warn_version: {err}"
@@ -39,12 +29,7 @@ fn warn_below_min_rejected() {
 // @internal
 #[test]
 fn grace_period_zero_rejected() {
-    let config = VersionPolicyConfig {
-        min_version: 1,
-        warn_version: 2,
-        grace_period_days: 0,
-    };
-    let err = config.validate().unwrap_err();
+    let err = VersionPolicyConfig::new(1, 2, 0).unwrap_err();
     assert!(
         err.contains("grace_period_days"),
         "error should mention grace_period_days: {err}"
@@ -54,12 +39,7 @@ fn grace_period_zero_rejected() {
 // @internal
 #[test]
 fn warn_equal_to_min_is_valid() {
-    let config = VersionPolicyConfig {
-        min_version: 5,
-        warn_version: 5,
-        grace_period_days: 7,
-    };
-    assert!(config.validate().is_ok());
+    assert!(VersionPolicyConfig::new(5, 5, 7).is_ok());
 }
 
 // ── Default config ─────────────────────────────────────────────────────────
@@ -68,9 +48,9 @@ fn warn_equal_to_min_is_valid() {
 #[test]
 fn default_config_has_no_enforcement() {
     let config = VersionPolicyConfig::default();
-    assert_eq!(config.min_version, 0);
-    assert_eq!(config.warn_version, 0);
-    assert_eq!(config.grace_period_days, 14);
+    assert_eq!(config.min_version(), 0);
+    assert_eq!(config.warn_version(), 0);
+    assert_eq!(config.grace_period_days(), 14);
 }
 
 // ── Grace deadline calculation ─────────────────────────────────────────────
@@ -78,11 +58,7 @@ fn default_config_has_no_enforcement() {
 // @internal
 #[test]
 fn grace_deadline_with_changed_at() {
-    let config = VersionPolicyConfig {
-        min_version: 2,
-        warn_version: 3,
-        grace_period_days: 7,
-    };
+    let config = VersionPolicyConfig::new(2, 3, 7).unwrap();
     let changed_at: u64 = 1_000_000;
     let state = VersionPolicyState::new(config, Some(changed_at));
 
@@ -93,11 +69,7 @@ fn grace_deadline_with_changed_at() {
 // @internal
 #[test]
 fn grace_deadline_without_changed_at() {
-    let config = VersionPolicyConfig {
-        min_version: 2,
-        warn_version: 3,
-        grace_period_days: 7,
-    };
+    let config = VersionPolicyConfig::new(2, 3, 7).unwrap();
     let state = VersionPolicyState::new(config, None);
     assert_eq!(state.grace_deadline(), None);
 }
@@ -109,11 +81,7 @@ const NOW: u64 = 1_700_000_000; // Fixed test time (2023-11-14)
 // @internal
 #[test]
 fn missing_header_treated_as_version_zero() {
-    let config = VersionPolicyConfig {
-        min_version: 1,
-        warn_version: 2,
-        grace_period_days: 14,
-    };
+    let config = VersionPolicyConfig::new(1, 2, 14).unwrap();
     // No grace (no changed_at) → rejected
     let state = VersionPolicyState::new(config, None);
     assert_eq!(
@@ -125,11 +93,7 @@ fn missing_header_treated_as_version_zero() {
 // @internal
 #[test]
 fn below_min_no_grace_rejected() {
-    let config = VersionPolicyConfig {
-        min_version: 3,
-        warn_version: 5,
-        grace_period_days: 14,
-    };
+    let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
     let state = VersionPolicyState::new(config, None);
     assert_eq!(
         state.enforce(Some(2), NOW),
@@ -140,11 +104,7 @@ fn below_min_no_grace_rejected() {
 // @internal
 #[test]
 fn below_min_grace_expired_rejected() {
-    let config = VersionPolicyConfig {
-        min_version: 3,
-        warn_version: 5,
-        grace_period_days: 1,
-    };
+    let config = VersionPolicyConfig::new(3, 5, 1).unwrap();
     // changed_at = 0, grace = 1 day = 86400s, so deadline = 86400
     // NOW is well past that
     let state = VersionPolicyState::new(config, Some(0));
@@ -157,11 +117,7 @@ fn below_min_grace_expired_rejected() {
 // @internal
 #[test]
 fn below_min_grace_active_allowed_with_deadline() {
-    let config = VersionPolicyConfig {
-        min_version: 3,
-        warn_version: 5,
-        grace_period_days: 14,
-    };
+    let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
     // changed_at = NOW, so deadline = NOW + 14 * 86400 — grace is active
     let state = VersionPolicyState::new(config, Some(NOW));
     let expected_deadline = NOW + 14 * 86400;
@@ -179,11 +135,7 @@ fn below_min_grace_active_allowed_with_deadline() {
 // @internal
 #[test]
 fn at_min_below_warn_allowed() {
-    let config = VersionPolicyConfig {
-        min_version: 3,
-        warn_version: 5,
-        grace_period_days: 14,
-    };
+    let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
     let state = VersionPolicyState::new(config, None);
     assert_eq!(
         state.enforce(Some(3), NOW),
@@ -197,11 +149,7 @@ fn at_min_below_warn_allowed() {
 // @internal
 #[test]
 fn at_warn_allowed() {
-    let config = VersionPolicyConfig {
-        min_version: 3,
-        warn_version: 5,
-        grace_period_days: 14,
-    };
+    let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
     let state = VersionPolicyState::new(config, None);
     assert_eq!(
         state.enforce(Some(5), NOW),
@@ -215,11 +163,7 @@ fn at_warn_allowed() {
 // @internal
 #[test]
 fn above_warn_allowed() {
-    let config = VersionPolicyConfig {
-        min_version: 3,
-        warn_version: 5,
-        grace_period_days: 14,
-    };
+    let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
     let state = VersionPolicyState::new(config, None);
     assert_eq!(
         state.enforce(Some(10), NOW),
@@ -248,11 +192,7 @@ fn default_config_allows_everything() {
 // @internal
 #[test]
 fn accessors_return_config_values() {
-    let config = VersionPolicyConfig {
-        min_version: 7,
-        warn_version: 10,
-        grace_period_days: 30,
-    };
+    let config = VersionPolicyConfig::new(7, 10, 30).unwrap();
     let state = VersionPolicyState::new(config, None);
     assert_eq!(state.min_version(), 7);
     assert_eq!(state.warn_version(), 10);
@@ -261,11 +201,7 @@ fn accessors_return_config_values() {
 // @internal
 #[test]
 fn version_policy_state_implements_debug() {
-    let config = VersionPolicyConfig {
-        min_version: 1,
-        warn_version: 2,
-        grace_period_days: 14,
-    };
+    let config = VersionPolicyConfig::new(1, 2, 14).unwrap();
     let state = VersionPolicyState::new(config, Some(1_000_000));
     let debug_str = format!("{state:?}");
     assert!(
@@ -293,9 +229,9 @@ fn config_loads_version_policy_from_env() {
     unsafe { std::env::remove_var("RELAY_VERSION_WARN") };
     unsafe { std::env::remove_var("RELAY_VERSION_GRACE_DAYS") };
 
-    assert_eq!(config.version_policy.min_version, 3);
-    assert_eq!(config.version_policy.warn_version, 5);
-    assert_eq!(config.version_policy.grace_period_days, 7);
+    assert_eq!(config.version_policy.min_version(), 3);
+    assert_eq!(config.version_policy.warn_version(), 5);
+    assert_eq!(config.version_policy.grace_period_days(), 7);
     // Valid config should produce no version-policy warnings.
     let vp_warnings: Vec<_> = warnings.iter().filter(|w| w.contains("VERSION")).collect();
     assert!(
@@ -314,7 +250,7 @@ fn config_warns_on_invalid_version_env() {
     unsafe { std::env::remove_var("RELAY_VERSION_MIN") };
 
     // Should fall back to default (0).
-    assert_eq!(config.version_policy.min_version, 0);
+    assert_eq!(config.version_policy.min_version(), 0);
     assert!(
         warnings.iter().any(|w| w.contains("RELAY_VERSION_MIN")),
         "expected warning about RELAY_VERSION_MIN, got: {warnings:?}"
@@ -382,11 +318,7 @@ mod middleware {
     #[tokio::test]
     async fn middleware_rejects_old_client_after_grace() {
         // min=2, no grace (changed_at=None) → version 1 is rejected with 426
-        let config = VersionPolicyConfig {
-            min_version: 2,
-            warn_version: 3,
-            grace_period_days: 14,
-        };
+        let config = VersionPolicyConfig::new(2, 3, 14).unwrap();
         let app = create_v2_router(state_with_policy(config, None));
 
         let response = app
@@ -414,11 +346,7 @@ mod middleware {
     #[tokio::test]
     async fn middleware_allows_current_client() {
         // min=1, warn=2 → version 2 is allowed with version headers
-        let config = VersionPolicyConfig {
-            min_version: 1,
-            warn_version: 2,
-            grace_period_days: 14,
-        };
+        let config = VersionPolicyConfig::new(1, 2, 14).unwrap();
         let app = create_v2_router(state_with_policy(config, None));
 
         let response = app
@@ -463,11 +391,7 @@ mod middleware {
         // min=2, changed_at=now → version 1 is within grace, gets 200 + deadline
         // Use a changed_at far in the future so grace is active at current system time.
         let far_future: u64 = 4_000_000_000; // ~2096
-        let config = VersionPolicyConfig {
-            min_version: 2,
-            warn_version: 3,
-            grace_period_days: 14,
-        };
+        let config = VersionPolicyConfig::new(2, 3, 14).unwrap();
         let app = create_v2_router(state_with_policy(config, Some(far_future)));
 
         let response = app
@@ -517,11 +441,7 @@ mod middleware {
     #[tokio::test]
     async fn middleware_treats_missing_header_as_version_zero() {
         // min=1, no grace → missing header means version 0 → rejected
-        let config = VersionPolicyConfig {
-            min_version: 1,
-            warn_version: 2,
-            grace_period_days: 14,
-        };
+        let config = VersionPolicyConfig::new(1, 2, 14).unwrap();
         let app = create_v2_router(state_with_policy(config, None));
 
         let response = app
@@ -580,11 +500,7 @@ proptest! {
         let warn_version = warn_version.max(min_version);
         prop_assume!(client_version >= min_version);
 
-        let config = VersionPolicyConfig {
-            min_version,
-            warn_version,
-            grace_period_days: 14,
-        };
+        let config = VersionPolicyConfig::new(min_version, warn_version, 14).unwrap();
         let state = VersionPolicyState::new(config, None);
         let result = state.enforce(Some(client_version), now_secs);
         prop_assert!(
@@ -605,11 +521,7 @@ proptest! {
         prop_assume!(client_version < min_version);
         let warn_version = warn_version.max(min_version);
 
-        let config = VersionPolicyConfig {
-            min_version,
-            warn_version,
-            grace_period_days: 14,
-        };
+        let config = VersionPolicyConfig::new(min_version, warn_version, 14).unwrap();
         // No changed_at → no grace period
         let state = VersionPolicyState::new(config, None);
         let result = state.enforce(Some(client_version), now_secs);
@@ -617,5 +529,195 @@ proptest! {
             matches!(result, VersionEnforcement::Rejected { .. }),
             "client_version ({client_version}) < min_version ({min_version}) with no grace must be Rejected, got {result:?}"
         );
+    }
+
+    // @internal
+    #[test]
+    fn grace_active_always_allowed_with_deadline(
+        client_version in 0u16..=u16::MAX,
+        min_version in 1u16..=u16::MAX,
+        warn_version in 0u16..=u16::MAX,
+        changed_at in 0u64..=u64::MAX / 4,
+    ) {
+        prop_assume!(client_version < min_version);
+        let warn_version = warn_version.max(min_version);
+
+        let config = VersionPolicyConfig::new(min_version, warn_version, 14).unwrap();
+        let state = VersionPolicyState::new(config, Some(changed_at));
+
+        // now is before deadline (changed_at + 14 * 86400)
+        let now_secs = changed_at + 1;
+        let result = state.enforce(Some(client_version), now_secs);
+        prop_assert!(
+            matches!(result, VersionEnforcement::AllowedWithDeadline { .. }),
+            "client below min during grace must be AllowedWithDeadline, got {result:?}"
+        );
+    }
+}
+
+// ── Grace boundary edge cases ─────────────────────────────────────────────
+
+// @internal
+#[test]
+fn grace_boundary_last_second_allowed_first_second_rejected() {
+    let config = VersionPolicyConfig::new(2, 2, 1).unwrap();
+    let changed_at = 1_000_000u64;
+    let deadline = changed_at + 86400; // 1 day grace
+    let state = VersionPolicyState::new(config, Some(changed_at));
+
+    // Last second before deadline → allowed with deadline
+    assert!(matches!(
+        state.enforce(Some(1), deadline - 1),
+        VersionEnforcement::AllowedWithDeadline { .. }
+    ));
+
+    // At deadline → rejected
+    assert!(matches!(
+        state.enforce(Some(1), deadline),
+        VersionEnforcement::Rejected { .. }
+    ));
+}
+
+// ── Adversarial header tests (CC-14) ─────────────────────────────────────
+
+mod adversarial {
+    use std::sync::Arc;
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    use vauchi_relay::escrow::EscrowStore;
+    use vauchi_relay::exchange_broker::ExchangeBroker;
+    use vauchi_relay::handler::NonceTracker;
+    use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
+    use vauchi_relay::metrics::RelayMetrics;
+    use vauchi_relay::rate_limit::RateLimiter;
+    use vauchi_relay::storage::SqliteBlobStore;
+    use vauchi_relay::version_policy::{VersionPolicyConfig, VersionPolicyState};
+
+    fn state_with_min_version(min: u16) -> HttpApiState {
+        let config = VersionPolicyConfig::new(min, min, 14).unwrap();
+        HttpApiState {
+            storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
+            rate_limiter: Arc::new(RateLimiter::new(100_000)),
+            metrics: RelayMetrics::new(),
+            quota: V2QuotaLimits {
+                max_blobs: 1000,
+                max_bytes: 50 * 1024 * 1024,
+            },
+            ohttp_gateway: None,
+            exchange_broker: Arc::new(ExchangeBroker::new(10_000, 300)),
+            nonce_tracker: Arc::new(NonceTracker::new()),
+            ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(100_000)),
+            escrow_store: Arc::new(EscrowStore::new(100)),
+            version_policy: Arc::new(VersionPolicyState::new(config, None)),
+        }
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn adversarial_negative_version_header() {
+        let app = create_v2_router(state_with_min_version(1));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v2/health")
+                    .header("X-App-Compat-Version", "-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Unparsable → treated as version 0 → rejected
+        assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn adversarial_overflow_version_header() {
+        let app = create_v2_router(state_with_min_version(1));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v2/health")
+                    .header("X-App-Compat-Version", "99999")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // 99999 > u16::MAX (65535) → parse fails → treated as 0 → rejected
+        assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn adversarial_non_numeric_version_header() {
+        let app = create_v2_router(state_with_min_version(1));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v2/health")
+                    .header("X-App-Compat-Version", "abc")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn adversarial_empty_version_header() {
+        let app = create_v2_router(state_with_min_version(1));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v2/health")
+                    .header("X-App-Compat-Version", "")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn adversarial_whitespace_version_header() {
+        let app = create_v2_router(state_with_min_version(1));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v2/health")
+                    .header("X-App-Compat-Version", " 1 ")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // " 1 " fails u16 parse → treated as 0 → rejected
+        assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn adversarial_very_long_version_header() {
+        let app = create_v2_router(state_with_min_version(1));
+        let long_value = "9".repeat(1000);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v2/health")
+                    .header("X-App-Compat-Version", long_value.as_str())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
     }
 }

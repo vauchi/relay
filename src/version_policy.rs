@@ -12,9 +12,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Version policy configuration (from relay config / env vars).
 #[derive(Debug, Clone)]
 pub struct VersionPolicyConfig {
-    pub min_version: u16,
-    pub warn_version: u16,
-    pub grace_period_days: u16,
+    min_version: u16,
+    warn_version: u16,
+    grace_period_days: u16,
 }
 
 impl Default for VersionPolicyConfig {
@@ -28,6 +28,47 @@ impl Default for VersionPolicyConfig {
 }
 
 impl VersionPolicyConfig {
+    /// Create a new config, validating invariants.
+    pub fn new(
+        min_version: u16,
+        warn_version: u16,
+        grace_period_days: u16,
+    ) -> Result<Self, String> {
+        let config = Self {
+            min_version,
+            warn_version,
+            grace_period_days,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Create a config without validation (for loading from env vars where
+    /// validation is deferred to startup).
+    pub(crate) fn from_env_unchecked(
+        min_version: u16,
+        warn_version: u16,
+        grace_period_days: u16,
+    ) -> Self {
+        Self {
+            min_version,
+            warn_version,
+            grace_period_days,
+        }
+    }
+
+    pub fn min_version(&self) -> u16 {
+        self.min_version
+    }
+
+    pub fn warn_version(&self) -> u16 {
+        self.warn_version
+    }
+
+    pub fn grace_period_days(&self) -> u16 {
+        self.grace_period_days
+    }
+
     /// Validate the configuration.
     ///
     /// Returns `Err` if `warn_version < min_version` or `grace_period_days == 0`.
@@ -117,7 +158,7 @@ impl VersionPolicyState {
     pub fn enforce_now(&self, client_version: Option<u16>) -> VersionEnforcement {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("system clock before UNIX epoch")
+            .unwrap_or_default()
             .as_secs();
         self.enforce(client_version, now)
     }

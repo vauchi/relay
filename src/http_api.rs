@@ -99,11 +99,11 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .route("/v2/exchange/complete", post(exchange_complete_handler))
         .route("/v2/ohttp-key", get(ohttp_key_handler))
         .route("/v2/ohttp", post(ohttp_handler))
+        .layer(DefaultBodyLimit::max(128 * 1024))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             version_check_middleware,
         ))
-        .layer(DefaultBodyLimit::max(128 * 1024))
         .with_state(state)
 }
 

@@ -18,4 +18,4 @@ tests/federation_integration_test.rs 1380
 tests/http_api_tests.rs 544
 tests/http_api_exchange_tests.rs 171
 tests/http_api_ohttp_tests.rs 440
-tests/common/http_helpers.rs 143
+tests/common/http_helpers.rs 152
