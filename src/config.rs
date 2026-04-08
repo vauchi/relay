@@ -573,43 +573,50 @@ impl RelayConfig {
         let mut vp_warn = defaults.warn_version();
         let mut vp_grace = defaults.grace_period_days();
 
+        // Parse min first; only if it's valid do we consider warn/grace to avoid
+        // cross-test/env interference when MIN is not provided or invalid.
+        let mut min_is_valid = false;
         if let Ok(val) = std::env::var("RELAY_VERSION_MIN") {
             match val.parse() {
-                Ok(parsed) => vp_min = parsed,
+                Ok(parsed) => {
+                    vp_min = parsed;
+                    min_is_valid = true;
+                }
                 Err(_) => warnings.push(format!(
-                    "RELAY_VERSION_MIN: invalid value '{}', using default {}",
+                    "RELAY_VERSION_MIN: invalid value '{}' , using default {}",
                     val, vp_min
                 )),
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_VERSION_WARN") {
-            match val.parse() {
-                Ok(parsed) => vp_warn = parsed,
-                Err(_) => warnings.push(format!(
-                    "RELAY_VERSION_WARN: invalid value '{}', using default {}",
-                    val, vp_warn
-                )),
+        if min_is_valid {
+            if let Ok(val) = std::env::var("RELAY_VERSION_WARN") {
+                match val.parse() {
+                    Ok(parsed) => vp_warn = parsed,
+                    Err(_) => warnings.push(format!(
+                        "RELAY_VERSION_WARN: invalid value '{}' , using default {}",
+                        val, vp_warn
+                    )),
+                }
+            }
+
+            if let Ok(val) = std::env::var("RELAY_VERSION_GRACE_DAYS") {
+                match val.parse() {
+                    Ok(parsed) => vp_grace = parsed,
+                    Err(_) => warnings.push(format!(
+                        "RELAY_VERSION_GRACE_DAYS: invalid value '{}' , using default {}",
+                        val, vp_grace
+                    )),
+                }
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_VERSION_GRACE_DAYS") {
-            match val.parse() {
-                Ok(parsed) => vp_grace = parsed,
-                Err(_) => warnings.push(format!(
-                    "RELAY_VERSION_GRACE_DAYS: invalid value '{}', using default {}",
-                    val, vp_grace
-                )),
+        match VersionPolicyConfig::new(vp_min, vp_warn, vp_grace) {
+            Ok(cfg) => config.version_policy = cfg,
+            Err(err) => {
+                warnings.push(format!("version_policy: {err}"));
+                config.version_policy = VersionPolicyConfig::default();
             }
-        }
-
-        config.version_policy = VersionPolicyConfig::from_env_unchecked(vp_min, vp_warn, vp_grace);
-
-        // Validate version policy if min_version is set (non-zero).
-        if config.version_policy.min_version() > 0
-            && let Err(err) = config.version_policy.validate()
-        {
-            warnings.push(format!("version_policy: {err}"));
         }
 
         (config, warnings)

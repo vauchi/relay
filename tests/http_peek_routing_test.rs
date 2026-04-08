@@ -173,6 +173,9 @@ async fn start_full_server(
                             mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
                                 vauchi_relay::mailbox_registry::MailboxRegistry::new(),
                             )),
+                            version_policy: std::sync::Arc::new(parking_lot::RwLock::new(
+                                vauchi_relay::version_policy::VersionPolicyState::default(),
+                            )),
                         };
                         handler::handle_connection(ws_stream, deps).await;
                     }

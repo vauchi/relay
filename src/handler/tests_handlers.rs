@@ -51,6 +51,12 @@ fn make_test_deps() -> ConnectionDeps {
         mailbox_registry: Arc::new(parking_lot::RwLock::new(
             crate::mailbox_registry::MailboxRegistry::new(),
         )),
+        version_policy: Arc::new(parking_lot::RwLock::new(
+            crate::version_policy::VersionPolicyState::new(
+                crate::version_policy::VersionPolicyConfig::default(),
+                None,
+            ),
+        )),
     }
 }
 
@@ -132,6 +138,12 @@ fn test_handle_encrypted_update_quota_exceeded_returns_failed() {
         metrics: RelayMetrics::new(),
         mailbox_registry: Arc::new(parking_lot::RwLock::new(
             crate::mailbox_registry::MailboxRegistry::new(),
+        )),
+        version_policy: Arc::new(parking_lot::RwLock::new(
+            crate::version_policy::VersionPolicyState::new(
+                crate::version_policy::VersionPolicyConfig::default(),
+                None,
+            ),
         )),
     };
     let ctx = make_test_context(&deps);

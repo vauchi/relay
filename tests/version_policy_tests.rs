@@ -8,6 +8,12 @@ use proptest::prelude::*;
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::version_policy::{VersionEnforcement, VersionPolicyConfig, VersionPolicyState};
 
+/// Helper to create a state with manual control over the timestamp,
+/// ensuring tests are deterministic.
+fn new_state(config: VersionPolicyConfig, changed_at: Option<u64>) -> VersionPolicyState {
+    VersionPolicyState::new_manual(config, changed_at)
+}
+
 // ── Config validation ──────────────────────────────────────────────────────
 
 // @internal
@@ -60,7 +66,7 @@ fn default_config_has_no_enforcement() {
 fn grace_deadline_with_changed_at() {
     let config = VersionPolicyConfig::new(2, 3, 7).unwrap();
     let changed_at: u64 = 1_000_000;
-    let state = VersionPolicyState::new(config, Some(changed_at));
+    let state = new_state(config, Some(changed_at));
 
     let expected = changed_at + 7 * 86400;
     assert_eq!(state.grace_deadline(), Some(expected));
@@ -70,7 +76,7 @@ fn grace_deadline_with_changed_at() {
 #[test]
 fn grace_deadline_without_changed_at() {
     let config = VersionPolicyConfig::new(2, 3, 7).unwrap();
-    let state = VersionPolicyState::new(config, None);
+    let state = new_state(config, None);
     assert_eq!(state.grace_deadline(), None);
 }
 
@@ -83,7 +89,7 @@ const NOW: u64 = 1_700_000_000; // Fixed test time (2023-11-14)
 fn missing_header_treated_as_version_zero() {
     let config = VersionPolicyConfig::new(1, 2, 14).unwrap();
     // No grace (no changed_at) → rejected
-    let state = VersionPolicyState::new(config, None);
+    let state = new_state(config, None);
     assert_eq!(
         state.enforce(None, NOW),
         VersionEnforcement::Rejected { min_version: 1 }
@@ -94,7 +100,7 @@ fn missing_header_treated_as_version_zero() {
 #[test]
 fn below_min_no_grace_rejected() {
     let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
-    let state = VersionPolicyState::new(config, None);
+    let state = new_state(config, None);
     assert_eq!(
         state.enforce(Some(2), NOW),
         VersionEnforcement::Rejected { min_version: 3 }
@@ -107,7 +113,7 @@ fn below_min_grace_expired_rejected() {
     let config = VersionPolicyConfig::new(3, 5, 1).unwrap();
     // changed_at = 0, grace = 1 day = 86400s, so deadline = 86400
     // NOW is well past that
-    let state = VersionPolicyState::new(config, Some(0));
+    let state = new_state(config, Some(0));
     assert_eq!(
         state.enforce(Some(2), NOW),
         VersionEnforcement::Rejected { min_version: 3 }
@@ -119,7 +125,7 @@ fn below_min_grace_expired_rejected() {
 fn below_min_grace_active_allowed_with_deadline() {
     let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
     // changed_at = NOW, so deadline = NOW + 14 * 86400 — grace is active
-    let state = VersionPolicyState::new(config, Some(NOW));
+    let state = new_state(config, Some(NOW));
     let expected_deadline = NOW + 14 * 86400;
 
     assert_eq!(
@@ -136,7 +142,7 @@ fn below_min_grace_active_allowed_with_deadline() {
 #[test]
 fn at_min_below_warn_allowed() {
     let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
-    let state = VersionPolicyState::new(config, None);
+    let state = new_state(config, None);
     assert_eq!(
         state.enforce(Some(3), NOW),
         VersionEnforcement::Allowed {
@@ -150,7 +156,7 @@ fn at_min_below_warn_allowed() {
 #[test]
 fn at_warn_allowed() {
     let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
-    let state = VersionPolicyState::new(config, None);
+    let state = new_state(config, None);
     assert_eq!(
         state.enforce(Some(5), NOW),
         VersionEnforcement::Allowed {
@@ -164,7 +170,7 @@ fn at_warn_allowed() {
 #[test]
 fn above_warn_allowed() {
     let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
-    let state = VersionPolicyState::new(config, None);
+    let state = new_state(config, None);
     assert_eq!(
         state.enforce(Some(10), NOW),
         VersionEnforcement::Allowed {
@@ -178,7 +184,7 @@ fn above_warn_allowed() {
 #[test]
 fn default_config_allows_everything() {
     let config = VersionPolicyConfig::default();
-    let state = VersionPolicyState::new(config, None);
+    let state = new_state(config, None);
     // min=0, so even version 0 (missing header) is allowed
     assert_eq!(
         state.enforce(None, NOW),
@@ -193,7 +199,7 @@ fn default_config_allows_everything() {
 #[test]
 fn accessors_return_config_values() {
     let config = VersionPolicyConfig::new(7, 10, 30).unwrap();
-    let state = VersionPolicyState::new(config, None);
+    let state = new_state(config, None);
     assert_eq!(state.min_version(), 7);
     assert_eq!(state.warn_version(), 10);
 }
@@ -202,7 +208,7 @@ fn accessors_return_config_values() {
 #[test]
 fn version_policy_state_implements_debug() {
     let config = VersionPolicyConfig::new(1, 2, 14).unwrap();
-    let state = VersionPolicyState::new(config, Some(1_000_000));
+    let state = new_state(config, Some(1_000_000));
     let debug_str = format!("{state:?}");
     assert!(
         debug_str.contains("VersionPolicyState"),
@@ -211,10 +217,13 @@ fn version_policy_state_implements_debug() {
 }
 
 // ── Config integration ────────────────────────────────────────────────────
+use std::sync::{Mutex, OnceLock};
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 // @internal
 #[test]
 fn config_loads_version_policy_from_env() {
+    let _env_guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
     // Use unique env var names to avoid interference with other tests.
     // The real env vars are RELAY_VERSION_MIN, RELAY_VERSION_WARN,
     // RELAY_VERSION_GRACE_DAYS — set them, load config, assert, clean up.
@@ -243,6 +252,7 @@ fn config_loads_version_policy_from_env() {
 // @internal
 #[test]
 fn config_warns_on_invalid_version_env() {
+    let _env_guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
     unsafe { std::env::set_var("RELAY_VERSION_MIN", "not_a_number") };
 
     let (config, warnings) = RelayConfig::from_env_with_warnings();
@@ -260,6 +270,7 @@ fn config_warns_on_invalid_version_env() {
 // @internal
 #[test]
 fn config_warns_on_invalid_version_policy_validation() {
+    let _env_guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
     // warn < min is invalid — should produce a validation warning.
     unsafe { std::env::set_var("RELAY_VERSION_MIN", "5") };
     unsafe { std::env::set_var("RELAY_VERSION_WARN", "2") };
@@ -310,7 +321,9 @@ mod middleware {
             nonce_tracker: Arc::new(NonceTracker::new()),
             ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(100_000)),
             escrow_store: Arc::new(EscrowStore::new(100)),
-            version_policy: Arc::new(VersionPolicyState::new(config, changed_at)),
+            version_policy: Arc::new(parking_lot::RwLock::new(VersionPolicyState::new_manual(
+                config, changed_at,
+            ))),
         }
     }
 
@@ -611,7 +624,9 @@ mod adversarial {
             nonce_tracker: Arc::new(NonceTracker::new()),
             ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(100_000)),
             escrow_store: Arc::new(EscrowStore::new(100)),
-            version_policy: Arc::new(VersionPolicyState::new(config, None)),
+            version_policy: Arc::new(parking_lot::RwLock::new(VersionPolicyState::new_manual(
+                config, None,
+            ))),
         }
     }
 

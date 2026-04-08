@@ -158,6 +158,9 @@ fn make_shared_deps(
         mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
             vauchi_relay::mailbox_registry::MailboxRegistry::new(),
         )),
+        version_policy: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::version_policy::VersionPolicyState::default(),
+        )),
     }
 }
 

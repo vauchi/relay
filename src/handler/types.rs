@@ -20,6 +20,7 @@ use crate::noise_key::RelaySigningKey;
 use crate::rate_limit::RateLimiter;
 use crate::recovery_storage::RecoveryProofStore;
 use crate::storage::BlobStore;
+use crate::version_policy::VersionPolicyState;
 
 /// In-memory map of blob_id → sender_client_id for delivery notifications.
 /// This is ephemeral (not persisted) — delivery acks only work when the
@@ -66,6 +67,8 @@ pub struct ConnectionDeps {
     pub metrics: RelayMetrics,
     /// Shared mailbox registry for token-based routing (SP-33).
     pub mailbox_registry: Arc<RwLock<MailboxRegistry>>,
+    /// Version policy state for force updates (C8).
+    pub version_policy: Arc<RwLock<VersionPolicyState>>,
 }
 
 // =========================================================================

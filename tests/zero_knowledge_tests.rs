@@ -72,6 +72,9 @@ fn test_deps_with_file_storage() -> (
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
         mailbox_registry: Arc::new(parking_lot::RwLock::new(MailboxRegistry::new())),
+        version_policy: Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::version_policy::VersionPolicyState::default(),
+        )),
     };
     (deps, kp.public, storage, registry, dir)
 }

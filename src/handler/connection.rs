@@ -145,6 +145,15 @@ async fn perform_handshake(
     let (client_id, device_id, routing_token, auth_id_hash_opt, suppress_presence) =
         match protocol::decode_message(&handshake_data) {
             Ok(envelope) => {
+                // R-C8: Enforce version policy (Force Update)
+                let policy = deps.version_policy.read();
+                if let crate::version_policy::VersionEnforcement::Rejected { .. } =
+                    policy.enforce_now(Some(envelope.version as u16))
+                {
+                    warn!("[{}] Client version rejected (Force Update)", session);
+                    return None;
+                }
+
                 if let protocol::MessagePayload::Handshake(hs) = envelope.payload {
                     // Validate client_id format
                     if !validate_client_id(&hs.client_id) {

@@ -43,10 +43,10 @@ pub fn create_test_state() -> HttpApiState {
         nonce_tracker: Arc::new(NonceTracker::new()),
         ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(100_000)),
         escrow_store: Arc::new(EscrowStore::new(100)),
-        version_policy: Arc::new(VersionPolicyState::new(
+        version_policy: Arc::new(parking_lot::RwLock::new(VersionPolicyState::new(
             VersionPolicyConfig::default(),
             None,
-        )),
+        ))),
     }
 }
 
@@ -67,10 +67,10 @@ pub fn create_test_state_with_ohttp() -> HttpApiState {
         nonce_tracker: Arc::new(NonceTracker::new()),
         ohttp_exchange_rate_limiter: Arc::new(RateLimiter::new(100_000)),
         escrow_store: Arc::new(EscrowStore::new(100)),
-        version_policy: Arc::new(VersionPolicyState::new(
+        version_policy: Arc::new(parking_lot::RwLock::new(VersionPolicyState::new(
             VersionPolicyConfig::default(),
             None,
-        )),
+        ))),
     }
 }
 

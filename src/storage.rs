@@ -118,6 +118,12 @@ pub trait BlobStore: Send + Sync {
     /// Used for garbage-collecting ephemeral maps (e.g., blob_sender_map).
     fn all_blob_ids(&self) -> Vec<String>;
 
+    /// Sets a global configuration value (key/value store).
+    fn set_config(&self, key: &str, value: &str);
+
+    /// Retrieves a global configuration value.
+    fn get_config(&self, key: &str) -> Option<String>;
+
     /// Performs shutdown cleanup (WAL checkpoint for SQLite backends).
     fn shutdown(&self) {}
 }
@@ -165,6 +171,15 @@ impl SqliteBlobStore {
         // Create index for expiration cleanup
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_blobs_created ON blobs(created_at_secs)",
+            [],
+        )?;
+
+        // Create config table for persisting global state
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )",
             [],
         )?;
 
@@ -399,6 +414,24 @@ impl BlobStore for SqliteBlobStore {
             .expect("all_blob_ids query must succeed")
             .filter_map(|r| r.ok())
             .collect()
+    }
+
+    fn set_config(&self, key: &str, value: &str) {
+        let conn = self.conn.lock();
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        );
+    }
+
+    fn get_config(&self, key: &str) -> Option<String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT value FROM config WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .ok()
     }
 
     fn shutdown(&self) {
@@ -690,6 +723,18 @@ mod tests {
         let store = SqliteBlobStore::in_memory().unwrap();
         let removed = store.delete_all_for("nonexistent");
         assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn test_config_persistence() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        assert!(store.get_config("key1").is_none());
+
+        store.set_config("key1", "value1");
+        assert_eq!(store.get_config("key1"), Some("value1".to_string()));
+
+        store.set_config("key1", "value2");
+        assert_eq!(store.get_config("key1"), Some("value2".to_string()));
     }
 
     // ============================================================================

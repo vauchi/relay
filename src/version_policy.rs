@@ -43,20 +43,6 @@ impl VersionPolicyConfig {
         Ok(config)
     }
 
-    /// Create a config without validation (for loading from env vars where
-    /// validation is deferred to startup).
-    pub(crate) fn from_env_unchecked(
-        min_version: u16,
-        warn_version: u16,
-        grace_period_days: u16,
-    ) -> Self {
-        Self {
-            min_version,
-            warn_version,
-            grace_period_days,
-        }
-    }
-
     pub fn min_version(&self) -> u16 {
         self.min_version
     }
@@ -87,19 +73,45 @@ impl VersionPolicyConfig {
 }
 
 /// Runtime state combining config with persistence.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VersionPolicyState {
     config: VersionPolicyConfig,
     min_version_changed_at: Option<u64>,
 }
 
+impl Default for VersionPolicyState {
+    fn default() -> Self {
+        Self::new_manual(VersionPolicyConfig::default(), None)
+    }
+}
+
 impl VersionPolicyState {
-    /// Create a new policy state.
-    pub fn new(config: VersionPolicyConfig, min_version_changed_at: Option<u64>) -> Self {
+    /// Create a new policy state without any automatic timestamp initialization.
+    /// Useful for tests where determinism is required.
+    pub fn new_manual(config: VersionPolicyConfig, min_version_changed_at: Option<u64>) -> Self {
         Self {
             config,
             min_version_changed_at,
         }
+    }
+
+    /// Create a new policy state with automatic timestamp initialization.
+    ///
+    /// If `min_version > 0` and `min_version_changed_at` is `None`, the current
+    /// system time is used as the change timestamp (starting the grace period).
+    pub fn new(config: VersionPolicyConfig, min_version_changed_at: Option<u64>) -> Self {
+        let min_version_changed_at = if config.min_version > 0 && min_version_changed_at.is_none() {
+            Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            )
+        } else {
+            min_version_changed_at
+        };
+
+        Self::new_manual(config, min_version_changed_at)
     }
 
     /// Returns the grace deadline as a unix timestamp, or `None` if no `changed_at`
@@ -107,6 +119,11 @@ impl VersionPolicyState {
     pub fn grace_deadline(&self) -> Option<u64> {
         self.min_version_changed_at
             .map(|changed_at| changed_at + u64::from(self.config.grace_period_days) * 86400)
+    }
+
+    /// The timestamp when the minimum version was last changed.
+    pub fn min_version_changed_at(&self) -> Option<u64> {
+        self.min_version_changed_at
     }
 
     /// The configured minimum version.

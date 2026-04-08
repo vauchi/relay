@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{DefaultBodyLimit, FromRequest, State},
     http::{HeaderValue, StatusCode, header},
     middleware::{self, Next},
@@ -19,6 +19,7 @@ use axum::{
     routing::{get, post},
 };
 use base64::Engine;
+use parking_lot::RwLock;
 use serde::Deserialize;
 use vauchi_protocol::v2::{
     V2AckRequest, V2ExchangeClaimRequest, V2ExchangeCompleteRequest, V2ExchangeOfferRequest,
@@ -59,7 +60,7 @@ pub struct HttpApiState {
     /// Escrow store for gated blob exchange (Link mode + relay fallback).
     pub escrow_store: Arc<EscrowStore>,
     /// Version policy state for client compatibility enforcement.
-    pub version_policy: Arc<VersionPolicyState>,
+    pub version_policy: Arc<RwLock<VersionPolicyState>>,
     // TODO: recovery_storage will be added when /v2/recovery endpoint is implemented
 }
 
@@ -99,31 +100,31 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .route("/v2/exchange/complete", post(exchange_complete_handler))
         .route("/v2/ohttp-key", get(ohttp_key_handler))
         .route("/v2/ohttp", post(ohttp_handler))
-        .layer(DefaultBodyLimit::max(128 * 1024))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             version_check_middleware,
         ))
+        .layer(DefaultBodyLimit::max(128 * 1024))
         .with_state(state)
 }
 
-/// Axum middleware that enforces the version policy on every v2 request.
-///
-/// Reads `X-App-Compat-Version` from the request header, parses it as `u16`,
-/// and delegates to `VersionPolicyState::enforce_now()`. Returns HTTP 426
-/// for rejected clients, or forwards the request with version info headers.
 async fn version_check_middleware(
     State(state): State<HttpApiState>,
-    request: axum::http::Request<axum::body::Body>,
+    request: axum::http::Request<Body>,
     next: Next,
 ) -> Response {
     let client_version: Option<u16> = request
         .headers()
         .get("X-App-Compat-Version")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse().ok());
+        .and_then(|v| v.parse::<u16>().ok());
 
-    match state.version_policy.enforce_now(client_version) {
+    let enforcement = {
+        let policy = state.version_policy.read();
+        policy.enforce_now(client_version)
+    };
+
+    match enforcement {
         VersionEnforcement::Rejected { min_version } => {
             let body = serde_json::json!({
                 "error": "upgrade_required",

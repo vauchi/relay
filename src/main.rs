@@ -188,6 +188,26 @@ async fn main() {
         Some(&config.storage.data_dir),
     ));
 
+    // Load persisted min_version_changed_at timestamp
+    let min_version_changed_at = storage
+        .get_config("min_version_changed_at")
+        .and_then(|s| s.parse::<u64>().ok());
+
+    let version_policy = Arc::new(parking_lot::RwLock::new(
+        vauchi_relay::version_policy::VersionPolicyState::new(
+            config.version_policy.clone(),
+            min_version_changed_at,
+        ),
+    ));
+
+    // If version policy detects a NEW change in min_version, persist it
+    if let Some(changed_at) = version_policy.read().min_version_changed_at()
+        && Some(changed_at) != min_version_changed_at
+    {
+        info!("Persisting new min_version_changed_at: {}", changed_at);
+        storage.set_config("min_version_changed_at", &changed_at.to_string());
+    }
+
     // Initialize recovery proof storage
     // Always use SQLite - in-memory for Memory backend, file-based for Sqlite backend
     let recovery_storage: Arc<dyn RecoveryProofStore> = match config.storage.backend {
@@ -510,10 +530,7 @@ async fn main() {
                 config.http_api.ohttp_exchange_rate_limit_per_min,
             )),
             escrow_store,
-            version_policy: Arc::new(vauchi_relay::version_policy::VersionPolicyState::new(
-                config.version_policy.clone(),
-                None, // TODO: persist min_version_changed_at timestamp
-            )),
+            version_policy: version_policy.clone(),
         };
 
         http_router = http_router.merge(create_v2_router(api_state));
@@ -681,6 +698,7 @@ async fn main() {
         let nonce_tracker = nonce_tracker.clone();
         let relay_signing_key = relay_signing_key.clone();
         let mailbox_registry = mailbox_registry.clone();
+        let version_policy = version_policy.clone();
         let metrics = metrics.clone();
         let hint_store = hint_store.clone();
         let federation_rate_limiter = federation_rate_limiter.clone();
@@ -846,6 +864,7 @@ async fn main() {
                                 relay_signing_key: Some(relay_signing_key),
                                 metrics: metrics.clone(),
                                 mailbox_registry: mailbox_registry.clone(),
+                                version_policy: version_policy.clone(),
                             },
                         )
                         .await;

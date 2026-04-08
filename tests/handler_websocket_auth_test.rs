@@ -226,6 +226,9 @@ async fn test_nonce_replay_rejected() {
         mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
             vauchi_relay::mailbox_registry::MailboxRegistry::new(),
         )),
+        version_policy: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::version_policy::VersionPolicyState::default(),
+        )),
     };
 
     let url1 = start_test_server(deps1).await;
@@ -263,6 +266,9 @@ async fn test_nonce_replay_rejected() {
         metrics: RelayMetrics::new(),
         mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
             vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
+        version_policy: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::version_policy::VersionPolicyState::default(),
         )),
     };
 
@@ -489,6 +495,9 @@ async fn test_rate_limit_keys_on_auth_hash_not_routing_id() {
         metrics: RelayMetrics::new(),
         mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
             vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+        )),
+        version_policy: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::version_policy::VersionPolicyState::default(),
         )),
     };
 

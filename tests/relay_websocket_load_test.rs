@@ -72,6 +72,9 @@ fn test_deps() -> (
         mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
             vauchi_relay::mailbox_registry::MailboxRegistry::new(),
         )),
+        version_policy: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::version_policy::VersionPolicyState::default(),
+        )),
     };
     (deps, relay_pub, storage, registry)
 }
@@ -111,6 +114,9 @@ fn test_deps_custom(
         mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
             vauchi_relay::mailbox_registry::MailboxRegistry::new(),
         )),
+        version_policy: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::version_policy::VersionPolicyState::default(),
+        )),
     };
     (deps, relay_pub, storage, registry)
 }
@@ -131,6 +137,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
     let idle_timeout = deps.idle_timeout;
     let quota = deps.quota;
     let noise_static_key = deps.noise_static_key;
+    let version_policy = deps.version_policy;
 
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
@@ -154,6 +161,7 @@ async fn start_multi_server(deps: ConnectionDeps) -> String {
                 mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
                     vauchi_relay::mailbox_registry::MailboxRegistry::new(),
                 )),
+                version_policy: version_policy.clone(),
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
@@ -488,6 +496,9 @@ async fn test_delivery_notification_latency() {
             metrics: RelayMetrics::new(),
             mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
                 vauchi_relay::mailbox_registry::MailboxRegistry::new(),
+            )),
+            version_policy: std::sync::Arc::new(parking_lot::RwLock::new(
+                vauchi_relay::version_policy::VersionPolicyState::default(),
             )),
         }
     };

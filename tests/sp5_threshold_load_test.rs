@@ -135,6 +135,9 @@ fn test_deps() -> (
         mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
             vauchi_relay::mailbox_registry::MailboxRegistry::new(),
         )),
+        version_policy: std::sync::Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::version_policy::VersionPolicyState::default(),
+        )),
     };
     (deps, storage, registry)
 }
@@ -154,6 +157,7 @@ async fn start_server(deps: ConnectionDeps) -> String {
     let max_message_size = deps.max_message_size;
     let idle_timeout = deps.idle_timeout;
     let quota = deps.quota;
+    let version_policy = deps.version_policy;
 
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
@@ -177,6 +181,7 @@ async fn start_server(deps: ConnectionDeps) -> String {
                 mailbox_registry: std::sync::Arc::new(parking_lot::RwLock::new(
                     vauchi_relay::mailbox_registry::MailboxRegistry::new(),
                 )),
+                version_policy: version_policy.clone(),
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {

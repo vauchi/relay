@@ -431,6 +431,9 @@ pub fn test_deps() -> (
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
         mailbox_registry: Arc::new(parking_lot::RwLock::new(MailboxRegistry::new())),
+        version_policy: Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::version_policy::VersionPolicyState::default(),
+        )),
     };
     (deps, kp.public, storage, registry)
 }
@@ -470,6 +473,9 @@ pub fn test_deps_custom(
         relay_signing_key: None,
         metrics: RelayMetrics::new(),
         mailbox_registry: Arc::new(parking_lot::RwLock::new(MailboxRegistry::new())),
+        version_policy: Arc::new(parking_lot::RwLock::new(
+            vauchi_relay::version_policy::VersionPolicyState::default(),
+        )),
     };
     (deps, kp.public, storage, registry)
 }
@@ -532,6 +538,9 @@ pub async fn start_multi_server(deps: ConnectionDeps) -> String {
                 relay_signing_key: None,
                 metrics: RelayMetrics::new(),
                 mailbox_registry: mailbox_registry.clone(),
+                version_policy: Arc::new(parking_lot::RwLock::new(
+                    vauchi_relay::version_policy::VersionPolicyState::default(),
+                )),
             };
             tokio::spawn(async move {
                 if let Ok(ws) = accept_async(stream).await {
