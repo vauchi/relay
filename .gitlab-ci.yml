@@ -361,34 +361,37 @@ load:k6:
 # OWASP ZAP dynamic application security testing.
 # Scans relay HTTP endpoints and WebSocket for common vulnerabilities.
 # Manual trigger, advisory (allow_failure).
+#
+# Runs the relay as a service container (its Docker image) rather than
+# executing the binary inside the ZAP image, which avoids glibc version
+# mismatches between the self-hosted build runner and the ZAP base image.
 dast:zap:
   stage: load
   tags: [docker]
   needs:
-    - job: build:release
-      artifacts: true
+    - job: build:docker
+      artifacts: false
   image:
     name: ghcr.io/zaproxy/zaproxy:2.17.0
     entrypoint: [""]
+  services:
+    - name: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+      alias: relay
+      variables:
+        RELAY_LISTEN_ADDR: "0.0.0.0:8080"
+        RELAY_MAX_CONNECTIONS: "100"
   before_script: []
   script:
     - |
-      RELAY_LISTEN_ADDR=0.0.0.0:8080 \
-      ./target/release/vauchi-relay &
-      RELAY_PID=$!
-
-      # Wait for relay to be ready (exponential backoff: 0.2s, 0.4s, 0.8s, ... capped at 3s)
-      for i in $(seq 1 20); do
-        curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1 && break
-        delay=$(awk "BEGIN { v = 0.2 * 2^($i-1); print (v < 3.0 ? v : 3.0) }")
-        sleep "$delay"
+      # Wait for relay service to be ready
+      for i in $(seq 1 30); do
+        curl -sf http://relay:8080/health >/dev/null 2>&1 && break
+        sleep 1
       done
-      curl -sf http://127.0.0.1:8080/health || { echo "Relay failed to start after 20 attempts"; kill $RELAY_PID; exit 1; }
+      curl -sf http://relay:8080/health || { echo "Relay service failed to start after 30 attempts"; exit 1; }
 
       # ZAP baseline scan against HTTP endpoints
-      zap-baseline.py -t http://127.0.0.1:8080 -r zap-report.html -J zap-report.json
-
-      kill $RELAY_PID 2>/dev/null || true
+      zap-baseline.py -t http://relay:8080 -r zap-report.html -J zap-report.json
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
