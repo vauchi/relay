@@ -142,9 +142,11 @@ perf:binary-size:
 # ============================================================
 
 mutation:nightly:
-  extends: [.mutation-nightly, .rust-runner, .timeout-extended]
+  extends: [.mutation-nightly, .rust-runner]
+  timeout: 12h
   variables:
-    MUTATION_TIMEOUT_NIGHTLY: "60"
+    # 120s accommodates test_connect_with_tls_invalid_host (~60s TCP timeout to non-routable IP)
+    MUTATION_TIMEOUT_NIGHTLY: "120"
 
 # ============================================================
 # Benchmark Stage (uses shared template from vauchi/scripts)
@@ -171,7 +173,8 @@ bench:compare:
 # ============================================================
 
 fuzz:nightly:
-  extends: [.rust-runner, .timeout-extended]
+  extends: [.rust-runner]
+  timeout: 12h
   stage: mutation
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $FUZZ_ENABLED == "true"
@@ -181,24 +184,49 @@ fuzz:nightly:
     - !reference [.git-credentials, before_script]
   script:
     - |
-      command -v cargo-fuzz >/dev/null 2>&1 || cargo install cargo-fuzz --locked
+      # cargo-fuzz requires nightly for -Zsanitizer=address
+      rustup toolchain install nightly --profile minimal --component llvm-tools-preview 2>/dev/null || true
+      command -v cargo-fuzz >/dev/null 2>&1 || cargo +nightly install cargo-fuzz --locked --force
+
       cd fuzz
       FUZZ_DURATION="${FUZZ_DURATION_SECS:-300}"
       FUZZ_JOBS="${FUZZ_PARALLEL_JOBS:-3}"
+      REPORT_DIR="../fuzz-report"
+      mkdir -p "$REPORT_DIR"
 
       TARGETS="fuzz_federation_message fuzz_federation_padding \
                fuzz_noise_handshake fuzz_noise_v2_detect \
                fuzz_federation_url fuzz_validate_client_id"
 
-      echo "=== Fuzzing $(echo $TARGETS | wc -w) targets, ${FUZZ_JOBS} parallel, ${FUZZ_DURATION}s each ==="
+      TARGET_COUNT=$(echo $TARGETS | wc -w | tr -d ' ')
+      echo "=== Fuzzing ${TARGET_COUNT} targets, ${FUZZ_JOBS} parallel, ${FUZZ_DURATION}s each ==="
 
       echo "$TARGETS" | tr ' ' '\n' | grep -v '^$' | \
         xargs -P "$FUZZ_JOBS" -I{} sh -c \
-          'echo "START: {}"; cargo fuzz run {} -- -max_total_time='"$FUZZ_DURATION"' 2>&1 || echo "CRASH:{}"' \
+          'echo "START: {}"; cargo +nightly fuzz run {} -- -max_total_time='"$FUZZ_DURATION"' 2>&1 && echo "PASS:{}" || echo "CRASH:{}"' \
           | tee /tmp/fuzz-output.log
 
       FAILED=$(grep -c '^CRASH:' /tmp/fuzz-output.log || true)
-      echo "=== Fuzz Summary: Targets=6, Crashes=$FAILED ==="
+      PASSED=$(grep -c '^PASS:' /tmp/fuzz-output.log || true)
+
+      # Generate JUnit XML report for GitLab test tab
+      cat > "$REPORT_DIR/fuzz-junit.xml" <<JUNIT_EOF
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuites name="fuzz:nightly" tests="${TARGET_COUNT}" failures="${FAILED}">
+        <testsuite name="cargo-fuzz" tests="${TARGET_COUNT}" failures="${FAILED}">
+      JUNIT_EOF
+      for t in $TARGETS; do
+        STATUS=$(grep -E "^(PASS|CRASH):${t}$" /tmp/fuzz-output.log | head -1 | cut -d: -f1)
+        if [ "$STATUS" = "CRASH" ]; then
+          echo "    <testcase name=\"${t}\" classname=\"fuzz\"><failure message=\"Crash found\"/></testcase>" >> "$REPORT_DIR/fuzz-junit.xml"
+        else
+          echo "    <testcase name=\"${t}\" classname=\"fuzz\"/>" >> "$REPORT_DIR/fuzz-junit.xml"
+        fi
+      done
+      echo "  </testsuite>" >> "$REPORT_DIR/fuzz-junit.xml"
+      echo "</testsuites>" >> "$REPORT_DIR/fuzz-junit.xml"
+
+      echo "=== Fuzz Summary: Targets=${TARGET_COUNT}, Passed=$PASSED, Crashes=$FAILED ==="
       [ "$FAILED" -eq 0 ] || exit 1
   cache:
     key: fuzz-corpus-relay
@@ -206,10 +234,13 @@ fuzz:nightly:
       - fuzz/corpus/
     policy: pull-push
   artifacts:
+    when: always
     paths:
       - fuzz/artifacts/
+      - fuzz-report/
+    reports:
+      junit: fuzz-report/fuzz-junit.xml
     expire_in: 1 month
-    when: on_failure
 
 # ============================================================
 # Security Stage (change-based, gated by lint, parallel with test)
