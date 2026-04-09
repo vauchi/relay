@@ -67,10 +67,6 @@ criteria = "safe-to-deploy"
 version = "0.10.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.cc]]
-version = "1.2.59"
-criteria = "safe-to-deploy"
-
 [[exemptions.criterion]]
 version = "0.5.1"
 criteria = "safe-to-run"
@@ -328,10 +324,6 @@ criteria = "safe-to-deploy"
 version = "0.3.1"
 criteria = "safe-to-run"
 
-[[exemptions.semver]]
-version = "1.0.28"
-criteria = "safe-to-deploy"
-
 [[exemptions.serde_urlencoded]]
 version = "0.7.1"
 criteria = "safe-to-deploy"
@@ -349,11 +341,7 @@ version = "0.3.47"
 criteria = "safe-to-run"
 
 [[exemptions.tokio]]
-version = "1.51.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.tokio-macros]]
-version = "2.7.0"
+version = "1.51.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio-rustls]]
