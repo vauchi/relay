@@ -583,7 +583,7 @@ impl RelayConfig {
                     min_is_valid = true;
                 }
                 Err(_) => warnings.push(format!(
-                    "RELAY_VERSION_MIN: invalid value '{}' , using default {}",
+                    "RELAY_VERSION_MIN: invalid value '{}', using default {}",
                     val, vp_min
                 )),
             }
@@ -594,7 +594,7 @@ impl RelayConfig {
                 match val.parse() {
                     Ok(parsed) => vp_warn = parsed,
                     Err(_) => warnings.push(format!(
-                        "RELAY_VERSION_WARN: invalid value '{}' , using default {}",
+                        "RELAY_VERSION_WARN: invalid value '{}', using default {}",
                         val, vp_warn
                     )),
                 }
@@ -604,7 +604,7 @@ impl RelayConfig {
                 match val.parse() {
                     Ok(parsed) => vp_grace = parsed,
                     Err(_) => warnings.push(format!(
-                        "RELAY_VERSION_GRACE_DAYS: invalid value '{}' , using default {}",
+                        "RELAY_VERSION_GRACE_DAYS: invalid value '{}', using default {}",
                         val, vp_grace
                     )),
                 }
