@@ -7,6 +7,7 @@
 //! Manages OHTTP server keypair lifecycle, encapsulation/decapsulation,
 //! and periodic key rotation. Thread-safe for concurrent access.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,12 +20,15 @@ use tracing::{info, warn};
 pub enum OhttpGatewayError {
     /// The `ohttp` crate returned an error.
     Ohttp(ohttp::Error),
+    /// File I/O error (seed file read/write).
+    Io(String),
 }
 
 impl std::fmt::Display for OhttpGatewayError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OhttpGatewayError::Ohttp(e) => write!(f, "ohttp error: {e}"),
+            OhttpGatewayError::Io(e) => write!(f, "io error: {e}"),
         }
     }
 }
@@ -73,6 +77,49 @@ impl OhttpGateway {
             state: RwLock::new(Arc::new(inner)),
             previous_state: RwLock::new(None),
             rotation_interval: Duration::from_secs(hours * 3600),
+        })
+    }
+
+    /// Create a gateway from a persisted seed file.
+    ///
+    /// If the seed file exists, the keypair is loaded from it.
+    /// If the file does not exist, a new keypair is generated and saved.
+    /// This ensures the encoded key config is stable across restarts,
+    /// allowing clients to bundle it at compile time.
+    ///
+    /// Key rotation still works — `rotate()` generates a fresh key and
+    /// replaces the in-memory state (the seed file is the initial state only).
+    pub fn from_seed_file(path: &Path, rotation_hours: u64) -> Result<Self, OhttpGatewayError> {
+        let inner = if path.exists() {
+            let bytes = std::fs::read(path)
+                .map_err(|e| OhttpGatewayError::Io(format!("failed to read OHTTP seed: {e}")))?;
+            let config = KeyConfig::decode(&bytes).map_err(OhttpGatewayError::Ohttp)?;
+            let encoded_config = config.encode().map_err(OhttpGatewayError::Ohttp)?;
+            let server = Server::new(config).map_err(OhttpGatewayError::Ohttp)?;
+            info!("OHTTP gateway loaded from seed file: {}", path.display());
+            GatewayState {
+                server,
+                encoded_config,
+            }
+        } else {
+            let state = Self::generate_state()?;
+            // Persist the generated key config for next restart
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(path, &state.encoded_config)
+                .map_err(|e| OhttpGatewayError::Io(format!("failed to write OHTTP seed: {e}")))?;
+            info!(
+                "OHTTP gateway generated and persisted to: {}",
+                path.display()
+            );
+            state
+        };
+
+        Ok(Self {
+            state: RwLock::new(Arc::new(inner)),
+            previous_state: RwLock::new(None),
+            rotation_interval: Duration::from_secs(rotation_hours * 3600),
         })
     }
 
