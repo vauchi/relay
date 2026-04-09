@@ -725,6 +725,7 @@ mod tests {
         assert_eq!(removed, 0);
     }
 
+    // @scenario: version_policy :: config key-value store round-trips and overwrites
     #[test]
     fn test_config_persistence() {
         let store = SqliteBlobStore::in_memory().unwrap();
