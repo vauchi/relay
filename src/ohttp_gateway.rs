@@ -80,37 +80,38 @@ impl OhttpGateway {
         })
     }
 
-    /// Create a gateway from a persisted seed file.
+    /// Create a gateway from a persisted key config file.
     ///
-    /// If the seed file exists, the keypair is loaded from it.
+    /// If the file exists, the keypair is loaded from it.
     /// If the file does not exist, a new keypair is generated and saved.
     /// This ensures the encoded key config is stable across restarts,
     /// allowing clients to bundle it at compile time.
     ///
     /// Key rotation still works — `rotate()` generates a fresh key and
-    /// replaces the in-memory state (the seed file is the initial state only).
-    pub fn from_seed_file(path: &Path, rotation_hours: u64) -> Result<Self, OhttpGatewayError> {
+    /// replaces the in-memory state (the key file is the initial state only).
+    pub fn from_key_file(path: &Path, rotation_hours: u64) -> Result<Self, OhttpGatewayError> {
         let inner = if path.exists() {
-            let bytes = std::fs::read(path)
-                .map_err(|e| OhttpGatewayError::Io(format!("failed to read OHTTP seed: {e}")))?;
+            let bytes = std::fs::read(path).map_err(|e| {
+                OhttpGatewayError::Io(format!("failed to read OHTTP key file: {e}"))
+            })?;
             let config = KeyConfig::decode(&bytes).map_err(OhttpGatewayError::Ohttp)?;
             let encoded_config = config.encode().map_err(OhttpGatewayError::Ohttp)?;
             let server = Server::new(config).map_err(OhttpGatewayError::Ohttp)?;
-            info!("OHTTP gateway loaded from seed file: {}", path.display());
+            info!("OHTTP gateway loaded from key file: {}", path.display());
             GatewayState {
                 server,
                 encoded_config,
             }
         } else {
             let state = Self::generate_state()?;
-            // Persist the generated key config for next restart
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            std::fs::write(path, &state.encoded_config)
-                .map_err(|e| OhttpGatewayError::Io(format!("failed to write OHTTP seed: {e}")))?;
+            std::fs::write(path, &state.encoded_config).map_err(|e| {
+                OhttpGatewayError::Io(format!("failed to write OHTTP key file: {e}"))
+            })?;
             info!(
-                "OHTTP gateway generated and persisted to: {}",
+                "OHTTP gateway key generated and persisted to: {}",
                 path.display()
             );
             state

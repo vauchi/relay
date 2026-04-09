@@ -466,9 +466,9 @@ async fn main() {
     // Conditionally enable v2 HTTP API (REST, OHTTP, exchange broker)
     if config.http_api.enabled {
         let ohttp_gateway = if config.http_api.ohttp_enabled {
-            let result = if let Some(ref seed_path) = config.http_api.ohttp_key_seed_path {
-                OhttpGateway::from_seed_file(
-                    std::path::Path::new(seed_path),
+            let result = if let Some(ref key_path) = config.http_api.ohttp_key_file_path {
+                OhttpGateway::from_key_file(
+                    std::path::Path::new(key_path),
                     config.http_api.ohttp_key_rotation_hours,
                 )
             } else {
@@ -477,11 +477,11 @@ async fn main() {
             match result {
                 Ok(gw) => {
                     info!(
-                        "OHTTP gateway enabled (key rotation: {}h, seed: {})",
+                        "OHTTP gateway enabled (key rotation: {}h, key file: {})",
                         config.http_api.ohttp_key_rotation_hours,
                         config
                             .http_api
-                            .ohttp_key_seed_path
+                            .ohttp_key_file_path
                             .as_deref()
                             .unwrap_or("ephemeral"),
                     );

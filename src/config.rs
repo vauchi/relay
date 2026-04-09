@@ -190,11 +190,13 @@ pub struct HttpApiConfig {
     pub ohttp_key_rotation_hours: u64,
     /// Path to persist the OHTTP gateway key seed.
     ///
-    /// When set, the gateway derives its keypair from a persisted seed file,
-    /// ensuring the key config survives relay restarts. Clients can bundle
-    /// this key at compile time to avoid a direct bootstrap connection.
+    /// Path to persist the OHTTP gateway key config (RFC 9458 encoded).
+    ///
+    /// When set, the gateway loads its keypair from this file on startup
+    /// (or generates and saves one on first start). Ensures the key config
+    /// is stable across restarts so clients can bundle it at compile time.
     /// When `None`, the gateway generates an ephemeral key on each startup.
-    pub ohttp_key_seed_path: Option<String>,
+    pub ohttp_key_file_path: Option<String>,
     /// OHTTP exchange rate limit (requests per minute, shared across all clients).
     /// Applies to OHTTP-wrapped exchange broker endpoints.  Default 300/min
     /// for production; set higher for E2E tests via `RELAY_OHTTP_EXCHANGE_RATE_LIMIT`.
@@ -211,7 +213,7 @@ impl Default for HttpApiConfig {
             enabled: false,
             ohttp_enabled: false,
             ohttp_key_rotation_hours: 24,
-            ohttp_key_seed_path: None,
+            ohttp_key_file_path: None,
             ohttp_exchange_rate_limit_per_min: 300,
             exchange_max_offers: 10_000,
             exchange_default_ttl_secs: 300, // 5 minutes
@@ -545,8 +547,8 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_OHTTP_KEY_SEED_PATH") {
-            config.http_api.ohttp_key_seed_path = Some(val);
+        if let Ok(val) = std::env::var("RELAY_OHTTP_KEY_FILE_PATH") {
+            config.http_api.ohttp_key_file_path = Some(val);
         }
 
         if let Ok(val) = std::env::var("RELAY_OHTTP_EXCHANGE_RATE_LIMIT") {
