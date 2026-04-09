@@ -11,6 +11,9 @@ src/handler/mod.rs 1188
 # SPLIT — Phase 2: split into 7 files by protocol area
 tests/handler_websocket_test.rs 2815
 
+# Grandfathered — config table added for version policy persistence
+src/storage.rs 1025
+
 # Grandfathered — below split threshold, monitor
 tests/federation_integration_test.rs 1380
 
