@@ -906,3 +906,9 @@ criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
 start = "2025-12-18"
 end = "2027-03-10"
+
+[[audits.rustls-webpki]]
+who = "Mattia Egloff <mattia.egloff@pm.me>"
+criteria = "safe-to-deploy"
+delta = "0.103.10 -> 0.103.11"
+notes = "Adds UnknownExtensionPolicy for trust anchor parsing — ignores unknown critical extensions in trust anchors per RFC 5280. 6 files, 81 insertions, 16 deletions. No unsafe, no new dependencies."
