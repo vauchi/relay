@@ -67,10 +67,6 @@ criteria = "safe-to-deploy"
 version = "0.10.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.cc]]
-version = "1.2.60"
-criteria = "safe-to-deploy"
-
 [[exemptions.criterion]]
 version = "0.5.1"
 criteria = "safe-to-run"
@@ -110,10 +106,6 @@ criteria = "safe-to-deploy"
 [[exemptions.fallible-streaming-iterator]]
 version = "0.1.9"
 criteria = "safe-to-deploy"
-
-[[exemptions.fastrand]]
-version = "2.4.0"
-criteria = "safe-to-run"
 
 [[exemptions.fastrand]]
 version = "2.4.1"
@@ -159,10 +151,6 @@ criteria = "safe-to-deploy"
 version = "2.7.1"
 criteria = "safe-to-run"
 
-[[exemptions.hashbrown]]
-version = "0.17.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.hashlink]]
 version = "0.9.1"
 criteria = "safe-to-deploy"
@@ -203,14 +191,6 @@ criteria = "safe-to-deploy"
 version = "2.3.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.indexmap]]
-version = "2.14.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.js-sys]]
-version = "0.3.94"
-criteria = "safe-to-deploy"
-
 [[exemptions.js-sys]]
 version = "0.3.95"
 criteria = "safe-to-deploy"
@@ -249,6 +229,10 @@ criteria = "safe-to-run"
 
 [[exemptions.pin-project-lite]]
 version = "0.2.17"
+criteria = "safe-to-deploy"
+
+[[exemptions.pkg-config]]
+version = "0.3.33"
 criteria = "safe-to-deploy"
 
 [[exemptions.plotters]]
@@ -341,10 +325,6 @@ version = "1.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-webpki]]
-version = "0.103.10"
-criteria = "safe-to-deploy"
-
-[[exemptions.rustls-webpki]]
 version = "0.103.11"
 criteria = "safe-to-deploy"
 
@@ -367,10 +347,6 @@ criteria = "safe-to-deploy"
 [[exemptions.time]]
 version = "0.3.47"
 criteria = "safe-to-run"
-
-[[exemptions.tokio]]
-version = "1.51.1"
-criteria = "safe-to-deploy"
 
 [[exemptions.tokio-rustls]]
 version = "0.26.4"
@@ -429,15 +405,7 @@ version = "2.5.0"
 criteria = "safe-to-run"
 
 [[exemptions.wasm-bindgen]]
-version = "0.2.117"
-criteria = "safe-to-deploy"
-
-[[exemptions.wasm-bindgen]]
 version = "0.2.118"
-criteria = "safe-to-deploy"
-
-[[exemptions.wasm-bindgen-macro]]
-version = "0.2.117"
 criteria = "safe-to-deploy"
 
 [[exemptions.wasm-bindgen-macro]]
@@ -445,24 +413,12 @@ version = "0.2.118"
 criteria = "safe-to-deploy"
 
 [[exemptions.wasm-bindgen-macro-support]]
-version = "0.2.117"
-criteria = "safe-to-deploy"
-
-[[exemptions.wasm-bindgen-macro-support]]
 version = "0.2.118"
-criteria = "safe-to-deploy"
-
-[[exemptions.wasm-bindgen-shared]]
-version = "0.2.117"
 criteria = "safe-to-deploy"
 
 [[exemptions.wasm-bindgen-shared]]
 version = "0.2.118"
 criteria = "safe-to-deploy"
-
-[[exemptions.web-sys]]
-version = "0.3.94"
-criteria = "safe-to-run"
 
 [[exemptions.web-sys]]
 version = "0.3.95"
