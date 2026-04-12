@@ -53,6 +53,7 @@ stages:
   - scan
   - deploy
   - verify
+  - trigger
 
 
 variables:
@@ -562,6 +563,17 @@ verify:upstream-prerelease:
 
 pages:
   extends: .badges-pages
+
+# ============================================================
+# Trigger Stage — Downstream E2E
+# ============================================================
+
+# Trigger E2E tests when relay merges to main.
+# OHTTP E2E tests depend on relay — changes here need re-validation.
+trigger:e2e:
+  extends: .trigger-on-merge
+  variables:
+    DOWNSTREAM_PROJECT: vauchi/e2e
 
 github-mirror:
   extends: .github-mirror
