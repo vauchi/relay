@@ -72,11 +72,16 @@ impl OhttpGateway {
 
     /// Create a gateway with a custom rotation interval.
     pub fn with_rotation_hours(hours: u64) -> Result<Self, OhttpGatewayError> {
+        Self::with_rotation_secs(hours * 3600)
+    }
+
+    /// Create a gateway with a rotation interval in seconds.
+    pub fn with_rotation_secs(secs: u64) -> Result<Self, OhttpGatewayError> {
         let inner = Self::generate_state()?;
         Ok(Self {
             state: RwLock::new(Arc::new(inner)),
             previous_state: RwLock::new(None),
-            rotation_interval: Duration::from_secs(hours * 3600),
+            rotation_interval: Duration::from_secs(secs),
         })
     }
 

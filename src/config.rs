@@ -188,6 +188,9 @@ pub struct HttpApiConfig {
     pub ohttp_enabled: bool,
     /// OHTTP key rotation interval in hours.
     pub ohttp_key_rotation_hours: u64,
+    /// Override rotation interval in seconds (for E2E testing).
+    /// When set, takes precedence over `ohttp_key_rotation_hours`.
+    pub ohttp_key_rotation_secs: Option<u64>,
     /// Path to persist the OHTTP gateway key seed.
     ///
     /// Path to persist the OHTTP gateway key config (RFC 9458 encoded).
@@ -213,6 +216,7 @@ impl Default for HttpApiConfig {
             enabled: false,
             ohttp_enabled: false,
             ohttp_key_rotation_hours: 24,
+            ohttp_key_rotation_secs: None,
             ohttp_key_file_path: None,
             ohttp_exchange_rate_limit_per_min: 300,
             exchange_max_offers: 10_000,
@@ -543,6 +547,16 @@ impl RelayConfig {
                 Err(_) => warnings.push(format!(
                     "RELAY_OHTTP_KEY_ROTATION_HOURS: invalid value '{}', using default {}",
                     val, config.http_api.ohttp_key_rotation_hours
+                )),
+            }
+        }
+
+        if let Ok(val) = std::env::var("RELAY_OHTTP_KEY_ROTATION_SECS") {
+            match val.parse() {
+                Ok(parsed) => config.http_api.ohttp_key_rotation_secs = Some(parsed),
+                Err(_) => warnings.push(format!(
+                    "RELAY_OHTTP_KEY_ROTATION_SECS: invalid value '{}', ignoring",
+                    val
                 )),
             }
         }
