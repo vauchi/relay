@@ -6,7 +6,8 @@
 //!
 //! A lightweight relay server for forwarding encrypted contact card updates.
 //! Provides:
-//! - WebSocket endpoint for encrypted blob storage and delivery
+//! - HTTP v2 API for encrypted blob storage and delivery
+//! - WebSocket endpoint for federation (relay-to-relay replication)
 //! - HTTP endpoints for health checks and Prometheus metrics
 //! - Rate limiting and abuse prevention
 //! - Recovery proof storage for contact recovery
@@ -16,13 +17,11 @@ use std::time::{Duration, Instant};
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
-use tokio_tungstenite::accept_async_with_config;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::{error, info};
 
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_limit::ConnectionLimiter;
-use vauchi_relay::connection_registry::ConnectionRegistry;
 use vauchi_relay::escrow::{self, EscrowStore};
 use vauchi_relay::exchange_broker::ExchangeBroker;
 use vauchi_relay::federation_connector::{self, OffloadManager};
@@ -127,7 +126,7 @@ async fn main() {
         "Starting Vauchi Relay Server v{}",
         env!("CARGO_PKG_VERSION")
     );
-    info!("WebSocket: {}", config.network.listen_addr);
+    info!("Listen: {}", config.network.listen_addr);
     if tls_verified {
         info!("TLS: Verified (handled by external proxy)");
     } else {
@@ -140,15 +139,14 @@ async fn main() {
 
     // Load or generate Noise keypair for inner transport encryption
     let noise_keypair = noise_key::load_or_generate_keypair(&config.storage.data_dir);
-    let noise_static_key = Some(noise_keypair.private);
     let noise_pubkey_b64 = noise_key::public_key_base64url(&noise_keypair.public);
     info!("Noise public key: {}", noise_pubkey_b64);
 
-    // R-M4: Derive signing key from Noise keypair for authenticating forwarding hints
-    let relay_signing_key = Arc::new(noise_key::RelaySigningKey::from_noise_key(
-        &noise_keypair.private,
-    ));
-    info!("Relay signing key: {}", relay_signing_key.public_key_hex());
+    // R-M4: Log relay signing identity (derived from Noise keypair)
+    {
+        let signing_key = noise_key::RelaySigningKey::from_noise_key(&noise_keypair.private);
+        info!("Relay signing key: {}", signing_key.public_key_hex());
+    }
     info!("Noise encryption: REQUIRED (Noise NK mandatory since v0.1)");
 
     // Initialize metrics
@@ -223,15 +221,7 @@ async fn main() {
         }
     };
 
-    // Initialize connection registry for delivery notifications
-    let registry = Arc::new(ConnectionRegistry::new());
-    let blob_sender_map = handler::new_blob_sender_map();
     let nonce_tracker = Arc::new(handler::NonceTracker::new());
-
-    // SP-33: Initialize mailbox registry for token-based routing
-    let mailbox_registry = Arc::new(parking_lot::RwLock::new(
-        vauchi_relay::mailbox_registry::MailboxRegistry::new(),
-    ));
 
     // Initialize federation state
     let config = Arc::new(config);
@@ -569,10 +559,9 @@ async fn main() {
         axum::serve(http_listener, http_router).await.unwrap();
     });
 
-    // Start cleanup task for blobs + blob_sender_map GC
+    // Start cleanup task for expired blobs
     let cleanup_storage = storage.clone();
     let cleanup_metrics = metrics.clone();
-    let cleanup_blob_sender_map = blob_sender_map.clone();
     let blob_ttl = config.blob_ttl();
     let cleanup_interval = config.cleanup_interval();
     tokio::spawn(async move {
@@ -582,17 +571,6 @@ async fn main() {
             if removed > 0 {
                 info!("Cleaned up {} expired blobs", removed);
                 cleanup_metrics.blobs_expired.inc_by(removed as u64);
-            }
-
-            // R-H4: Prune blob_sender_map entries for blobs no longer in storage
-            let live_ids: std::collections::HashSet<String> =
-                cleanup_storage.all_blob_ids().into_iter().collect();
-            let mut sender_map = cleanup_blob_sender_map.write();
-            let before = sender_map.len();
-            sender_map.retain(|blob_id, _| live_ids.contains(blob_id));
-            let pruned = before - sender_map.len();
-            if pruned > 0 {
-                info!("Pruned {} stale blob_sender_map entries", pruned);
             }
         }
     });
@@ -638,15 +616,12 @@ async fn main() {
         }
     });
 
-    // Start TCP listener for WebSocket
+    // Start TCP listener (federation WebSocket + main-port health checks)
     let listener = TcpListener::bind(&config.network.listen_addr)
         .await
-        .expect("Failed to bind WebSocket listener");
+        .expect("Failed to bind main listener");
 
-    info!(
-        "WebSocket server listening on {}",
-        config.network.listen_addr
-    );
+    info!("Main listener on {}", config.network.listen_addr);
 
     // T1-3: Graceful shutdown — stop accepting on SIGTERM/SIGINT, drain, checkpoint
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
@@ -710,15 +685,6 @@ async fn main() {
         };
 
         let storage = storage.clone();
-        let recovery_storage = recovery_storage.clone();
-        let rate_limiter = rate_limiter.clone();
-        let recovery_rate_limiter = recovery_rate_limiter.clone();
-        let registry = registry.clone();
-        let blob_sender_map = blob_sender_map.clone();
-        let nonce_tracker = nonce_tracker.clone();
-        let relay_signing_key = relay_signing_key.clone();
-        let mailbox_registry = mailbox_registry.clone();
-        let version_policy = version_policy.clone();
         let metrics = metrics.clone();
         let hint_store = hint_store.clone();
         let federation_rate_limiter = federation_rate_limiter.clone();
@@ -726,10 +692,6 @@ async fn main() {
         let config = config.clone();
         let max_message_size = config.network.max_message_size;
         let idle_timeout = config.idle_timeout();
-        let quota = handler::QuotaLimits {
-            max_blobs: config.storage.max_blobs_per_user,
-            max_bytes: config.storage.max_storage_per_user,
-        };
 
         tokio::spawn(async move {
             // Keep the guard alive for the duration of the connection
@@ -743,7 +705,6 @@ async fn main() {
                 Ok(n) if n > 0 => {
                     let peek_str = String::from_utf8_lossy(&peek_buf[..n]);
 
-                    // Check if this is an HTTP request without WebSocket upgrade
                     // Use case-insensitive check since HTTP headers are case-insensitive
                     let peek_lower = peek_str.to_ascii_lowercase();
 
@@ -759,10 +720,22 @@ async fn main() {
                         .unwrap_or("/")
                         .to_string();
 
-                    // 1. WebSocket upgrade MUST be handled first
                     if is_websocket_upgrade {
-                        info!("Handling WebSocket upgrade");
-                        // We break out of the peek block and proceed to accept_async
+                        if ws_path != "/federation" {
+                            // Client WS removed — all clients use HTTP v2
+                            let body = r#"{"error":"WebSocket not supported. Use /v2/ HTTP API."}"#;
+                            let response = format!(
+                                "HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                body.len(),
+                                body
+                            );
+                            let mut stream = stream;
+                            let _ = stream.write_all(response.as_bytes()).await;
+                            let _ = stream.shutdown().await;
+                            tracing::debug!("Rejected non-federation WebSocket upgrade");
+                            return;
+                        }
+                        // Federation WS — fall through to accept_async below
                     } else {
                         let is_http_get = peek_lower.starts_with("get ");
 
@@ -791,7 +764,6 @@ async fn main() {
                                     health_response.len(),
                                     health_response
                                 );
-                                // Properly write and close the connection to prevent leaks
                                 let mut stream = stream;
                                 let _ = stream.write_all(response.as_bytes()).await;
                                 let _ = stream.shutdown().await;
@@ -806,7 +778,6 @@ async fn main() {
                                 body.len(),
                                 body
                             );
-                            // Properly write and close the connection to prevent leaks
                             let mut stream = stream;
                             let _ = stream.write_all(response.as_bytes()).await;
                             let _ = stream.shutdown().await;
@@ -818,19 +789,22 @@ async fn main() {
                 _ => {}
             }
 
+            // Only federation WebSocket upgrades reach here
+            if ws_path != "/federation" {
+                return;
+            }
+
             // R-H1: Apply max_message_size at WebSocket accept time
-            // This prevents 64 MB default frames from being buffered in memory
             let ws_config = WebSocketConfig {
-                max_message_size: Some(max_message_size + 256), // headroom for Noise MAC
+                max_message_size: Some(max_message_size + 256),
                 max_frame_size: Some(max_message_size + 256),
                 ..Default::default()
             };
 
-            // Proceed with WebSocket handshake with timeout
-            // This prevents slowloris attacks where clients connect but never complete handshake
+            // WebSocket handshake with timeout (slowloris protection)
             match tokio::time::timeout(
                 idle_timeout,
-                accept_async_with_config(stream, Some(ws_config)),
+                tokio_tungstenite::accept_async_with_config(stream, Some(ws_config)),
             )
             .await
             {
@@ -838,67 +812,33 @@ async fn main() {
                     metrics.connections_total.inc();
                     metrics.connections_active.inc();
 
-                    // Path-based routing: /federation -> federation handler
-                    if ws_path == "/federation" {
-                        if config.federation.enabled {
-                            info!("New federation connection");
-                            federation_handler::handle_federation_connection(
-                                ws_stream,
-                                FederationDeps {
-                                    storage,
-                                    hint_store,
-                                    peer_registry,
-                                    config,
-                                    federation_rate_limiter,
-                                    metrics: metrics.clone(),
-                                },
-                            )
-                            .await;
-                        } else {
-                            info!("Federation connection rejected (not enabled)");
-                            // Close the connection — federation not enabled
-                        }
-                    } else {
-                        info!("New WebSocket connection");
-                        handler::handle_connection(
+                    if config.federation.enabled {
+                        info!("New federation connection");
+                        federation_handler::handle_federation_connection(
                             ws_stream,
-                            handler::ConnectionDeps {
+                            FederationDeps {
                                 storage,
-                                recovery_storage,
-                                rate_limiter,
-                                recovery_rate_limiter,
-                                registry,
-                                blob_sender_map,
-                                max_message_size,
-                                idle_timeout,
-                                quota,
-                                hint_store: if config.federation.enabled {
-                                    Some(hint_store)
-                                } else {
-                                    None
-                                },
-                                noise_static_key,
-                                nonce_tracker,
-                                delivery_jitter_min_ms: config.security.delivery_jitter_min_ms,
-                                delivery_jitter_max_ms: config.security.delivery_jitter_max_ms,
-                                relay_signing_key: Some(relay_signing_key),
+                                hint_store,
+                                peer_registry,
+                                config,
+                                federation_rate_limiter,
                                 metrics: metrics.clone(),
-                                mailbox_registry: mailbox_registry.clone(),
-                                version_policy: version_policy.clone(),
                             },
                         )
                         .await;
+                    } else {
+                        info!("Federation connection rejected (not enabled)");
                     }
 
                     metrics.connections_active.dec();
-                    info!("WebSocket connection closed");
+                    info!("Federation connection closed");
                 }
                 Ok(Err(e)) => {
-                    error!("WebSocket handshake failed: {}", e);
+                    error!("Federation WebSocket handshake failed: {}", e);
                     metrics.connection_errors.inc();
                 }
                 Err(_) => {
-                    tracing::warn!("WebSocket handshake timeout (slowloris protection)");
+                    tracing::warn!("Federation WebSocket handshake timeout");
                     metrics.connection_errors.inc();
                 }
             }

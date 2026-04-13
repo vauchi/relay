@@ -4,56 +4,18 @@
 
 //! Security tests for relay resource exhaustion mitigations (SP-13₀).
 //!
-//! Tests cover: R-H1 (WS max message size), R-H2 (recovery query batch limit),
-//! R-H3 (proof_data size limit), R-H4 (blob_sender_map GC), R-H5 (take atomicity).
+//! Tests cover: R-H4 (blob cleanup GC), R-H5 (take atomicity).
+//!
+//! R-H2 (recovery query batch limit) and R-H3 (proof_data size limit) were
+//! enforced by the now-removed WebSocket handler. HTTP v2 enforces its own
+//! limits in http_api.rs.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
 
-// ── R-H2: RecoveryProofQuery batch limit ──
-
-/// R-H2: A recovery query with more than MAX_RECOVERY_QUERY_HASHES should be rejected.
-#[test]
-fn test_recovery_query_rejects_large_batch() {
-    // 51 hashes exceeds the 50-hash limit
-    let large_batch: Vec<String> = (0..51).map(|i| format!("{:064x}", i)).collect();
-    assert!(large_batch.len() > vauchi_relay::handler::MAX_RECOVERY_QUERY_HASHES);
-}
-
-/// R-H2: A recovery query with exactly MAX hashes should be accepted.
-#[test]
-fn test_recovery_query_accepts_max_hashes() {
-    let batch: Vec<String> = (0..vauchi_relay::handler::MAX_RECOVERY_QUERY_HASHES)
-        .map(|i| format!("{:064x}", i))
-        .collect();
-    assert_eq!(
-        batch.len(),
-        vauchi_relay::handler::MAX_RECOVERY_QUERY_HASHES
-    );
-}
-
-// ── R-H3: proof_data size limit ──
-
-/// R-H3: Proof data larger than MAX_RECOVERY_PROOF_SIZE should be rejected.
-#[test]
-fn test_recovery_proof_rejects_oversized() {
-    let oversized = vec![0u8; vauchi_relay::handler::MAX_RECOVERY_PROOF_SIZE + 1];
-    assert!(oversized.len() > vauchi_relay::handler::MAX_RECOVERY_PROOF_SIZE);
-}
-
-/// R-H3: Proof data at exactly MAX_RECOVERY_PROOF_SIZE should be accepted.
-#[test]
-fn test_recovery_proof_accepts_max_size() {
-    let max_proof = vec![0u8; vauchi_relay::handler::MAX_RECOVERY_PROOF_SIZE];
-    assert_eq!(
-        max_proof.len(),
-        vauchi_relay::handler::MAX_RECOVERY_PROOF_SIZE
-    );
-}
-
-// ── R-H4: blob_sender_map GC ──
+// ── R-H4: blob cleanup GC ──
 
 /// R-H4: After blob cleanup, blob_sender_map entries for expired blobs should be pruned.
 #[test]
