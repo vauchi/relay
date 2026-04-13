@@ -14,18 +14,19 @@
 
 # Vauchi Relay
 
-Lightweight WebSocket relay server for Vauchi - stores
-and forwards encrypted blobs between clients.
+Lightweight relay server for Vauchi - stores and forwards
+encrypted blobs between clients via HTTP v2 REST API.
 
 ## Overview
 
 The relay server is a zero-knowledge message broker. It:
 
-- Accepts WebSocket connections from Vauchi clients
+- Provides an HTTP v2 REST API for blob storage and retrieval
+- Supports OHTTP (RFC 9458) for IP-level privacy
 - Stores encrypted messages for offline recipients
-- Forwards messages when recipients connect
-- Automatically expires old messages (30 days default)
+- Automatically expires old messages (120 days default)
 - Rate limits clients to prevent abuse
+- Federates with peer relays for redundancy
 
 **Privacy**: The server only sees encrypted blobs.
 It cannot read message contents, identify contacts,
@@ -86,97 +87,47 @@ persists messages across server restarts.
 
 ## Protocol
 
-The relay uses a simple JSON protocol over WebSocket binary frames.
+Clients communicate via HTTP v2 REST API (`/v2/*` endpoints).
+All requests/responses are JSON. Binary data (ciphertext, proofs)
+is base64-encoded. Key hashes are hex-encoded.
 
-### Message Format
+### Client Endpoints
 
-Messages are length-prefixed JSON:
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/v2/send` | POST | Store encrypted blob for recipient |
+| `/v2/fetch` | POST | Retrieve pending blobs by mailbox tokens |
+| `/v2/ack` | POST | Acknowledge/delete a blob |
+| `/v2/register` | POST | Register mailbox tokens |
+| `/v2/purge` | POST | Authenticated purge (Ed25519 signed) |
+| `/v2/recovery/store` | POST | Store recovery proof |
+| `/v2/recovery/query` | POST | Batch query recovery proofs |
+| `/v2/exchange/offer` | POST | Create exchange offer (6-digit code) |
+| `/v2/exchange/claim` | POST | Claim exchange with response |
+| `/v2/exchange/complete` | POST | Complete exchange handshake |
+| `/v2/ohttp-key` | GET | OHTTP public key config |
+| `/v2/ohttp` | POST | OHTTP-encapsulated request |
 
-```text
-[4 bytes: length][JSON payload]
-```
-
-### Message Types
-
-**Handshake** (client → server):
-
-```json
-{
-  "version": 1,
-  "message_id": "uuid",
-  "timestamp": 1234567890,
-  "payload": {
-    "type": "Handshake",
-    "client_id": "hex-encoded-public-key"
-  }
-}
-```
-
-**EncryptedUpdate** (client → server):
-
-```json
-{
-  "version": 1,
-  "message_id": "uuid",
-  "timestamp": 1234567890,
-  "payload": {
-    "type": "EncryptedUpdate",
-    "recipient_id": "hex-encoded-public-key",
-    "ciphertext": [encrypted bytes]
-  }
-}
-```
-
-**Acknowledgment** (server → client):
-
-```json
-{
-  "version": 1,
-  "message_id": "uuid",
-  "timestamp": 1234567890,
-  "payload": {
-    "type": "Acknowledgment",
-    "message_id": "original-message-id",
-    "status": "ReceivedByRelay"
-  }
-}
-```
+All endpoints above are also routable via OHTTP for IP privacy.
 
 ## Architecture
 
-```text
-vauchi-relay/
-├── src/
-│   ├── main.rs                  # Server entry point, WS routing
-│   ├── config.rs                # Configuration management
-│   ├── handler.rs               # Client WebSocket handler
-│   ├── storage.rs               # Blob storage (Memory + SQLite)
-│   ├── rate_limit.rs            # Per-client rate limiting
-│   ├── federation_protocol.rs   # Relay-to-relay wire protocol
-│   ├── federation_handler.rs    # Incoming federation connections
-│   ├── federation_connector.rs  # Outgoing federation connections
-│   ├── forwarding_hints.rs      # Offload tracking for clients
-│   ├── integrity.rs             # SHA-256 blob verification
-│   └── peer_registry.rs         # Federation peer tracking
-```
+See `STRUCTURE.md` for full module listing.
 
 ### Components
 
-- **Handler**: Manages client WebSocket connections,
-  parses messages, routes to storage
-- **Storage**: Thread-safe blob store with automatic
-  TTL expiration (Memory or SQLite)
+- **HTTP v2 API**: REST endpoints for all client
+  operations (blob CRUD, purge, recovery, exchange)
+- **OHTTP Gateway**: RFC 9458 privacy layer
+- **Storage**: SQLite-backed blob store with TTL
+- **Recovery Storage**: SQLite-backed recovery proofs
 - **Rate Limiter**: Token bucket algorithm per client ID
 - **Federation Handler**: Accepts incoming peer relay
-  connections, validates and stores offloaded blobs
+  WebSocket connections on `/federation`
 - **Federation Connector**: Maintains persistent
   connections to peer relays with exponential backoff
 - **OffloadManager**: Monitors storage usage and
   offloads blobs when above threshold
-- **Peer Registry**: Tracks connected peers, capacity,
-  and communication channels
-- **Forwarding Hints**: Stores routing_id to peer relay
-  mappings for client retrieval
 
 ## Operational Capabilities
 
@@ -187,7 +138,9 @@ Everything listed below is **implemented and tested**
 
 | Endpoint | Port | Purpose |
 |----------|------|---------|
+| `/v2/*` | 8080 (main) | Client HTTP v2 API |
 | `/health` | 8080 (main) | Liveness (no info leak) |
+| `/federation` | 8080 (main) | Federation WebSocket |
 | `/health` | 8081 (ops) | Health check |
 | `/metrics` | 8081 (ops) | Prometheus (optional auth) |
 | `/pubkey` | 8081 (ops) | Noise NK public key |
@@ -219,13 +172,12 @@ SIGTERM/SIGINT → stop accepting → drain connections
 ### Security
 
 - TLS enforced for non-localhost (`RELAY_TLS_VERIFIED`)
-- Noise NK inner encryption (defense-in-depth)
 - Ed25519 signature verification + nonce replay
-  protection (±60s window)
+  protection (±60s window) for purge operations
+- OHTTP gateway (RFC 9458) for client IP privacy
 - SSRF validation on federation peer URLs
   (blocks private/loopback/link-local)
-- OHTTP gateway (RFC 9458) for IP privacy
-- Delivery jitter for traffic analysis resistance
+- Noise NK encryption for federation transport
 
 ### Container Image
 
@@ -260,8 +212,7 @@ rolling upgrade, and rollback procedures.
 - **Rate limiting**: per-client, per-peer, per-recovery
 - **TLS mandatory**: startup refuses without
   `RELAY_TLS_VERIFIED=true` on non-localhost
-- **Noise NK**: inner transport encryption even if
-  TLS compromised
+- **OHTTP**: IP-level privacy for client requests
 - **SQLite storage**: persistent, WAL-backed,
   `secure_delete=ON`
 

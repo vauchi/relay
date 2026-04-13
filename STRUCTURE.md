@@ -5,158 +5,107 @@
 
 ## Module Organization
 
-```
+```text
 vauchi-relay/
 ├── src/
-│   ├── main.rs                  # Server entry point, path-based WS routing
+│   ├── main.rs                  # Server entry point, TCP listener, federation WS routing
+│   ├── lib.rs                   # Module declarations
 │   ├── config.rs                # Configuration management (incl. federation)
-│   ├── handler.rs               # Client WebSocket connection handler
-│   ├── storage.rs               # Blob storage (Memory + SQLite)
+│   ├── handler/                 # Shared handler utilities
+│   │   ├── mod.rs               # Re-exports NonceTracker
+│   │   ├── nonce.rs             # Nonce tracking for replay prevention
+│   │   └── verify.rs            # Ed25519 purge signature verification
+│   ├── http_api.rs              # HTTP v2 REST API (/v2/* endpoints)
+│   ├── http.rs                  # Health/metrics HTTP server
+│   ├── storage.rs               # Blob storage (SQLite)
+│   ├── recovery_storage.rs      # Recovery proof storage (SQLite)
 │   ├── rate_limit.rs            # Per-client rate limiting
+│   ├── ohttp_gateway.rs         # OHTTP privacy gateway
+│   ├── escrow.rs                # Escrow store for gated blob exchange
+│   ├── exchange_broker.rs       # Short-code exchange broker
+│   ├── noise_key.rs             # Noise keypair management
+│   ├── noise_transport.rs       # Noise NK transport helpers
 │   ├── federation_protocol.rs   # Relay-to-relay wire protocol types
 │   ├── federation_handler.rs    # Incoming federation connection handler
 │   ├── federation_connector.rs  # Outgoing federation + OffloadManager
-│   ├── forwarding_hints.rs      # Forwarding hint storage (Memory + SQLite)
+│   ├── federation_tls.rs        # mTLS for federation
+│   ├── forwarding_hints.rs      # Forwarding hint storage (SQLite)
 │   ├── integrity.rs             # SHA-256 blob integrity hashing
-│   └── peer_registry.rs         # Federation peer tracking
-└── Cargo.toml                   # Crate configuration
+│   ├── peer_registry.rs         # Federation peer tracking
+│   ├── connection_limit.rs      # TCP connection limiting
+│   ├── padding.rs               # OHTTP response padding
+│   ├── url_validation.rs        # URL format validation
+│   ├── version_policy.rs        # Client version enforcement
+│   ├── jitter.rs                # Delivery timing jitter
+│   └── metrics.rs               # Prometheus metrics
+└── Cargo.toml
 ```
 
 ## Components
 
 ### `main.rs` - Server Entry Point
 
-Server startup, WebSocket listener, and connection dispatch.
+Server startup, TCP listener. Routes connections to:
 
-| Function | Purpose |
+- Federation WebSocket handler (`/federation` path)
+- HTTP health checks (`/health`, `/up`, `/ready`)
+- 426 Upgrade Required for non-federation WebSocket upgrades
+
+### `http_api.rs` - HTTP v2 REST API
+
+All client communication uses `/v2/*` endpoints:
+
+| Endpoint | Purpose |
 |----------|---------|
-| `main` | Async entry point, config loading, server start |
-| `handle_connection` | Accepts WebSocket upgrade, spawns handler |
+| `/v2/send` | Store encrypted blob |
+| `/v2/fetch` | Retrieve pending blobs by mailbox tokens |
+| `/v2/ack` | Acknowledge/delete a blob |
+| `/v2/register` | Register mailbox tokens |
+| `/v2/purge` | Authenticated purge (Ed25519 signed) |
+| `/v2/recovery/store` | Store recovery proof |
+| `/v2/recovery/query` | Batch query recovery proofs |
+| `/v2/exchange/offer` | Create exchange offer (6-digit code) |
+| `/v2/exchange/claim` | Claim exchange with response payload |
+| `/v2/exchange/complete` | Complete exchange handshake |
+| `/v2/ohttp-key` | Get OHTTP public key config |
+| `/v2/ohttp` | OHTTP-encapsulated request (wraps any action above) |
 
-### `config.rs` - Configuration
+### `handler/` - Shared Handler Utilities
 
-Environment-based configuration.
-
-| Item | Purpose |
-|------|---------|
-| `Config` | Server settings (port, limits, TTL) |
-| `Config::from_env` | Load from environment variables |
-
-### `handler.rs` - WebSocket Handler
-
-Per-connection message processing.
-
-| Function | Purpose |
-|----------|---------|
-| `ConnectionHandler::new` | Create handler for new connection |
-| `handle_message` | Route incoming messages by type |
-| `handle_handshake` | Process client authentication |
-| `handle_encrypted_update` | Store and forward encrypted blobs |
-| `deliver_pending` | Send stored messages to connected client |
+| Module | Purpose |
+|--------|---------|
+| `nonce.rs` | `NonceTracker` — replay prevention for purge tokens |
+| `verify.rs` | `verify_purge_ed25519` — signature verification for purge |
 
 ### `storage.rs` - Blob Storage
 
-Thread-safe in-memory storage with expiration.
+SQLite-backed blob store with TTL expiration.
 
-| Item | Purpose |
-|------|---------|
-| `BlobStore` | Concurrent hashmap for blobs |
-| `store` | Save blob with TTL |
-| `retrieve` | Get blobs for recipient |
-| `cleanup` | Remove expired blobs |
+### `recovery_storage.rs` - Recovery Proof Storage
 
-### `rate_limit.rs` - Rate Limiting
+SQLite-backed storage for recovery proofs, keyed by hash(old_pk).
 
-Token bucket algorithm per client.
+### Federation Modules
 
-| Item | Purpose |
-|------|---------|
-| `RateLimiter` | Per-client rate limit state |
-| `check` | Verify client hasn't exceeded limit |
-| `record` | Track client message |
-
-### `federation_protocol.rs` - Wire Protocol
-
-Relay-to-relay message types (same 4-byte BE length prefix + JSON framing as client protocol).
-
-| Item | Purpose |
-|------|---------|
-| `FederationEnvelope` | Top-level message wrapper (version, message_id, timestamp, payload) |
-| `FederationPayload` | Enum: PeerHandshake, PeerHandshakeAck, OffloadBlob, OffloadAck, CapacityReport, DrainNotice, DrainAck |
-| `encode_federation_message` | Serialize envelope to wire format |
-| `decode_federation_message` | Deserialize wire bytes to envelope |
-
-### `federation_handler.rs` - Incoming Federation
-
-Handles WebSocket connections from peer relays on the `/federation` endpoint.
-
-| Item | Purpose |
-|------|---------|
-| `FederationDeps` | Shared dependencies (storage, hints, registry, config) |
-| `handle_federation_connection` | Process peer handshake, receive offloaded blobs, handle drain |
-
-### `federation_connector.rs` - Outgoing Federation
-
-Maintains persistent connections to configured peer relays.
-
-| Item | Purpose |
-|------|---------|
-| `maintain_peer_connection` | Connect to peer, reconnect with exponential backoff |
-| `OffloadManager` | Check storage usage, offload oldest blobs to peers |
-
-### `forwarding_hints.rs` - Offload Tracking
-
-Stores routing_id to peer relay mappings so clients can find offloaded blobs.
-
-| Item | Purpose |
-|------|---------|
-| `ForwardingHintStore` | Trait: store, get, remove, cleanup hints |
-| `MemoryForwardingHintStore` | In-memory implementation (tests) |
-| `SqliteForwardingHintStore` | SQLite implementation (separate `federation.db`) |
-
-### `integrity.rs` - Blob Verification
-
-SHA-256 hashing for blob integrity during federation transfer.
-
-| Item | Purpose |
-|------|---------|
-| `compute_integrity_hash` | SHA-256 hash of blob data (ciphertext) |
-| `verify_integrity_hash` | Compare computed hash against expected |
-
-### `peer_registry.rs` - Peer Tracking
-
-Tracks connected federation peers and their capacity.
-
-| Item | Purpose |
-|------|---------|
-| `PeerRegistry` | Thread-safe peer state (capacity, status, sender channels) |
-| `PeerInfo` | Per-peer metadata |
-| `PeerStatus` | Connected, Draining, or Disconnected |
+| Module | Purpose |
+|--------|---------|
+| `federation_protocol.rs` | Wire protocol types (4-byte BE + JSON framing) |
+| `federation_handler.rs` | Incoming WebSocket connections from peer relays |
+| `federation_connector.rs` | Outgoing connections + `OffloadManager` |
+| `federation_tls.rs` | mTLS certificate handling |
+| `forwarding_hints.rs` | Routing hints for offloaded blobs |
+| `peer_registry.rs` | Peer capacity and status tracking |
 
 ## Message Flow
 
-```
+```text
 Client A                    Relay                     Client B
    │                          │                          │
-   │──── Handshake ──────────►│                          │
-   │◄─── Ack ─────────────────│                          │
+   │── POST /v2/send ────────►│  (store for B)           │
+   │◄── 200 {blob_id} ────────│                          │
    │                          │                          │
-   │──── EncryptedUpdate ────►│  (store for B)           │
-   │◄─── Ack ─────────────────│                          │
-   │                          │                          │
-   │                          │◄──── Handshake ──────────│
-   │                          │───── Ack ───────────────►│
-   │                          │───── EncryptedUpdate ───►│
+   │                          │◄── POST /v2/fetch ───────│
+   │                          │──── 200 {blobs} ────────►│
+   │                          │◄── POST /v2/ack ─────────│
    │                          │                          │
 ```
-
-## Dependencies
-
-| Crate | Purpose |
-|-------|---------|
-| `tokio` | Async runtime |
-| `tokio-tungstenite` | WebSocket support |
-| `serde` | JSON serialization |
-| `rusqlite` | SQLite storage backend |
-| `aws-lc-rs` | SHA-256 integrity hashing (federation) |
-| `tracing` | Logging |
