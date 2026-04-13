@@ -9,6 +9,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use ohttp::{KeyConfig, Server, SymmetricSuite, hpke};
@@ -59,6 +60,9 @@ pub struct OhttpGateway {
     /// window between rotation and their next key fetch.
     previous_state: RwLock<Option<Arc<GatewayState>>>,
     rotation_interval: Duration,
+    /// Incrementing key ID for RFC 9458 compliance. Wraps at 256.
+    /// Lets clients distinguish key configs without trial decryption.
+    next_key_id: AtomicU8,
 }
 
 impl OhttpGateway {
@@ -77,11 +81,12 @@ impl OhttpGateway {
 
     /// Create a gateway with a rotation interval in seconds.
     pub fn with_rotation_secs(secs: u64) -> Result<Self, OhttpGatewayError> {
-        let inner = Self::generate_state()?;
+        let inner = Self::generate_state(0)?;
         Ok(Self {
             state: RwLock::new(Arc::new(inner)),
             previous_state: RwLock::new(None),
             rotation_interval: Duration::from_secs(secs),
+            next_key_id: AtomicU8::new(1),
         })
     }
 
@@ -108,7 +113,7 @@ impl OhttpGateway {
                 encoded_config,
             }
         } else {
-            let state = Self::generate_state()?;
+            let state = Self::generate_state(0)?;
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -126,6 +131,7 @@ impl OhttpGateway {
             state: RwLock::new(Arc::new(inner)),
             previous_state: RwLock::new(None),
             rotation_interval: Duration::from_secs(rotation_hours * 3600),
+            next_key_id: AtomicU8::new(1),
         })
     }
 
@@ -168,10 +174,14 @@ impl OhttpGateway {
     /// Clients with a stale key config will succeed via `decapsulate()`
     /// fallback until the next rotation replaces it.
     pub fn rotate(&self) -> Result<(), OhttpGatewayError> {
-        let new_state = Arc::new(Self::generate_state()?);
+        let key_id = self.next_key_id.fetch_add(1, Ordering::Relaxed);
+        let new_state = Arc::new(Self::generate_state(key_id)?);
         let old_state = std::mem::replace(&mut *self.state.write(), new_state);
         *self.previous_state.write() = Some(old_state);
-        info!("OHTTP gateway key rotated (previous key retained for fallback)");
+        info!(
+            key_id,
+            "OHTTP gateway key rotated (previous key retained for fallback)"
+        );
         Ok(())
     }
 
@@ -196,9 +206,9 @@ impl OhttpGateway {
         })
     }
 
-    fn generate_state() -> Result<GatewayState, OhttpGatewayError> {
+    fn generate_state(key_id: u8) -> Result<GatewayState, OhttpGatewayError> {
         let config = KeyConfig::new(
-            0, // key_id
+            key_id,
             hpke::Kem::X25519Sha256,
             vec![SymmetricSuite::new(
                 hpke::Kdf::HkdfSha256,
@@ -345,5 +355,32 @@ mod tests {
     fn test_rotation_interval_configurable() {
         let gw = OhttpGateway::with_rotation_hours(12).unwrap();
         assert_eq!(gw.rotation_interval(), Duration::from_secs(12 * 3600));
+    }
+
+    #[test]
+    fn test_successive_rotations_produce_different_key_ids() {
+        let gw = OhttpGateway::new().expect("gateway construction must succeed");
+
+        // Initial key has key_id 0; collect configs across rotations.
+        let config_0 = gw.encoded_key_config();
+        gw.rotate().expect("first rotation");
+        let config_1 = gw.encoded_key_config();
+        gw.rotate().expect("second rotation");
+        let config_2 = gw.encoded_key_config();
+
+        // Decode the key_id byte from each config.
+        // RFC 9458 KeyConfig encoding: first byte after the 2-byte length prefix
+        // is the key_id. The ohttp crate's encode() returns the raw KeyConfig
+        // without length prefix, so byte 0 is key_id.
+        assert_ne!(
+            config_0[0], config_1[0],
+            "key_id must change after rotation"
+        );
+        assert_ne!(config_1[0], config_2[0], "key_id must change again");
+
+        // Verify specific expected values: 0, 1, 2
+        assert_eq!(config_0[0], 0, "initial key_id should be 0");
+        assert_eq!(config_1[0], 1, "first rotation key_id should be 1");
+        assert_eq!(config_2[0], 2, "second rotation key_id should be 2");
     }
 }
