@@ -608,12 +608,21 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     warn!("[{}] Rate limited", session);
                     deps.metrics.rate_limited.inc();
                     deps.metrics.messages_rejected.inc();
-                    // Notify client instead of silent drop (G8 soft gate)
+                    // Notify client instead of silent drop (G8 soft gate).
+                    // Encrypt through Noise like all other post-handshake messages
+                    // to avoid leaking plaintext on the encrypted channel.
                     let notice = serde_json::json!({
                         "type": "rate_limit_exceeded",
                         "retry_after_secs": 10
                     });
-                    let _ = write.send(Message::Text(notice.to_string())).await;
+                    let notice_bytes = notice.to_string().into_bytes();
+                    let _ = noise_encrypt_and_send(
+                        &mut write,
+                        notice_bytes,
+                        &mut noise_session,
+                        session,
+                    )
+                    .await;
                     continue;
                 }
 
