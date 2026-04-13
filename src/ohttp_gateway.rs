@@ -366,6 +366,7 @@ mod tests {
         assert_eq!(gw.rotation_interval(), Duration::from_secs(12 * 3600));
     }
 
+    // @scenario: ohttp_gateway :: key rotation produces distinct key_ids
     #[test]
     fn test_successive_rotations_produce_different_key_ids() {
         let gw = OhttpGateway::new().expect("gateway construction must succeed");
@@ -396,6 +397,7 @@ mod tests {
     /// Verify that `x25519_dalek::StaticSecret` implements `Zeroize`, which
     /// confirms the `zeroize` feature is enabled via Cargo feature unification.
     /// Without this feature, OHTTP private keys would linger in freed memory.
+    // @scenario: ohttp_gateway :: x25519 private key is zeroizable
     #[test]
     fn test_x25519_private_key_implements_zeroize() {
         use zeroize::Zeroize;
