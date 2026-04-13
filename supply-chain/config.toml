@@ -292,6 +292,10 @@ criteria = "safe-to-deploy"
 version = "0.9.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.rand]]
+version = "0.9.4"
+criteria = "safe-to-deploy"
+
 [[exemptions.rcgen]]
 version = "0.14.7"
 criteria = "safe-to-run"
