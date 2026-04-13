@@ -228,15 +228,20 @@ async fn test_rate_limit_silently_drops_excess_messages() {
         assert_eq!(response["payload"]["status"], "Stored");
     }
 
-    // 4th message should be silently dropped (rate limited)
+    // 4th message hits rate limit — receives encrypted notice instead of Ack
     let update = make_encrypted_update(&recipient_id, &[1]);
     let frame = encode_envelope(&update);
     client.send_encrypted(&frame).await;
 
     let msg = client.try_recv().await;
     assert!(
-        msg.is_none(),
-        "Rate-limited message should not produce a response"
+        msg.is_some(),
+        "Rate-limited message should produce a rate_limit_exceeded notice"
+    );
+    assert_eq!(
+        msg.unwrap()["type"],
+        "rate_limit_exceeded",
+        "Notice type must be rate_limit_exceeded"
     );
 
     // Only 3 blobs stored
