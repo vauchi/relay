@@ -61,6 +61,13 @@ zeroize = "1.8"
 # OHTTP gateway (RFC 9458) — pure Rust, no NSS
 ohttp = { version = "0.7", default-features = false, features = ["client", "server", "rust-hpke"] }
 
+# Enable zeroize-on-drop for OHTTP X25519 private keys.
+# The hpke crate (via ohttp) only enables x25519-dalek's `static_secrets`
+# feature — NOT `zeroize`. Without this, OHTTP private key bytes linger in
+# freed memory after key rotation. Cargo feature unification activates
+# ZeroizeOnDrop for all StaticSecret instances in the dependency graph.
+x25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
+
 # Non-poisoning Mutex/RwLock (prevents panic cascading from poisoned locks)
 parking_lot = "0.12"
 

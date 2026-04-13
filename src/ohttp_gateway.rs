@@ -15,6 +15,7 @@ use std::time::Duration;
 use ohttp::{KeyConfig, Server, SymmetricSuite, hpke};
 use parking_lot::RwLock;
 use tracing::{info, warn};
+use zeroize::Zeroizing;
 
 /// Errors that can arise in the OHTTP gateway.
 #[derive(Debug)]
@@ -43,9 +44,17 @@ impl From<ohttp::Error> for OhttpGatewayError {
 }
 
 /// Inner state that gets swapped on key rotation.
+///
+/// The X25519 private key inside `Server` → `KeyConfig` → `PrivateKey` is
+/// zeroized on drop via `x25519_dalek::StaticSecret`'s `ZeroizeOnDrop` impl
+/// (activated by the `zeroize` feature in `Cargo.toml`).
+///
+/// `encoded_config` is wrapped in `Zeroizing` for defense-in-depth — it
+/// contains the public key config (not secret), but we zero it anyway to
+/// minimize residual key-adjacent data in freed memory.
 struct GatewayState {
     server: Server,
-    encoded_config: Vec<u8>,
+    encoded_config: Zeroizing<Vec<u8>>,
 }
 
 /// OHTTP server with key rotation support.
@@ -105,7 +114,7 @@ impl OhttpGateway {
                 OhttpGatewayError::Io(format!("failed to read OHTTP key file: {e}"))
             })?;
             let config = KeyConfig::decode(&bytes).map_err(OhttpGatewayError::Ohttp)?;
-            let encoded_config = config.encode().map_err(OhttpGatewayError::Ohttp)?;
+            let encoded_config = Zeroizing::new(config.encode().map_err(OhttpGatewayError::Ohttp)?);
             let server = Server::new(config).map_err(OhttpGatewayError::Ohttp)?;
             info!("OHTTP gateway loaded from key file: {}", path.display());
             GatewayState {
@@ -137,7 +146,7 @@ impl OhttpGateway {
 
     /// Return the encoded public-key configuration bytes for `GET /v2/ohttp-key`.
     pub fn encoded_key_config(&self) -> Vec<u8> {
-        self.state.read().encoded_config.clone()
+        (*self.state.read().encoded_config).clone()
     }
 
     /// Decrypt an OHTTP-encapsulated request.
@@ -215,7 +224,7 @@ impl OhttpGateway {
                 hpke::Aead::Aes128Gcm,
             )],
         )?;
-        let encoded_config = config.encode()?;
+        let encoded_config = Zeroizing::new(config.encode()?);
         let server = Server::new(config)?;
         Ok(GatewayState {
             server,
@@ -382,5 +391,27 @@ mod tests {
         assert_eq!(config_0[0], 0, "initial key_id should be 0");
         assert_eq!(config_1[0], 1, "first rotation key_id should be 1");
         assert_eq!(config_2[0], 2, "second rotation key_id should be 2");
+    }
+
+    /// Verify that `x25519_dalek::StaticSecret` implements `Zeroize`, which
+    /// confirms the `zeroize` feature is enabled via Cargo feature unification.
+    /// Without this feature, OHTTP private keys would linger in freed memory.
+    #[test]
+    fn test_x25519_private_key_implements_zeroize() {
+        use zeroize::Zeroize;
+
+        // Construct a StaticSecret and verify Zeroize is callable.
+        // This is a compile-time + runtime check that the feature flag is active.
+        let mut secret = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let bytes_before = secret.to_bytes();
+        assert_ne!(bytes_before, [0u8; 32], "secret must be non-zero");
+
+        secret.zeroize();
+        let bytes_after = secret.to_bytes();
+        assert_eq!(
+            bytes_after, [0u8; 32],
+            "StaticSecret must be zeroed after zeroize() — \
+             x25519-dalek `zeroize` feature must be enabled"
+        );
     }
 }

@@ -2439,7 +2439,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vauchi-protocol"
-version = "0.19.12"
+version = "0.19.13"
 dependencies = [
  "serde",
  "serde_json",
@@ -2481,6 +2481,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "vauchi-protocol",
+ "x25519-dalek",
  "zeroize",
 ]
 
@@ -2845,6 +2846,7 @@ checksum = "c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277"
 dependencies = [
  "curve25519-dalek",
  "rand_core 0.6.4",
+ "zeroize",
 ]
 
 [[package]]
