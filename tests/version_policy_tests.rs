@@ -244,6 +244,7 @@ mod middleware {
     use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
     use vauchi_relay::metrics::RelayMetrics;
     use vauchi_relay::rate_limit::RateLimiter;
+    use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
     use vauchi_relay::storage::SqliteBlobStore;
     use vauchi_relay::version_policy::{VersionPolicyConfig, VersionPolicyState};
 
@@ -265,6 +266,7 @@ mod middleware {
             version_policy: Arc::new(parking_lot::RwLock::new(VersionPolicyState::new_manual(
                 config, changed_at,
             ))),
+            recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
         }
     }
 
@@ -547,6 +549,7 @@ mod adversarial {
     use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
     use vauchi_relay::metrics::RelayMetrics;
     use vauchi_relay::rate_limit::RateLimiter;
+    use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
     use vauchi_relay::storage::SqliteBlobStore;
     use vauchi_relay::version_policy::{VersionPolicyConfig, VersionPolicyState};
 
@@ -568,6 +571,7 @@ mod adversarial {
             version_policy: Arc::new(parking_lot::RwLock::new(VersionPolicyState::new_manual(
                 config, None,
             ))),
+            recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
         }
     }
 

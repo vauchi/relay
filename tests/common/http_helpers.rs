@@ -19,6 +19,7 @@ use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::ohttp_gateway::OhttpGateway;
 use vauchi_relay::rate_limit::RateLimiter;
+use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::SqliteBlobStore;
 use vauchi_relay::version_policy::{VersionPolicyConfig, VersionPolicyState};
 
@@ -47,6 +48,7 @@ pub fn create_test_state() -> HttpApiState {
             VersionPolicyConfig::default(),
             None,
         ))),
+        recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
     }
 }
 
@@ -71,6 +73,7 @@ pub fn create_test_state_with_ohttp() -> HttpApiState {
             VersionPolicyConfig::default(),
             None,
         ))),
+        recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
     }
 }
 

@@ -541,6 +541,7 @@ async fn main() {
             )),
             escrow_store,
             version_policy: version_policy.clone(),
+            recovery_storage: recovery_storage.clone(),
         };
 
         http_router = http_router.merge(create_v2_router(api_state));

@@ -23,7 +23,8 @@ use parking_lot::RwLock;
 use serde::Deserialize;
 use vauchi_protocol::v2::{
     V2AckRequest, V2ExchangeClaimRequest, V2ExchangeCompleteRequest, V2ExchangeOfferRequest,
-    V2FetchRequest, V2PurgeRequest, V2RegisterRequest, V2SendRequest,
+    V2FetchRequest, V2PurgeRequest, V2RecoveryQueryRequest, V2RecoveryStoreRequest,
+    V2RegisterRequest, V2SendRequest,
 };
 
 use crate::escrow::EscrowStore;
@@ -32,6 +33,7 @@ use crate::handler::NonceTracker;
 use crate::metrics::RelayMetrics;
 use crate::ohttp_gateway::OhttpGateway;
 use crate::rate_limit::RateLimiter;
+use crate::recovery_storage::RecoveryProofStore;
 use crate::storage::{BlobStore, StoredBlob};
 use crate::version_policy::{VersionEnforcement, VersionPolicyState};
 
@@ -61,7 +63,8 @@ pub struct HttpApiState {
     pub escrow_store: Arc<EscrowStore>,
     /// Version policy state for client compatibility enforcement.
     pub version_policy: Arc<RwLock<VersionPolicyState>>,
-    // TODO: recovery_storage will be added when /v2/recovery endpoint is implemented
+    /// Recovery proof storage for contact recovery.
+    pub recovery_storage: Arc<dyn RecoveryProofStore>,
 }
 
 /// Envelope used inside an OHTTP request body.
@@ -98,6 +101,8 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .route("/v2/exchange/offer", post(exchange_offer_handler))
         .route("/v2/exchange/claim", post(exchange_claim_handler))
         .route("/v2/exchange/complete", post(exchange_complete_handler))
+        .route("/v2/recovery/store", post(recovery_store_handler))
+        .route("/v2/recovery/query", post(recovery_query_handler))
         .route("/v2/ohttp-key", get(ohttp_key_handler))
         .route("/v2/ohttp", post(ohttp_handler))
         .layer(middleware::from_fn_with_state(
@@ -347,6 +352,24 @@ async fn purge_handler(
     JsonBadRequest(req): JsonBadRequest<V2PurgeRequest>,
 ) -> impl IntoResponse {
     logic_response(handle_purge_logic(&state, req))
+}
+
+// ── Recovery ───────────────────────────────────────────────────────
+
+/// Store a recovery proof.
+async fn recovery_store_handler(
+    State(state): State<HttpApiState>,
+    JsonBadRequest(req): JsonBadRequest<V2RecoveryStoreRequest>,
+) -> impl IntoResponse {
+    logic_response(handle_recovery_store_logic(&state, req))
+}
+
+/// Query recovery proofs by key hashes.
+async fn recovery_query_handler(
+    State(state): State<HttpApiState>,
+    JsonBadRequest(req): JsonBadRequest<V2RecoveryQueryRequest>,
+) -> impl IntoResponse {
+    logic_response(handle_recovery_query_logic(&state, req))
 }
 
 // ── Exchange ────────────────────────────────────────────────────────
@@ -620,6 +643,24 @@ async fn dispatch_ohttp_action(
                 |e| serde_json::json!({ "status": "error", "error": format!("serialize: {e}") }),
             )
         }
+        "recovery_store" => {
+            let req: V2RecoveryStoreRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad recovery_store payload: {e}") });
+                }
+            };
+            handle_recovery_store_logic(state, req).into_json()
+        }
+        "recovery_query" => {
+            let req: V2RecoveryQueryRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad recovery_query payload: {e}") });
+                }
+            };
+            handle_recovery_query_logic(state, req).into_json()
+        }
         unknown => {
             serde_json::json!({ "status": "error", "error": format!("unknown action: {unknown}") })
         }
@@ -768,6 +809,100 @@ fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> ApiResult {
         .blobs_stored
         .set(state.storage.blob_count() as i64);
     ApiResult::ok(serde_json::json!({ "status": "ok", "blobs_deleted": deleted }))
+}
+
+// ── Recovery handler logic ──────────────────────────────────────────
+
+/// Maximum recovery proof data size (4 KiB).
+const MAX_RECOVERY_PROOF_SIZE: usize = 4096;
+/// Maximum number of key hashes per query.
+const MAX_RECOVERY_QUERY_HASHES: usize = 50;
+
+fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest) -> ApiResult {
+    // Validate key_hash: must be 64 hex chars (32 bytes)
+    if req.key_hash.len() != 64 || !req.key_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return ApiResult::bad_request("key_hash must be 64 hex characters (32 bytes)");
+    }
+
+    // Decode proof_data from base64
+    let proof_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&req.proof_data)
+        .map_err(|_| "invalid base64 in proof_data");
+    let proof_bytes = match proof_bytes {
+        Ok(b) => b,
+        Err(e) => return ApiResult::bad_request(e),
+    };
+
+    if proof_bytes.len() > MAX_RECOVERY_PROOF_SIZE {
+        return ApiResult::bad_request(format!(
+            "proof_data exceeds {} byte limit",
+            MAX_RECOVERY_PROOF_SIZE
+        ));
+    }
+
+    // Rate limit by key_hash
+    let rate_key = format!("recovery:{}", &req.key_hash[..16]);
+    if !state.rate_limiter.consume(&rate_key) {
+        return ApiResult::RateLimited;
+    }
+
+    // Decode key_hash to bytes
+    let key_hash = hex_to_32bytes(&req.key_hash);
+    let key_hash = match key_hash {
+        Some(h) => h,
+        None => return ApiResult::bad_request("invalid key_hash hex"),
+    };
+
+    let proof = crate::recovery_storage::StoredRecoveryProof::new(key_hash, proof_bytes);
+    state.recovery_storage.store(proof);
+
+    ApiResult::ok(serde_json::json!({ "status": "ok" }))
+}
+
+fn handle_recovery_query_logic(state: &HttpApiState, req: V2RecoveryQueryRequest) -> ApiResult {
+    if req.key_hashes.len() > MAX_RECOVERY_QUERY_HASHES {
+        return ApiResult::bad_request(format!(
+            "too many key_hashes (max {})",
+            MAX_RECOVERY_QUERY_HASHES
+        ));
+    }
+
+    // Decode all hex hashes
+    let mut key_hashes = Vec::with_capacity(req.key_hashes.len());
+    for hex in &req.key_hashes {
+        match hex_to_32bytes(hex) {
+            Some(h) => key_hashes.push(h),
+            None => return ApiResult::bad_request(format!("invalid key_hash: {}", hex)),
+        }
+    }
+
+    let results = state.recovery_storage.batch_get(&key_hashes);
+
+    let proofs: Vec<serde_json::Value> = results
+        .into_values()
+        .map(|p| {
+            let key_hex: String = p.key_hash.iter().map(|b| format!("{:02x}", b)).collect();
+            serde_json::json!({
+                "key_hash": key_hex,
+                "proof_data": base64::engine::general_purpose::STANDARD.encode(&p.proof_data),
+                "created_at": p.created_at_secs,
+                "expires_at": p.expires_at_secs,
+            })
+        })
+        .collect();
+
+    ApiResult::ok(serde_json::json!({ "status": "ok", "proofs": proofs }))
+}
+
+/// Decode a 64-char hex string to a 32-byte array.
+fn hex_to_32bytes(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let bytes = hex::decode(hex).ok()?;
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Some(arr)
 }
 
 // ── Exchange handler logic ───────────────────────────────────────────
