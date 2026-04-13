@@ -800,9 +800,9 @@ async fn main() {
                             }
 
                             // Root or other paths - return info/error
-                            let body = r#"{"error":"This is a WebSocket relay endpoint"}"#;
+                            let body = r#"{"error":"Not found. Use /health for status or /v2/ for the API."}"#;
                             let response = format!(
-                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                                 body.len(),
                                 body
                             );
@@ -810,7 +810,7 @@ async fn main() {
                             let mut stream = stream;
                             let _ = stream.write_all(response.as_bytes()).await;
                             let _ = stream.shutdown().await;
-                            tracing::debug!("Handled HTTP root/other");
+                            tracing::debug!("Handled HTTP root/other (404)");
                             return;
                         }
                     }
