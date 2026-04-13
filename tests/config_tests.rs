@@ -11,6 +11,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use rstest::rstest;
 use vauchi_relay::config::{
     ConfigWarningLevel, FederationConfig, NetworkConfig, RelayConfig, SecurityConfig,
     StorageConfig, load_relay_id,
@@ -282,62 +283,45 @@ fn test_validate_offload_threshold_equal() {
     );
 }
 
-/// R-M3: Cert without key is a partial mTLS config — must produce error.
-#[test]
-fn test_validate_partial_mtls_cert_without_key() {
+/// R-M3: Partial mTLS config (cert xor key) must produce error; complete config must not.
+#[rstest]
+#[case::cert_without_key(
+    Some("/path/to/cert.pem".to_string()),
+    None,
+    true,
+    "R-M3: Cert without key should produce an error about partial mTLS config"
+)]
+#[case::key_without_cert(
+    None,
+    Some("/path/to/key.pem".to_string()),
+    true,
+    "R-M3: Key without cert should produce an error about partial mTLS config"
+)]
+#[case::complete_mtls_no_error(
+    Some("/path/to/cert.pem".to_string()),
+    Some("/path/to/key.pem".to_string()),
+    false,
+    "Complete mTLS config should not produce partial mTLS error"
+)]
+fn test_validate_partial_mtls(
+    #[case] cert_path: Option<String>,
+    #[case] key_path: Option<String>,
+    #[case] expect_error: bool,
+    #[case] msg: &str,
+) {
     let config = RelayConfig {
         federation: FederationConfig {
-            tls_cert_path: Some("/path/to/cert.pem".to_string()),
-            tls_key_path: None,
+            tls_cert_path: cert_path,
+            tls_key_path: key_path,
             ..Default::default()
         },
         ..Default::default()
     };
     let warnings = config.validate();
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w.level == ConfigWarningLevel::Error && w.message.contains("Partial mTLS")),
-        "R-M3: Cert without key should produce an error about partial mTLS config"
-    );
-}
-
-/// R-M3: Key without cert is a partial mTLS config — must produce error.
-#[test]
-fn test_validate_partial_mtls_key_without_cert() {
-    let config = RelayConfig {
-        federation: FederationConfig {
-            tls_cert_path: None,
-            tls_key_path: Some("/path/to/key.pem".to_string()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let warnings = config.validate();
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w.level == ConfigWarningLevel::Error && w.message.contains("Partial mTLS")),
-        "R-M3: Key without cert should produce an error about partial mTLS config"
-    );
-}
-
-/// R-M3: Both cert and key present is valid — no partial mTLS error.
-#[test]
-fn test_validate_complete_mtls_no_error() {
-    let config = RelayConfig {
-        federation: FederationConfig {
-            tls_cert_path: Some("/path/to/cert.pem".to_string()),
-            tls_key_path: Some("/path/to/key.pem".to_string()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let warnings = config.validate();
-    assert!(
-        !warnings.iter().any(|w| w.message.contains("Partial mTLS")),
-        "Complete mTLS config should not produce partial mTLS error"
-    );
+    let has_partial_mtls = warnings
+        .iter()
+        .any(|w| w.level == ConfigWarningLevel::Error && w.message.contains("Partial mTLS"));
+    assert_eq!(has_partial_mtls, expect_error, "{msg}");
 }
 
 // ── Peer list parsing (pure logic, no env) ───────────────────────────────────
@@ -450,26 +434,25 @@ fn test_relay_id_empty_file_regenerates() {
 // Configure `just test relay` or set RUST_TEST_THREADS=1 when running the
 // config_tests binary directly.
 
-/// Invalid RELAY_MAX_CONNECTIONS produces a warning and keeps the default.
-#[test]
-fn test_parse_warning_max_connections_invalid() {
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_MAX_CONNECTIONS", "not_a_number") };
-    let (config, warnings) = RelayConfig::from_env_with_warnings();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_MAX_CONNECTIONS") };
+/// Invalid env var produces a warning and keeps the default.
+#[rstest]
+#[case::max_connections("RELAY_MAX_CONNECTIONS", "not_a_number")]
+#[case::listen_addr("RELAY_LISTEN_ADDR", "not-an-address")]
+#[case::idle_timeout("RELAY_IDLE_TIMEOUT", "five_minutes")]
+#[case::max_message_size("RELAY_MAX_MESSAGE_SIZE", "1mb")]
+#[case::blob_ttl_secs("RELAY_BLOB_TTL_SECS", "thirty-days")]
+#[case::rate_limit("RELAY_RATE_LIMIT", "unlimited")]
+#[case::offload_threshold("RELAY_FEDERATION_OFFLOAD_THRESHOLD", "eighty-percent")]
+#[case::mtls_addr("RELAY_FEDERATION_MTLS_ADDR", "bad-addr:xyz")]
+fn test_parse_warning_invalid_env_var(#[case] env_var: &str, #[case] bad_value: &str) {
+    // SAFETY: env-var tests run with --test-threads=1 (configured in .cargo/config.toml)
+    unsafe { std::env::set_var(env_var, bad_value) };
+    let (_config, warnings) = RelayConfig::from_env_with_warnings();
+    unsafe { std::env::remove_var(env_var) };
 
-    assert_eq!(
-        config.network.max_connections,
-        RelayConfig::default().network.max_connections,
-        "Default should be preserved on parse failure"
-    );
     assert!(
-        warnings
-            .iter()
-            .any(|w| w.contains("RELAY_MAX_CONNECTIONS") && w.contains("not_a_number")),
-        "Expected warning mentioning RELAY_MAX_CONNECTIONS and the bad value, got: {:?}",
-        warnings
+        warnings.iter().any(|w| w.contains(env_var)),
+        "Expected warning mentioning {env_var}, got: {warnings:?}",
     );
 }
 
@@ -486,154 +469,6 @@ fn test_no_warning_max_connections_valid() {
     assert!(
         !warnings.iter().any(|w| w.contains("RELAY_MAX_CONNECTIONS")),
         "No warning expected for valid value"
-    );
-}
-
-/// Invalid RELAY_LISTEN_ADDR produces a warning and keeps the default.
-#[test]
-fn test_parse_warning_listen_addr_invalid() {
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_LISTEN_ADDR", "not-an-address") };
-    let (config, warnings) = RelayConfig::from_env_with_warnings();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_LISTEN_ADDR") };
-
-    assert_eq!(
-        config.network.listen_addr,
-        RelayConfig::default().network.listen_addr
-    );
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w.contains("RELAY_LISTEN_ADDR") && w.contains("not-an-address")),
-        "Expected warning for bad listen address, got: {:?}",
-        warnings
-    );
-}
-
-/// Invalid RELAY_IDLE_TIMEOUT produces a warning.
-#[test]
-fn test_parse_warning_idle_timeout_invalid() {
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_IDLE_TIMEOUT", "five_minutes") };
-    let (config, warnings) = RelayConfig::from_env_with_warnings();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_IDLE_TIMEOUT") };
-
-    assert_eq!(
-        config.network.idle_timeout_secs,
-        RelayConfig::default().network.idle_timeout_secs
-    );
-    assert!(
-        warnings.iter().any(|w| w.contains("RELAY_IDLE_TIMEOUT")),
-        "Expected warning for RELAY_IDLE_TIMEOUT, got: {:?}",
-        warnings
-    );
-}
-
-/// Invalid RELAY_MAX_MESSAGE_SIZE produces a warning.
-#[test]
-fn test_parse_warning_max_message_size_invalid() {
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_MAX_MESSAGE_SIZE", "1mb") };
-    let (config, warnings) = RelayConfig::from_env_with_warnings();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_MAX_MESSAGE_SIZE") };
-
-    assert_eq!(
-        config.network.max_message_size,
-        RelayConfig::default().network.max_message_size
-    );
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w.contains("RELAY_MAX_MESSAGE_SIZE")),
-        "Expected warning for RELAY_MAX_MESSAGE_SIZE, got: {:?}",
-        warnings
-    );
-}
-
-/// Invalid RELAY_BLOB_TTL_SECS produces a warning.
-#[test]
-fn test_parse_warning_blob_ttl_secs_invalid() {
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_BLOB_TTL_SECS", "thirty-days") };
-    let (config, warnings) = RelayConfig::from_env_with_warnings();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_BLOB_TTL_SECS") };
-
-    assert_eq!(
-        config.storage.blob_ttl_secs,
-        RelayConfig::default().storage.blob_ttl_secs
-    );
-    assert!(
-        warnings.iter().any(|w| w.contains("RELAY_BLOB_TTL_SECS")),
-        "Expected warning for RELAY_BLOB_TTL_SECS, got: {:?}",
-        warnings
-    );
-}
-
-/// Invalid RELAY_RATE_LIMIT produces a warning.
-#[test]
-fn test_parse_warning_rate_limit_invalid() {
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_RATE_LIMIT", "unlimited") };
-    let (config, warnings) = RelayConfig::from_env_with_warnings();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_RATE_LIMIT") };
-
-    assert_eq!(
-        config.security.rate_limit_per_min,
-        RelayConfig::default().security.rate_limit_per_min
-    );
-    assert!(
-        warnings.iter().any(|w| w.contains("RELAY_RATE_LIMIT")),
-        "Expected warning for RELAY_RATE_LIMIT, got: {:?}",
-        warnings
-    );
-}
-
-/// Invalid RELAY_FEDERATION_OFFLOAD_THRESHOLD produces a warning.
-#[test]
-fn test_parse_warning_offload_threshold_invalid() {
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_FEDERATION_OFFLOAD_THRESHOLD", "eighty-percent") };
-    let (config, warnings) = RelayConfig::from_env_with_warnings();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_FEDERATION_OFFLOAD_THRESHOLD") };
-
-    assert!(
-        (config.federation.offload_threshold - 0.80).abs() < f64::EPSILON,
-        "Default should be preserved"
-    );
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w.contains("RELAY_FEDERATION_OFFLOAD_THRESHOLD")),
-        "Expected warning, got: {:?}",
-        warnings
-    );
-}
-
-/// Invalid RELAY_FEDERATION_MTLS_ADDR produces a warning and leaves mtls_addr as None.
-#[test]
-fn test_parse_warning_mtls_addr_invalid() {
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_FEDERATION_MTLS_ADDR", "bad-addr:xyz") };
-    let (config, warnings) = RelayConfig::from_env_with_warnings();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_FEDERATION_MTLS_ADDR") };
-
-    assert!(
-        config.federation.mtls_addr.is_none(),
-        "mtls_addr should remain None on parse failure"
-    );
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w.contains("RELAY_FEDERATION_MTLS_ADDR")),
-        "Expected warning for bad mtls addr, got: {:?}",
-        warnings
     );
 }
 

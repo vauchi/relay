@@ -78,6 +78,7 @@ tempfile = "3.0"
 tower = { version = "0.5", features = ["util"] }
 rcgen = "0.14.7"
 proptest = "1"
+rstest = "0.26"
 criterion = "0.5"
 
 [target.'cfg(unix)'.dev-dependencies]

@@ -5,6 +5,7 @@
 //! Tests for version policy configuration and enforcement logic.
 
 use proptest::prelude::*;
+use rstest::rstest;
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::version_policy::{VersionEnforcement, VersionPolicyConfig, VersionPolicyState};
 
@@ -85,114 +86,54 @@ fn grace_deadline_without_changed_at() {
 const NOW: u64 = 1_700_000_000; // Fixed test time (2023-11-14)
 
 // @internal
-#[test]
-fn missing_header_treated_as_version_zero() {
-    let config = VersionPolicyConfig::new(1, 2, 14).unwrap();
-    // No grace (no changed_at) → rejected
-    let state = new_state(config, None);
-    assert_eq!(
-        state.enforce(None, NOW),
-        VersionEnforcement::Rejected { min_version: 1 }
-    );
-}
-
-// @internal
-#[test]
-fn below_min_no_grace_rejected() {
-    let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
-    let state = new_state(config, None);
-    assert_eq!(
-        state.enforce(Some(2), NOW),
-        VersionEnforcement::Rejected { min_version: 3 }
-    );
-}
-
-// @internal
-#[test]
-fn below_min_grace_expired_rejected() {
-    let config = VersionPolicyConfig::new(3, 5, 1).unwrap();
-    // changed_at = 0, grace = 1 day = 86400s, so deadline = 86400
-    // NOW is well past that
-    let state = new_state(config, Some(0));
-    assert_eq!(
-        state.enforce(Some(2), NOW),
-        VersionEnforcement::Rejected { min_version: 3 }
-    );
-}
-
-// @internal
-#[test]
-fn below_min_grace_active_allowed_with_deadline() {
-    let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
-    // changed_at = NOW, so deadline = NOW + 14 * 86400 — grace is active
-    let state = new_state(config, Some(NOW));
-    let expected_deadline = NOW + 14 * 86400;
-
-    assert_eq!(
-        state.enforce(Some(2), NOW),
-        VersionEnforcement::AllowedWithDeadline {
-            min_version: 3,
-            warn_version: 5,
-            deadline: expected_deadline,
-        }
-    );
-}
-
-// @internal
-#[test]
-fn at_min_below_warn_allowed() {
-    let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
-    let state = new_state(config, None);
-    assert_eq!(
-        state.enforce(Some(3), NOW),
-        VersionEnforcement::Allowed {
-            min_version: 3,
-            warn_version: 5,
-        }
-    );
-}
-
-// @internal
-#[test]
-fn at_warn_allowed() {
-    let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
-    let state = new_state(config, None);
-    assert_eq!(
-        state.enforce(Some(5), NOW),
-        VersionEnforcement::Allowed {
-            min_version: 3,
-            warn_version: 5,
-        }
-    );
-}
-
-// @internal
-#[test]
-fn above_warn_allowed() {
-    let config = VersionPolicyConfig::new(3, 5, 14).unwrap();
-    let state = new_state(config, None);
-    assert_eq!(
-        state.enforce(Some(10), NOW),
-        VersionEnforcement::Allowed {
-            min_version: 3,
-            warn_version: 5,
-        }
-    );
-}
-
-// @internal
-#[test]
-fn default_config_allows_everything() {
-    let config = VersionPolicyConfig::default();
-    let state = new_state(config, None);
-    // min=0, so even version 0 (missing header) is allowed
-    assert_eq!(
-        state.enforce(None, NOW),
-        VersionEnforcement::Allowed {
-            min_version: 0,
-            warn_version: 0,
-        }
-    );
+#[rstest]
+#[case::missing_header_treated_as_version_zero(
+    1, 2, 14, None, None,
+    VersionEnforcement::Rejected { min_version: 1 }
+)]
+#[case::below_min_no_grace_rejected(
+    3, 5, 14, None, Some(2),
+    VersionEnforcement::Rejected { min_version: 3 }
+)]
+#[case::below_min_grace_expired_rejected(
+    3, 5, 1, Some(0), Some(2),
+    VersionEnforcement::Rejected { min_version: 3 }
+)]
+#[case::below_min_grace_active_allowed_with_deadline(
+    3, 5, 14, Some(NOW), Some(2),
+    VersionEnforcement::AllowedWithDeadline {
+        min_version: 3,
+        warn_version: 5,
+        deadline: NOW + 14 * 86400,
+    }
+)]
+#[case::at_min_below_warn_allowed(
+    3, 5, 14, None, Some(3),
+    VersionEnforcement::Allowed { min_version: 3, warn_version: 5 }
+)]
+#[case::at_warn_allowed(
+    3, 5, 14, None, Some(5),
+    VersionEnforcement::Allowed { min_version: 3, warn_version: 5 }
+)]
+#[case::above_warn_allowed(
+    3, 5, 14, None, Some(10),
+    VersionEnforcement::Allowed { min_version: 3, warn_version: 5 }
+)]
+#[case::default_config_allows_everything(
+    0, 0, 14, None, None,
+    VersionEnforcement::Allowed { min_version: 0, warn_version: 0 }
+)]
+fn enforce_version_policy(
+    #[case] min: u16,
+    #[case] warn: u16,
+    #[case] grace_days: u16,
+    #[case] changed_at: Option<u64>,
+    #[case] client_version: Option<u16>,
+    #[case] expected: VersionEnforcement,
+) {
+    let config = VersionPolicyConfig::new(min, warn, grace_days).unwrap();
+    let state = new_state(config, changed_at);
+    assert_eq!(state.enforce(client_version, NOW), expected);
 }
 
 // @internal
