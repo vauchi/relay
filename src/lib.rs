@@ -4,7 +4,6 @@
 
 pub mod config;
 pub mod connection_limit;
-pub mod connection_registry;
 pub mod escrow;
 pub mod exchange_broker;
 pub mod federation_connector;
@@ -17,7 +16,6 @@ pub mod http;
 pub mod http_api;
 pub mod integrity;
 pub mod jitter;
-pub mod mailbox_registry;
 pub mod metrics;
 pub mod noise_key;
 pub mod noise_transport;
