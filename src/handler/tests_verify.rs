@@ -12,12 +12,14 @@ use aws_lc_rs::signature::KeyPair;
 // NonceTracker tests
 // ================================================================
 
+// @internal
 #[test]
 fn test_nonce_tracker_accepts_fresh_nonce() {
     let tracker = NonceTracker::new();
     assert!(tracker.check_and_insert(b"nonce1"));
 }
 
+// @internal
 #[test]
 fn test_nonce_tracker_rejects_replay() {
     let tracker = NonceTracker::new();
@@ -25,6 +27,7 @@ fn test_nonce_tracker_rejects_replay() {
     assert!(!tracker.check_and_insert(b"nonce1"));
 }
 
+// @internal
 #[test]
 fn test_nonce_tracker_accepts_different_nonces() {
     let tracker = NonceTracker::new();
@@ -36,6 +39,7 @@ fn test_nonce_tracker_accepts_different_nonces() {
 // Purge signature verification tests (SP-2)
 // ================================================================
 
+// @internal
 #[test]
 fn test_verify_purge_ed25519_valid() {
     let rng = aws_lc_rs::rand::SystemRandom::new();
@@ -61,6 +65,7 @@ fn test_verify_purge_ed25519_valid() {
     assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
 }
 
+// @internal
 #[test]
 fn test_verify_purge_ed25519_bad_signature() {
     let rng = aws_lc_rs::rand::SystemRandom::new();
@@ -80,6 +85,7 @@ fn test_verify_purge_ed25519_bad_signature() {
     assert_eq!(result.unwrap_err(), "invalid purge signature");
 }
 
+// @internal
 #[test]
 fn test_verify_purge_ed25519_expired_timestamp() {
     let rng = aws_lc_rs::rand::SystemRandom::new();
@@ -108,6 +114,7 @@ fn test_verify_purge_ed25519_expired_timestamp() {
     );
 }
 
+// @internal
 #[test]
 fn test_verify_purge_ed25519_wrong_key_length() {
     let result = verify::verify_purge_ed25519(&[0u8; 16], &[0u8; 32], &[0u8; 64], 0);
