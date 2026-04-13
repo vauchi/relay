@@ -611,11 +611,16 @@ pub async fn handle_connection(ws_stream: WebSocketStream<TcpStream>, deps: Conn
                     // Notify client instead of silent drop (G8 soft gate).
                     // Encrypt through Noise like all other post-handshake messages
                     // to avoid leaking plaintext on the encrypted channel.
-                    let notice = serde_json::json!({
+                    let notice_json = serde_json::to_vec(&serde_json::json!({
                         "type": "rate_limit_exceeded",
                         "retry_after_secs": 10
-                    });
-                    let notice_bytes = notice.to_string().into_bytes();
+                    }))
+                    .unwrap_or_default();
+                    let len = notice_json.len() as u32;
+                    let mut notice_bytes =
+                        Vec::with_capacity(protocol::FRAME_HEADER_SIZE + notice_json.len());
+                    notice_bytes.extend_from_slice(&len.to_be_bytes());
+                    notice_bytes.extend_from_slice(&notice_json);
                     let _ = noise_encrypt_and_send(
                         &mut write,
                         notice_bytes,

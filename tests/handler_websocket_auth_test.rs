@@ -543,14 +543,17 @@ async fn test_rate_limit_keys_on_auth_hash_not_routing_id() {
         // Second message with same auth identity — rate limited because bucket is shared
         let recipient_id = common::generate_test_client_id(98);
         let update = make_encrypted_update(&recipient_id, &[4, 5, 6]);
-        // No response expected (rate limited, connection stays open but message rejected)
+        // Rate limiter sends an encrypted notice (no Ack) — G8 soft gate
         client2.send_envelope(&update).await;
         let resp = client2.try_recv().await;
-        // The rate limiter rejects silently (continue in the loop) — no Ack arrives
         assert!(
-            resp.is_none(),
-            "Rate-limited message should produce no response; got: {:?}",
-            resp
+            resp.is_some(),
+            "Rate-limited message should produce a rate_limit_exceeded notice"
+        );
+        let notice = resp.unwrap();
+        assert_eq!(
+            notice["type"], "rate_limit_exceeded",
+            "Notice must be rate_limit_exceeded, got: {notice}"
         );
 
         // Verify blob was NOT stored (rate limited before storage)
