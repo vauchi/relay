@@ -298,15 +298,20 @@ security:deny:
 
 # Supply chain verification (cargo-vet)
 # The .cargo/config.toml [patch] section records vauchi-protocol as a path dep
-# in the lockfile. cargo-vet needs a git source. Regenerate lockfile without
-# the path override, then vet. Dep versions may drift slightly from committed
-# lockfile but all publishers are trusted in supply-chain/config.toml.
+# in the lockfile. cargo-vet needs a git source. --regenerate-lockfile removes
+# the path override and regenerates Cargo.lock so cargo-vet sees git/registry sources.
+# --sync-from=77874344 pre-populates exemptions from vauchi-core so shared
+# transitive deps inherit core's approved exemptions. Requires core in relay's
+# CI_JOB_TOKEN allowlist. On main, remaining unvetted deps are auto-fixed and pushed.
 security:vet:
-  extends: [.rust-runner-readonly, .security-vet-job]
+  extends: [.rust-runner-readonly, .security-vet-autofix-job]
   script:
-    - rm -f .cargo/config.toml
-    - cargo generate-lockfile
-    - cargo vet
+    - |
+      curl --silent --fail \
+        "${CI_API_V4_URL}/projects/77957857/repository/files/scripts%2Fci%2Fvet-autofix.sh/raw?ref=main" \
+        -o vet-autofix.sh
+      chmod +x vet-autofix.sh
+    - ./vet-autofix.sh --regenerate-lockfile --sync-from=77874344
 
 # ============================================================
 # Load Test Stage (PI-10)
