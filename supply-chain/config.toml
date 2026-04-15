@@ -60,7 +60,7 @@ version = "0.4.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.bitflags]]
-version = "2.11.0"
+version = "2.11.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.blake2]]
@@ -145,10 +145,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.getrandom]]
 version = "0.3.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.getrandom]]
-version = "0.4.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.half]]
@@ -289,10 +285,6 @@ version = "6.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.rand]]
-version = "0.9.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.rand]]
 version = "0.9.4"
 criteria = "safe-to-deploy"
 
@@ -337,10 +329,6 @@ version = "4.1.0"
 criteria = "safe-to-run"
 
 [[exemptions.rustls]]
-version = "0.23.37"
-criteria = "safe-to-deploy"
-
-[[exemptions.rustls]]
 version = "0.23.38"
 criteria = "safe-to-deploy"
 
@@ -353,7 +341,7 @@ version = "1.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-webpki]]
-version = "0.103.11"
+version = "0.103.12"
 criteria = "safe-to-deploy"
 
 [[exemptions.rusty-fork]]
@@ -375,6 +363,10 @@ criteria = "safe-to-deploy"
 [[exemptions.time]]
 version = "0.3.47"
 criteria = "safe-to-run"
+
+[[exemptions.tokio]]
+version = "1.52.0"
+criteria = "safe-to-deploy"
 
 [[exemptions.tokio-rustls]]
 version = "0.26.4"
