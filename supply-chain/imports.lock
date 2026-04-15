@@ -44,15 +44,15 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.aws-lc-rs]]
-version = "1.16.2"
-when = "2026-03-19"
+version = "1.16.3"
+when = "2026-04-15"
 user-id = 156764
 user-login = "justsmth"
 user-name = "Justin W Smith"
 
 [[publisher.aws-lc-sys]]
-version = "0.39.1"
-when = "2026-03-27"
+version = "0.40.0"
+when = "2026-04-15"
 user-id = 156764
 user-login = "justsmth"
 user-name = "Justin W Smith"
@@ -91,8 +91,8 @@ user-login = "tarcieri"
 user-name = "Tony Arcieri"
 
 [[publisher.clap]]
-version = "4.6.0"
-when = "2026-03-12"
+version = "4.6.1"
+when = "2026-04-15"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
