@@ -6,7 +6,7 @@
 //!
 //! Handles incoming federation WebSocket connections from peer relays.
 //! Processes offloaded blobs, capacity reports, and drain notices.
-//! Follows zero-knowledge logging rules: never log routing_id, only aggregate
+//! Follows privacy-preserving logging rules: never log routing_id, only aggregate
 //! counts with random session labels.
 
 use std::sync::Arc;
@@ -383,7 +383,7 @@ where
         }
     }
 
-    // Log aggregate only (zero-knowledge: no routing_ids)
+    // Log aggregate only (privacy-preserving: no routing_ids)
     if offload_count > 0 {
         info!(
             "[fed-{}] Accepted {} offloaded blobs from peer",

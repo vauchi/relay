@@ -19,7 +19,7 @@ encrypted blobs between clients via HTTP v2 REST API.
 
 ## Overview
 
-The relay server is a zero-knowledge message broker. It:
+The relay server is an oblivious privacy-preserving message broker. It:
 
 - Provides an HTTP v2 REST API for blob storage and retrieval
 - Supports OHTTP (RFC 9458) for IP-level privacy
@@ -208,7 +208,8 @@ rolling upgrade, and rollback procedures.
 
 ## Security Considerations
 
-- **Zero-knowledge relay**: sees encrypted blobs only
+- **Oblivious relay**: sees encrypted blobs only,
+  sender/recipient identity minimized
 - **Rate limiting**: per-client, per-peer, per-recovery
 - **TLS mandatory**: startup refuses without
   `RELAY_TLS_VERIFIED=true` on non-localhost
@@ -258,7 +259,7 @@ vauchi-relay
 
 ### Privacy Guarantees
 
-Federation preserves zero-knowledge:
+Federation preserves the oblivious privacy-preserving design:
 
 - Blobs are transferred as opaque ciphertext — peer relays cannot decrypt
 - `hop_count` prevents re-offloading loops (max 1 hop)

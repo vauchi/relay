@@ -630,7 +630,7 @@ mod tests {
     fn test_stored_blob_has_no_sender_metadata() {
         let blob = StoredBlob::new(vec![1, 2, 3]);
         // StoredBlob must not contain any sender-identifying information.
-        // The relay is zero-knowledge: it only knows recipient routing IDs and opaque ciphertext.
+        // The relay is oblivious: it only knows recipient routing IDs and opaque ciphertext.
         assert!(!blob.id.is_empty());
         assert_eq!(blob.data, vec![1, 2, 3]);
         assert!(blob.created_at_secs > 0);
