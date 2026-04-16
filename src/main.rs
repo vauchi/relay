@@ -28,6 +28,7 @@ use vauchi_relay::federation_connector::{self, OffloadManager};
 use vauchi_relay::federation_handler::{self, FederationDeps};
 use vauchi_relay::federation_tls;
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
+use vauchi_relay::guardian_storage::{GuardianStore, SqliteGuardianStore};
 use vauchi_relay::handler;
 use vauchi_relay::http::{HttpState, create_router};
 use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
@@ -217,6 +218,19 @@ async fn main() {
             Arc::new(
                 SqliteRecoveryProofStore::open(&path)
                     .expect("Failed to open recovery proof database"),
+            )
+        }
+    };
+
+    // Initialize guardian entry storage
+    let guardian_storage: Arc<dyn GuardianStore> = match config.storage.backend {
+        StorageBackend::Memory => Arc::new(
+            SqliteGuardianStore::in_memory().expect("Failed to create in-memory guardian db"),
+        ),
+        StorageBackend::Sqlite => {
+            let path = config.storage.data_dir.join("guardian_entries.db");
+            Arc::new(
+                SqliteGuardianStore::open(&path).expect("Failed to open guardian entry database"),
             )
         }
     };
@@ -542,6 +556,7 @@ async fn main() {
             escrow_store,
             version_policy: version_policy.clone(),
             recovery_storage: recovery_storage.clone(),
+            guardian_storage: guardian_storage.clone(),
         };
 
         http_router = http_router.merge(create_v2_router(api_state));
@@ -589,6 +604,19 @@ async fn main() {
                     .recovery_proofs_active
                     .sub(removed as i64);
                 info!("Cleaned up {} expired recovery proofs", removed);
+            }
+        }
+    });
+
+    // Start cleanup task for guardian entries
+    let cleanup_guardian = guardian_storage.clone();
+    tokio::spawn(async move {
+        loop {
+            // Check every 6 hours (guardian sets expire yearly, no rush)
+            tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+            let removed = cleanup_guardian.cleanup_expired();
+            if removed > 0 {
+                info!("Cleaned up {} expired guardian sets", removed);
             }
         }
     });

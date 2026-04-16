@@ -240,6 +240,7 @@ mod middleware {
 
     use vauchi_relay::escrow::EscrowStore;
     use vauchi_relay::exchange_broker::ExchangeBroker;
+    use vauchi_relay::guardian_storage::SqliteGuardianStore;
     use vauchi_relay::handler::NonceTracker;
     use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
     use vauchi_relay::metrics::RelayMetrics;
@@ -267,6 +268,7 @@ mod middleware {
                 config, changed_at,
             ))),
             recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
+            guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
         }
     }
 
@@ -545,6 +547,7 @@ mod adversarial {
 
     use vauchi_relay::escrow::EscrowStore;
     use vauchi_relay::exchange_broker::ExchangeBroker;
+    use vauchi_relay::guardian_storage::SqliteGuardianStore;
     use vauchi_relay::handler::NonceTracker;
     use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
     use vauchi_relay::metrics::RelayMetrics;
@@ -572,6 +575,7 @@ mod adversarial {
                 config, None,
             ))),
             recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
+            guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
         }
     }
 

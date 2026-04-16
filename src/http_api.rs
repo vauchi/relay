@@ -23,12 +23,14 @@ use parking_lot::RwLock;
 use serde::Deserialize;
 use vauchi_protocol::v2::{
     V2AckRequest, V2ExchangeClaimRequest, V2ExchangeCompleteRequest, V2ExchangeOfferRequest,
-    V2FetchRequest, V2PurgeRequest, V2RecoveryQueryRequest, V2RecoveryStoreRequest,
-    V2RegisterRequest, V2SendRequest,
+    V2FetchRequest, V2GuardianDeleteRequest, V2GuardianQueryRequest, V2GuardianStoreRequest,
+    V2PurgeRequest, V2RecoveryQueryRequest, V2RecoveryStoreRequest, V2RegisterRequest,
+    V2SendRequest,
 };
 
 use crate::escrow::EscrowStore;
 use crate::exchange_broker::ExchangeBroker;
+use crate::guardian_storage::GuardianStore;
 use crate::handler::NonceTracker;
 use crate::metrics::RelayMetrics;
 use crate::ohttp_gateway::OhttpGateway;
@@ -65,6 +67,8 @@ pub struct HttpApiState {
     pub version_policy: Arc<RwLock<VersionPolicyState>>,
     /// Recovery proof storage for contact recovery.
     pub recovery_storage: Arc<dyn RecoveryProofStore>,
+    /// Guardian entry storage for social recovery.
+    pub guardian_storage: Arc<dyn GuardianStore>,
 }
 
 /// Envelope used inside an OHTTP request body.
@@ -103,6 +107,9 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .route("/v2/exchange/complete", post(exchange_complete_handler))
         .route("/v2/recovery/store", post(recovery_store_handler))
         .route("/v2/recovery/query", post(recovery_query_handler))
+        .route("/v2/guardian/store", post(guardian_store_handler))
+        .route("/v2/guardian/query", post(guardian_query_handler))
+        .route("/v2/guardian/delete", post(guardian_delete_handler))
         .route("/v2/ohttp-key", get(ohttp_key_handler))
         .route("/v2/ohttp", post(ohttp_handler))
         .layer(middleware::from_fn_with_state(
@@ -370,6 +377,32 @@ async fn recovery_query_handler(
     JsonBadRequest(req): JsonBadRequest<V2RecoveryQueryRequest>,
 ) -> impl IntoResponse {
     logic_response(handle_recovery_query_logic(&state, req))
+}
+
+// ── Guardian ──────────────────────────────────────────────────────
+
+/// Store guardian entries (atomic replace).
+async fn guardian_store_handler(
+    State(state): State<HttpApiState>,
+    JsonBadRequest(req): JsonBadRequest<V2GuardianStoreRequest>,
+) -> impl IntoResponse {
+    logic_response(handle_guardian_store_logic(&state, req))
+}
+
+/// Query guardian entries by hash.
+async fn guardian_query_handler(
+    State(state): State<HttpApiState>,
+    JsonBadRequest(req): JsonBadRequest<V2GuardianQueryRequest>,
+) -> impl IntoResponse {
+    logic_response(handle_guardian_query_logic(&state, req))
+}
+
+/// Delete all guardian entries for a hash.
+async fn guardian_delete_handler(
+    State(state): State<HttpApiState>,
+    JsonBadRequest(req): JsonBadRequest<V2GuardianDeleteRequest>,
+) -> impl IntoResponse {
+    logic_response(handle_guardian_delete_logic(&state, req))
 }
 
 // ── Exchange ────────────────────────────────────────────────────────
@@ -661,6 +694,33 @@ async fn dispatch_ohttp_action(
             };
             handle_recovery_query_logic(state, req).into_json()
         }
+        "guardian_store" => {
+            let req: V2GuardianStoreRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad guardian_store payload: {e}") });
+                }
+            };
+            handle_guardian_store_logic(state, req).into_json()
+        }
+        "guardian_query" => {
+            let req: V2GuardianQueryRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad guardian_query payload: {e}") });
+                }
+            };
+            handle_guardian_query_logic(state, req).into_json()
+        }
+        "guardian_delete" => {
+            let req: V2GuardianDeleteRequest = match serde_json::from_value(payload) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "status": "error", "error": format!("bad guardian_delete payload: {e}") });
+                }
+            };
+            handle_guardian_delete_logic(state, req).into_json()
+        }
         unknown => {
             serde_json::json!({ "status": "error", "error": format!("unknown action: {unknown}") })
         }
@@ -892,6 +952,109 @@ fn handle_recovery_query_logic(state: &HttpApiState, req: V2RecoveryQueryRequest
         .collect();
 
     ApiResult::ok(serde_json::json!({ "status": "ok", "proofs": proofs }))
+}
+
+// ── Guardian handler logic ─────────────────────────────────────────
+
+/// Individual entry size limit (padded to 184, but allow some margin).
+const MAX_GUARDIAN_ENTRY_SIZE: usize = 256;
+
+fn handle_guardian_store_logic(state: &HttpApiState, req: V2GuardianStoreRequest) -> ApiResult {
+    // Validate guardian_hash: must be 64 hex chars
+    if req.guardian_hash.len() != 64 || !req.guardian_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return ApiResult::bad_request("guardian_hash must be 64 hex characters (32 bytes)");
+    }
+
+    // Validate entry count
+    if req.entries.len() > crate::guardian_storage::MAX_GUARDIAN_ENTRIES {
+        return ApiResult::bad_request(format!(
+            "too many entries (max {})",
+            crate::guardian_storage::MAX_GUARDIAN_ENTRIES
+        ));
+    }
+
+    // Decode entries from base64 and validate sizes
+    let mut decoded_entries = Vec::with_capacity(req.entries.len());
+    let mut total_size = 0usize;
+    for entry in &req.entries {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&entry.data)
+            .map_err(|_| "invalid base64 in entry data");
+        let bytes = match bytes {
+            Ok(b) => b,
+            Err(e) => return ApiResult::bad_request(e),
+        };
+        if bytes.len() > MAX_GUARDIAN_ENTRY_SIZE {
+            return ApiResult::bad_request(format!(
+                "entry exceeds {} byte limit",
+                MAX_GUARDIAN_ENTRY_SIZE
+            ));
+        }
+        total_size += bytes.len();
+        decoded_entries.push(bytes);
+    }
+
+    if total_size > crate::guardian_storage::MAX_GUARDIAN_TOTAL_SIZE {
+        return ApiResult::bad_request(format!(
+            "total entries exceed {} byte limit",
+            crate::guardian_storage::MAX_GUARDIAN_TOTAL_SIZE
+        ));
+    }
+
+    // Rate limit by guardian_hash
+    let rate_key = format!("guardian:{}", &req.guardian_hash[..16]);
+    if !state.rate_limiter.consume(&rate_key) {
+        return ApiResult::RateLimited;
+    }
+
+    // Decode hash
+    let guardian_hash = match hex_to_32bytes(&req.guardian_hash) {
+        Some(h) => h,
+        None => return ApiResult::bad_request("invalid guardian_hash hex"),
+    };
+
+    let set = crate::guardian_storage::StoredGuardianSet::new(guardian_hash, decoded_entries);
+    state.guardian_storage.store(set);
+
+    ApiResult::ok(serde_json::json!({ "status": "ok" }))
+}
+
+fn handle_guardian_query_logic(state: &HttpApiState, req: V2GuardianQueryRequest) -> ApiResult {
+    // Validate guardian_hash
+    let guardian_hash = match hex_to_32bytes(&req.guardian_hash) {
+        Some(h) => h,
+        None => {
+            return ApiResult::bad_request("guardian_hash must be 64 hex characters (32 bytes)");
+        }
+    };
+
+    match state.guardian_storage.get(&guardian_hash) {
+        Some(set) => {
+            let entries: Vec<serde_json::Value> = set
+                .entries
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "data": base64::engine::general_purpose::STANDARD.encode(e)
+                    })
+                })
+                .collect();
+            ApiResult::ok(serde_json::json!({ "status": "ok", "guardians": entries }))
+        }
+        None => ApiResult::ok(serde_json::json!({ "status": "ok", "guardians": [] })),
+    }
+}
+
+fn handle_guardian_delete_logic(state: &HttpApiState, req: V2GuardianDeleteRequest) -> ApiResult {
+    let guardian_hash = match hex_to_32bytes(&req.guardian_hash) {
+        Some(h) => h,
+        None => {
+            return ApiResult::bad_request("guardian_hash must be 64 hex characters (32 bytes)");
+        }
+    };
+
+    let deleted = state.guardian_storage.remove(&guardian_hash);
+    ApiResult::ok(serde_json::json!({ "status": "ok", "deleted": deleted }))
 }
 
 /// Decode a 64-char hex string to a 32-byte array.
