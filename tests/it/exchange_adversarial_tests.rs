@@ -118,6 +118,8 @@ async fn create_offer(app: &Router, payload: &str) -> String {
 
 // ── Invalid code format tests ──────────────────────────────────────
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_claim_empty_code_rejected() {
     let app = create_v2_router(test_state());
@@ -132,6 +134,8 @@ async fn test_claim_empty_code_rejected() {
     assert!(body["error"].as_str().unwrap().contains("6 digits"));
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_claim_short_code_rejected() {
     let app = create_v2_router(test_state());
@@ -144,6 +148,8 @@ async fn test_claim_short_code_rejected() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_claim_long_code_rejected() {
     let app = create_v2_router(test_state());
@@ -156,6 +162,8 @@ async fn test_claim_long_code_rejected() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_claim_alpha_code_rejected() {
     let app = create_v2_router(test_state());
@@ -168,6 +176,8 @@ async fn test_claim_alpha_code_rejected() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_claim_unicode_code_rejected() {
     let app = create_v2_router(test_state());
@@ -181,6 +191,8 @@ async fn test_claim_unicode_code_rejected() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_claim_special_chars_code_rejected() {
     let app = create_v2_router(test_state());
@@ -199,6 +211,8 @@ async fn test_claim_special_chars_code_rejected() {
     }
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_complete_invalid_code_formats() {
     let app = create_v2_router(test_state());
@@ -219,6 +233,8 @@ async fn test_complete_invalid_code_formats() {
 
 // ── Missing / malformed JSON fields ────────────────────────────────
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_offer_missing_payload_field() {
     let app = create_v2_router(test_state());
@@ -231,6 +247,8 @@ async fn test_offer_missing_payload_field() {
     );
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_claim_missing_response_field() {
     let app = create_v2_router(test_state());
@@ -248,6 +266,8 @@ async fn test_claim_missing_response_field() {
     );
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_claim_missing_code_field() {
     let app = create_v2_router(test_state());
@@ -265,6 +285,8 @@ async fn test_claim_missing_code_field() {
     );
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_complete_missing_code_field() {
     let app = create_v2_router(test_state());
@@ -277,6 +299,8 @@ async fn test_complete_missing_code_field() {
     );
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_offer_invalid_json() {
     let app = create_v2_router(test_state());
@@ -289,6 +313,8 @@ async fn test_offer_invalid_json() {
     );
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_offer_empty_body() {
     let app = create_v2_router(test_state());
@@ -303,6 +329,8 @@ async fn test_offer_empty_body() {
 
 // ── State machine violations via HTTP ──────────────────────────────
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_http_double_claim_rejected() {
     let state = test_state();
@@ -331,6 +359,8 @@ async fn test_http_double_claim_rejected() {
     assert_eq!(body["error"], "already claimed");
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_http_complete_before_claim_rejected() {
     let state = test_state();
@@ -349,6 +379,8 @@ async fn test_http_complete_before_claim_rejected() {
     assert_eq!(body["error"], "not yet claimed");
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_http_double_complete_rejected() {
     let state = test_state();
@@ -385,6 +417,8 @@ async fn test_http_double_complete_rejected() {
     assert_eq!(body["error"], "invalid or expired code");
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_http_claim_nonexistent_code() {
     let app = create_v2_router(test_state());
@@ -403,6 +437,8 @@ async fn test_http_claim_nonexistent_code() {
 
 // ── Payload size via HTTP ──────────────────────────────────────────
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_http_oversized_claim_response_rejected() {
     let state = test_state();
@@ -422,6 +458,8 @@ async fn test_http_oversized_claim_response_rejected() {
     assert!(body["error"].as_str().unwrap().contains("too large"));
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_http_body_size_limit_enforced() {
     let app = create_v2_router(test_state());
@@ -440,6 +478,8 @@ async fn test_http_body_size_limit_enforced() {
 
 // ── TTL validation via HTTP ────────────────────────────────────────
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_http_ttl_above_max_rejected() {
     let app = create_v2_router(test_state());
@@ -452,6 +492,8 @@ async fn test_http_ttl_above_max_rejected() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_http_valid_ttl_accepted() {
     let app = create_v2_router(test_state());
@@ -469,6 +511,8 @@ async fn test_http_valid_ttl_accepted() {
 
 // ── Rate limit enforcement (S3, S6) ───────────────────────────────
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_s3_offer_global_rate_limit() {
     let state = test_state_strict_rate_limit();
@@ -496,6 +540,8 @@ async fn test_s3_offer_global_rate_limit() {
     assert_eq!(body["error"], "rate limit exceeded");
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_s6_claim_global_rate_limit() {
     let state = test_state_strict_rate_limit();
@@ -525,6 +571,8 @@ async fn test_s6_claim_global_rate_limit() {
 
 // ── Extra fields / unknown fields ──────────────────────────────────
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_offer_extra_fields_ignored() {
     let app = create_v2_router(test_state());
@@ -542,6 +590,8 @@ async fn test_offer_extra_fields_ignored() {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_offer_wrong_type_for_payload() {
     let app = create_v2_router(test_state());
@@ -560,6 +610,8 @@ async fn test_offer_wrong_type_for_payload() {
     );
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_offer_null_payload_rejected() {
     let app = create_v2_router(test_state());
@@ -577,6 +629,8 @@ async fn test_offer_null_payload_rejected() {
     );
 }
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_claim_wrong_type_for_code() {
     let app = create_v2_router(test_state());
@@ -597,6 +651,8 @@ async fn test_claim_wrong_type_for_code() {
 
 // ── Full exchange flow integrity via HTTP ──────────────────────────
 
+// @internal
+// @internal
 #[tokio::test]
 async fn test_http_full_flow_payload_integrity() {
     let state = test_state();
