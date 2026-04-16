@@ -13,6 +13,7 @@ use vauchi_relay::exchange_broker::{
     MIN_EXCHANGE_TTL_SECS,
 };
 
+// @internal
 #[test]
 fn test_create_offer_returns_6_digit_code() {
     let broker = ExchangeBroker::new(100, 300);
@@ -29,6 +30,7 @@ fn test_create_offer_returns_6_digit_code() {
     assert_eq!(broker.offer_count(), 1);
 }
 
+// @internal
 #[test]
 fn test_claim_offer_returns_payload() {
     let broker = ExchangeBroker::new(100, 300);
@@ -44,6 +46,7 @@ fn test_claim_offer_returns_payload() {
     assert_eq!(payload, "initiator-payload");
 }
 
+// @internal
 #[test]
 fn test_complete_returns_response() {
     let broker = ExchangeBroker::new(100, 300);
@@ -62,6 +65,7 @@ fn test_complete_returns_response() {
     assert_eq!(broker.offer_count(), 0);
 }
 
+// @internal
 #[test]
 fn test_expired_offer_rejected() {
     // Use a very short default TTL so the offer expires during the test.
@@ -80,6 +84,7 @@ fn test_expired_offer_rejected() {
     assert_eq!(err, ExchangeError::CodeExpired);
 }
 
+// @internal
 #[test]
 fn test_double_claim_rejected() {
     let broker = ExchangeBroker::new(100, 300);
@@ -96,6 +101,7 @@ fn test_double_claim_rejected() {
     assert_eq!(err, ExchangeError::AlreadyClaimed);
 }
 
+// @internal
 #[test]
 fn test_complete_before_claim_rejected() {
     let broker = ExchangeBroker::new(100, 300);
@@ -109,6 +115,7 @@ fn test_complete_before_claim_rejected() {
     assert_eq!(err, ExchangeError::NotYetClaimed);
 }
 
+// @internal
 #[test]
 fn test_invalid_code_rejected() {
     let broker = ExchangeBroker::new(100, 300);
@@ -126,6 +133,7 @@ fn test_invalid_code_rejected() {
     assert_eq!(err, ExchangeError::CodeNotFound);
 }
 
+// @internal
 #[test]
 fn test_cleanup_removes_expired() {
     // Use default_ttl_secs=0 so offers created with None expire immediately.
@@ -146,6 +154,7 @@ fn test_cleanup_removes_expired() {
     assert_eq!(broker.offer_count(), 1, "1 active offer should remain");
 }
 
+// @internal
 #[test]
 fn test_too_many_offers_rejected() {
     let broker = ExchangeBroker::new(2, 300);
@@ -162,6 +171,7 @@ fn test_too_many_offers_rejected() {
 
 // ── Adversarial tests (CC-14) ──────────────────────────────────────
 
+// @internal
 #[test]
 fn test_s4_oversized_offer_payload_rejected() {
     let broker = ExchangeBroker::new(100, 300);
@@ -175,6 +185,7 @@ fn test_s4_oversized_offer_payload_rejected() {
     assert_eq!(broker.offer_count(), 0, "no offer should be stored");
 }
 
+// @internal
 #[test]
 fn test_s4_oversized_claim_response_rejected() {
     let broker = ExchangeBroker::new(100, 300);
@@ -191,6 +202,7 @@ fn test_s4_oversized_claim_response_rejected() {
     assert_eq!(err, ExchangeError::PayloadTooLarge);
 }
 
+// @internal
 #[test]
 fn test_s4_max_size_payload_accepted() {
     let broker = ExchangeBroker::new(100, 300);
@@ -203,6 +215,7 @@ fn test_s4_max_size_payload_accepted() {
     assert_eq!(code.len(), 6);
 }
 
+// @internal
 #[test]
 fn test_s5_ttl_below_minimum_rejected() {
     let broker = ExchangeBroker::new(100, 300);
@@ -214,6 +227,7 @@ fn test_s5_ttl_below_minimum_rejected() {
     assert_eq!(err, ExchangeError::InvalidTtl);
 }
 
+// @internal
 #[test]
 fn test_s5_ttl_zero_rejected() {
     let broker = ExchangeBroker::new(100, 300);
@@ -225,6 +239,7 @@ fn test_s5_ttl_zero_rejected() {
     assert_eq!(err, ExchangeError::InvalidTtl);
 }
 
+// @internal
 #[test]
 fn test_s5_ttl_above_maximum_rejected() {
     let broker = ExchangeBroker::new(100, 300);
@@ -236,6 +251,7 @@ fn test_s5_ttl_above_maximum_rejected() {
     assert_eq!(err, ExchangeError::InvalidTtl);
 }
 
+// @internal
 #[test]
 fn test_s5_ttl_u64_max_rejected() {
     let broker = ExchangeBroker::new(100, 300);
@@ -248,6 +264,7 @@ fn test_s5_ttl_u64_max_rejected() {
     assert_eq!(err, ExchangeError::InvalidTtl);
 }
 
+// @internal
 #[test]
 fn test_s5_ttl_at_boundaries_accepted() {
     let broker = ExchangeBroker::new(100, 300);
@@ -261,6 +278,7 @@ fn test_s5_ttl_at_boundaries_accepted() {
         .expect("maximum TTL must be accepted");
 }
 
+// @internal
 #[test]
 fn test_s5_default_ttl_bypasses_validation() {
     // When no TTL is specified, the broker's default is used — no validation
@@ -272,6 +290,7 @@ fn test_s5_default_ttl_bypasses_validation() {
         .expect("default TTL (None) must be accepted");
 }
 
+// @internal
 #[test]
 #[should_panic(expected = "max_offers")]
 fn test_s8_max_offers_ceiling_enforced() {
@@ -279,6 +298,7 @@ fn test_s8_max_offers_ceiling_enforced() {
     ExchangeBroker::new(500_001, 300);
 }
 
+// @internal
 #[test]
 fn test_s8_max_offers_at_ceiling_accepted() {
     // Exactly 500,000 should be fine — verify it's operational
@@ -286,6 +306,7 @@ fn test_s8_max_offers_at_ceiling_accepted() {
     assert_eq!(broker.offer_count(), 0, "fresh broker must have no offers");
 }
 
+// @internal
 #[test]
 fn test_empty_payload_accepted() {
     // Empty payloads are valid — client may have legitimate empty encrypted data
@@ -296,6 +317,7 @@ fn test_empty_payload_accepted() {
         .expect("empty payload must be accepted");
 }
 
+// @internal
 #[test]
 fn test_unicode_payload_accepted() {
     let broker = ExchangeBroker::new(100, 300);
@@ -306,6 +328,7 @@ fn test_unicode_payload_accepted() {
         .expect("unicode/null-byte payload must be accepted (opaque ciphertext)");
 }
 
+// @internal
 #[test]
 fn test_display_merges_not_found_and_expired() {
     // S1: Both errors must produce the same user-visible string
@@ -322,6 +345,7 @@ fn test_display_merges_not_found_and_expired() {
 
 // ── Concurrency tests (CC-13) ──────────────────────────────────────
 
+// @internal
 #[test]
 fn test_concurrent_claim_only_one_wins() {
     let broker = Arc::new(ExchangeBroker::new(100, 300));
@@ -351,6 +375,7 @@ fn test_concurrent_claim_only_one_wins() {
     );
 }
 
+// @internal
 #[test]
 fn test_concurrent_complete_only_one_wins() {
     let broker = Arc::new(ExchangeBroker::new(100, 300));
@@ -375,6 +400,7 @@ fn test_concurrent_complete_only_one_wins() {
     assert_eq!(not_found.len(), 9, "others see CodeNotFound (removed)");
 }
 
+// @internal
 #[test]
 fn test_concurrent_create_offers_all_unique_codes() {
     let broker = Arc::new(ExchangeBroker::new(200, 300));
@@ -399,6 +425,7 @@ fn test_concurrent_create_offers_all_unique_codes() {
 
 // ── State machine violation tests ──────────────────────────────────
 
+// @internal
 #[test]
 fn test_double_complete_rejected() {
     let broker = ExchangeBroker::new(100, 300);
@@ -413,6 +440,7 @@ fn test_double_complete_rejected() {
     assert_eq!(err, ExchangeError::CodeNotFound);
 }
 
+// @internal
 #[test]
 fn test_claim_after_complete_rejected() {
     let broker = ExchangeBroker::new(100, 300);
@@ -426,6 +454,7 @@ fn test_claim_after_complete_rejected() {
     assert_eq!(err, ExchangeError::CodeNotFound);
 }
 
+// @internal
 #[test]
 fn test_expired_complete_after_valid_claim() {
     // Broker with default TTL=0 (immediately expired)
@@ -444,6 +473,7 @@ fn test_expired_complete_after_valid_claim() {
     );
 }
 
+// @internal
 #[test]
 fn test_capacity_exhaustion_and_recovery() {
     let broker = ExchangeBroker::new(3, 0); // max 3, TTL=0 (immediately expired)
@@ -470,6 +500,7 @@ fn test_capacity_exhaustion_and_recovery() {
 
 // ── Payload integrity tests ────────────────────────────────────────
 
+// @internal
 #[test]
 fn test_payload_roundtrip_integrity() {
     let broker = ExchangeBroker::new(100, 300);
@@ -514,6 +545,7 @@ fn test_payload_roundtrip_integrity() {
     }
 }
 
+// @internal
 #[test]
 fn test_s4_payload_boundary_off_by_one() {
     let broker = ExchangeBroker::new(100, 300);
@@ -534,6 +566,7 @@ fn test_s4_payload_boundary_off_by_one() {
     broker.create_offer(under_limit, None).unwrap();
 }
 
+// @internal
 #[test]
 fn test_s4_claim_response_boundary_off_by_one() {
     let broker = ExchangeBroker::new(100, 300);
@@ -553,6 +586,7 @@ fn test_s4_claim_response_boundary_off_by_one() {
 
 // ── Error variant exhaustiveness ───────────────────────────────────
 
+// @internal
 #[test]
 fn test_all_error_variants_have_display() {
     // Ensures every ExchangeError variant produces a non-empty message.
@@ -573,6 +607,7 @@ fn test_all_error_variants_have_display() {
     }
 }
 
+// @internal
 #[test]
 fn test_cleanup_idempotent() {
     let broker = ExchangeBroker::new(100, 0);
@@ -587,6 +622,7 @@ fn test_cleanup_idempotent() {
     assert_eq!(broker.offer_count(), 0);
 }
 
+// @internal
 #[test]
 fn test_cleanup_empty_broker() {
     let broker = ExchangeBroker::new(100, 300);

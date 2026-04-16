@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
 
-mod common;
+use crate::common;
 
 /// Test: Blob storage stores and retrieves correctly
 /// Based on: Scenario: Updates are delivered when recipient connects

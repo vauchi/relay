@@ -14,6 +14,7 @@ use vauchi_protocol::*;
 // Wire format contracts
 // ============================================================
 
+// @internal
 #[test]
 fn contract_encode_decode_roundtrip_preserves_all_fields() {
     let envelope = MessageEnvelope {
@@ -40,12 +41,14 @@ fn contract_encode_decode_roundtrip_preserves_all_fields() {
     }
 }
 
+// @internal
 #[test]
 fn contract_frame_header_size_is_4_bytes() {
     // Relay relies on this constant for frame parsing
     assert_eq!(FRAME_HEADER_SIZE, 4);
 }
 
+// @internal
 #[test]
 fn contract_protocol_version_is_1() {
     assert_eq!(PROTOCOL_VERSION, 1);
@@ -55,6 +58,7 @@ fn contract_protocol_version_is_1() {
 // MessagePayload variant existence contracts
 // ============================================================
 
+// @internal
 #[test]
 fn contract_all_payload_variants_exist() {
     // Compile-time check: if any variant is removed, this won't compile
@@ -86,6 +90,7 @@ fn contract_all_payload_variants_exist() {
 // Handshake shape contracts
 // ============================================================
 
+// @internal
 #[test]
 fn contract_handshake_has_client_id_field() {
     let h = Handshake {
@@ -101,6 +106,7 @@ fn contract_handshake_has_client_id_field() {
     assert_eq!(h.client_id, "aa".repeat(32));
 }
 
+// @internal
 #[test]
 fn contract_handshake_optional_fields_default_none() {
     let json = r#"{"client_id":"abc"}"#;
@@ -114,6 +120,7 @@ fn contract_handshake_optional_fields_default_none() {
     assert_eq!(h.timestamp, None);
 }
 
+// @internal
 #[test]
 fn contract_handshake_ack_has_expected_fields() {
     let ack = HandshakeAck {
@@ -130,6 +137,7 @@ fn contract_handshake_ack_has_expected_fields() {
 // AckStatus contracts
 // ============================================================
 
+// @internal
 #[test]
 fn contract_ack_status_variants_exist() {
     let statuses = [
@@ -142,6 +150,7 @@ fn contract_ack_status_variants_exist() {
     assert_eq!(statuses.len(), 4);
 }
 
+// @internal
 #[test]
 fn contract_ack_status_serde_roundtrip() {
     for status in [
@@ -160,6 +169,7 @@ fn contract_ack_status_serde_roundtrip() {
 // EncryptedUpdate contracts
 // ============================================================
 
+// @internal
 #[test]
 fn contract_encrypted_update_has_recipient_and_ciphertext() {
     let u = EncryptedUpdate {
@@ -174,6 +184,7 @@ fn contract_encrypted_update_has_recipient_and_ciphertext() {
 // PurgeRequest/Response contracts
 // ============================================================
 
+// @internal
 #[test]
 fn contract_purge_request_optional_fields() {
     let json = "{}";
@@ -185,6 +196,7 @@ fn contract_purge_request_optional_fields() {
     assert_eq!(req.timestamp, None);
 }
 
+// @internal
 #[test]
 fn contract_purge_response_is_empty() {
     let resp = PurgeResponse {};
@@ -196,6 +208,7 @@ fn contract_purge_response_is_empty() {
 // ForwardingHints contracts
 // ============================================================
 
+// @internal
 #[test]
 fn contract_forwarding_hints_canonical_data_is_deterministic() {
     let hints_a = ForwardingHints {
@@ -233,6 +246,7 @@ fn contract_forwarding_hints_canonical_data_is_deterministic() {
     assert_eq!(hints_a.canonical_data(), hints_b.canonical_data());
 }
 
+// @internal
 #[test]
 fn contract_forwarding_hints_unsigned_omits_signature_fields() {
     let hints = ForwardingHints {
@@ -249,6 +263,7 @@ fn contract_forwarding_hints_unsigned_omits_signature_fields() {
 // Unknown payload backward compatibility
 // ============================================================
 
+// @internal
 #[test]
 fn contract_unknown_payload_type_deserializes_as_unknown() {
     let json = r#"{"version":1,"message_id":"m1","timestamp":0,"payload":{"type":"FuturePayloadV99","data":"x"}}"#;
@@ -260,6 +275,7 @@ fn contract_unknown_payload_type_deserializes_as_unknown() {
 // Recovery proof contracts
 // ============================================================
 
+// @internal
 #[test]
 fn contract_recovery_proof_store_has_key_hash_and_data() {
     let store = RecoveryProofStore {
@@ -270,6 +286,7 @@ fn contract_recovery_proof_store_has_key_hash_and_data() {
     assert_eq!(store.proof_data, vec![1, 2, 3]);
 }
 
+// @internal
 #[test]
 fn contract_recovery_proof_response_has_entries() {
     let resp = RecoveryProofResponse {
@@ -286,6 +303,7 @@ fn contract_recovery_proof_response_has_entries() {
 // IdentityRevoked contracts
 // ============================================================
 
+// @internal
 #[test]
 fn contract_identity_revoked_has_sender_recipient_signature() {
     let rev = IdentityRevoked {

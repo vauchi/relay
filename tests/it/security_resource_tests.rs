@@ -18,6 +18,7 @@ use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
 // ── R-H4: blob cleanup GC ──
 
 /// R-H4: After blob cleanup, blob_sender_map entries for expired blobs should be pruned.
+// @internal
 #[test]
 fn test_blob_sender_map_gc_prunes_expired_entries() {
     let storage = SqliteBlobStore::in_memory().unwrap();
@@ -43,6 +44,7 @@ fn test_blob_sender_map_gc_prunes_expired_entries() {
 }
 
 /// R-H4: all_blob_ids returns all unique blob IDs across recipients.
+// @internal
 #[test]
 fn test_all_blob_ids_returns_all_blobs() {
     let storage = SqliteBlobStore::in_memory().unwrap();
@@ -65,6 +67,7 @@ fn test_all_blob_ids_returns_all_blobs() {
 
 /// R-H5: take() should select and delete within a single lock acquisition.
 /// This test verifies that take() returns blobs and removes them atomically.
+// @internal
 #[test]
 fn test_blob_take_is_atomic() {
     let storage = SqliteBlobStore::in_memory().unwrap();
@@ -88,6 +91,7 @@ fn test_blob_take_is_atomic() {
 }
 
 /// R-H5: Concurrent take calls should not return duplicate data.
+// @internal
 #[test]
 fn test_blob_take_no_duplicates_under_concurrency() {
     let storage = Arc::new(SqliteBlobStore::in_memory().unwrap());

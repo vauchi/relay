@@ -49,6 +49,7 @@ fn make_count(gate: &str) -> EscrowMessage {
 // Basic put / get / count
 // ================================================================
 
+// @internal
 #[test]
 fn put_stores_blob() {
     let store = EscrowStore::new(100);
@@ -57,6 +58,7 @@ fn put_stores_blob() {
     assert_eq!(store.gate_count(), 1);
 }
 
+// @internal
 #[test]
 fn count_returns_slot_count() {
     let store = EscrowStore::new(100);
@@ -66,6 +68,7 @@ fn count_returns_slot_count() {
     assert_eq!(resp, EscrowResponse::Count { count: 1 });
 }
 
+// @internal
 #[test]
 fn count_returns_two_after_both_slots() {
     let store = EscrowStore::new(100);
@@ -76,6 +79,7 @@ fn count_returns_two_after_both_slots() {
     assert_eq!(resp, EscrowResponse::Count { count: 2 });
 }
 
+// @internal
 #[test]
 fn get_returns_other_partys_blob() {
     let store = EscrowStore::new(100);
@@ -101,6 +105,7 @@ fn get_returns_other_partys_blob() {
     );
 }
 
+// @internal
 #[test]
 fn get_returns_not_ready_when_only_one_slot() {
     let store = EscrowStore::new(100);
@@ -110,6 +115,7 @@ fn get_returns_not_ready_when_only_one_slot() {
     assert_eq!(resp, EscrowResponse::NotReady { count: 1 });
 }
 
+// @internal
 #[test]
 fn get_returns_not_found_for_unknown_gate() {
     let store = EscrowStore::new(100);
@@ -117,6 +123,7 @@ fn get_returns_not_found_for_unknown_gate() {
     assert_eq!(resp, EscrowResponse::NotFound);
 }
 
+// @internal
 #[test]
 fn count_returns_not_found_for_unknown_gate() {
     let store = EscrowStore::new(100);
@@ -128,6 +135,7 @@ fn count_returns_not_found_for_unknown_gate() {
 // Idempotent put
 // ================================================================
 
+// @internal
 #[test]
 fn duplicate_put_returns_already_exists() {
     let store = EscrowStore::new(100);
@@ -141,6 +149,7 @@ fn duplicate_put_returns_already_exists() {
 // Gate full
 // ================================================================
 
+// @internal
 #[test]
 fn third_slot_returns_gate_full() {
     let store = EscrowStore::new(100);
@@ -156,6 +165,7 @@ fn third_slot_returns_gate_full() {
 // Blob size limit
 // ================================================================
 
+// @internal
 #[test]
 fn oversized_blob_rejected() {
     let store = EscrowStore::new(100);
@@ -164,6 +174,7 @@ fn oversized_blob_rejected() {
     assert_eq!(resp, EscrowResponse::BlobTooLarge);
 }
 
+// @internal
 #[test]
 fn max_size_blob_accepted() {
     let store = EscrowStore::new(100);
@@ -176,6 +187,7 @@ fn max_size_blob_accepted() {
 // TTL and expiry
 // ================================================================
 
+// @internal
 #[test]
 fn expired_gate_returns_not_found() {
     let store = EscrowStore::new(100);
@@ -189,6 +201,7 @@ fn expired_gate_returns_not_found() {
     assert_eq!(resp, EscrowResponse::NotFound);
 }
 
+// @internal
 #[test]
 fn cleanup_removes_expired_gates() {
     let store = EscrowStore::new(100);
@@ -202,6 +215,7 @@ fn cleanup_removes_expired_gates() {
     assert_eq!(store.gate_count(), 0);
 }
 
+// @internal
 #[test]
 fn excessive_ttl_rejected() {
     let store = EscrowStore::new(100);
@@ -218,6 +232,7 @@ fn excessive_ttl_rejected() {
 // Gate capacity limit
 // ================================================================
 
+// @internal
 #[test]
 fn gate_limit_rejects_new_deposits() {
     let store = EscrowStore::new(2); // low limit for testing
@@ -239,6 +254,7 @@ fn gate_limit_rejects_new_deposits() {
 // Invalid hash handling
 // ================================================================
 
+// @internal
 #[test]
 fn invalid_gate_hash_returns_not_found() {
     let store = EscrowStore::new(100);
@@ -246,6 +262,7 @@ fn invalid_gate_hash_returns_not_found() {
     assert_eq!(resp, EscrowResponse::NotFound);
 }
 
+// @internal
 #[test]
 fn get_with_unknown_slot_returns_not_found() {
     let store = EscrowStore::new(100);
@@ -262,6 +279,7 @@ fn get_with_unknown_slot_returns_not_found() {
 // MAX_ACTIVE_GATES constant
 // ================================================================
 
+// @internal
 #[test]
 fn max_active_gates_is_10000() {
     assert_eq!(MAX_ACTIVE_GATES, 10_000);

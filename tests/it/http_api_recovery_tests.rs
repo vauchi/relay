@@ -4,7 +4,7 @@
 
 //! Integration tests for /v2/recovery/store and /v2/recovery/query endpoints.
 
-mod common;
+use crate::common;
 
 use base64::Engine;
 use common::http_helpers::*;

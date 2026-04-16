@@ -20,6 +20,7 @@ use vauchi_relay::storage::StorageBackend;
 
 // ── Default / struct layout ─────────────────────────────────────────────────
 
+// @internal
 #[test]
 fn test_default_config() {
     let config = RelayConfig::default();
@@ -37,18 +38,21 @@ fn test_default_config() {
     assert_eq!(config.security.recovery_rate_limit_per_min, 10);
 }
 
+// @internal
 #[test]
 fn test_blob_ttl_duration() {
     let config = RelayConfig::default();
     assert_eq!(config.blob_ttl(), Duration::from_secs(120 * 24 * 60 * 60));
 }
 
+// @internal
 #[test]
 fn test_cleanup_interval_duration() {
     let config = RelayConfig::default();
     assert_eq!(config.cleanup_interval(), Duration::from_secs(3600));
 }
 
+// @internal
 #[test]
 fn test_federation_defaults() {
     let config = RelayConfig::default();
@@ -62,6 +66,7 @@ fn test_federation_defaults() {
     assert_eq!(config.storage.max_storage_bytes, 1_073_741_824);
 }
 
+// @internal
 #[test]
 fn test_gossip_defaults() {
     let config = RelayConfig::default();
@@ -70,6 +75,7 @@ fn test_gossip_defaults() {
     assert_eq!(config.federation.peer_ttl_secs, 3600);
 }
 
+// @internal
 #[test]
 fn test_mtls_defaults() {
     let config = RelayConfig::default();
@@ -78,6 +84,7 @@ fn test_mtls_defaults() {
     assert!(config.federation.tls_ca_path.is_none());
 }
 
+// @internal
 #[test]
 fn test_nested_network_config_defaults() {
     let config = RelayConfig::default();
@@ -87,6 +94,7 @@ fn test_nested_network_config_defaults() {
     assert_eq!(config.network.idle_timeout_secs, 300);
 }
 
+// @internal
 #[test]
 fn test_nested_storage_config_defaults() {
     let config = RelayConfig::default();
@@ -99,6 +107,7 @@ fn test_nested_storage_config_defaults() {
     assert_eq!(config.storage.max_storage_bytes, 1_073_741_824);
 }
 
+// @internal
 #[test]
 fn test_nested_federation_config_defaults() {
     let config = RelayConfig::default();
@@ -120,6 +129,7 @@ fn test_nested_federation_config_defaults() {
     assert!(config.federation.relay_id.is_empty());
 }
 
+// @internal
 #[test]
 fn test_nested_security_config_defaults() {
     let config = RelayConfig::default();
@@ -129,12 +139,14 @@ fn test_nested_security_config_defaults() {
     assert_eq!(config.security.delivery_jitter_max_ms, 500);
 }
 
+// @internal
 #[test]
 fn test_nested_config_network_has_idle_timeout_method() {
     let config = RelayConfig::default();
     assert_eq!(config.network.idle_timeout(), Duration::from_secs(300));
 }
 
+// @internal
 #[test]
 fn test_nested_config_storage_has_blob_ttl_method() {
     let config = RelayConfig::default();
@@ -144,12 +156,14 @@ fn test_nested_config_storage_has_blob_ttl_method() {
     );
 }
 
+// @internal
 #[test]
 fn test_nested_config_storage_has_cleanup_interval_method() {
     let config = RelayConfig::default();
     assert_eq!(config.storage.cleanup_interval(), Duration::from_secs(3600));
 }
 
+// @internal
 #[test]
 fn test_nested_config_construction_with_overrides() {
     let config = RelayConfig {
@@ -186,6 +200,7 @@ fn test_nested_config_construction_with_overrides() {
 }
 
 /// RelayConfig delegate: idle_timeout()
+// @internal
 #[test]
 fn test_relay_config_idle_timeout_delegate() {
     let config = RelayConfig::default();
@@ -195,6 +210,7 @@ fn test_relay_config_idle_timeout_delegate() {
 // ── validate() ───────────────────────────────────────────────────────────────
 
 /// validate() returns no warnings for a valid default config.
+// @internal
 #[test]
 fn test_validate_default_config_clean() {
     let config = RelayConfig::default();
@@ -207,6 +223,7 @@ fn test_validate_default_config_clean() {
 }
 
 // Trace: codebase-review-tracker item #44
+// @internal
 #[test]
 fn test_validate_gossip_requires_mtls() {
     let config = RelayConfig {
@@ -226,6 +243,7 @@ fn test_validate_gossip_requires_mtls() {
 }
 
 // Trace: codebase-review-tracker item #44
+// @internal
 #[test]
 fn test_validate_gossip_with_mtls_ok() {
     let config = RelayConfig {
@@ -244,6 +262,7 @@ fn test_validate_gossip_with_mtls_ok() {
     );
 }
 
+// @internal
 #[test]
 fn test_validate_offload_threshold_sanity() {
     let config = RelayConfig {
@@ -264,6 +283,7 @@ fn test_validate_offload_threshold_sanity() {
 }
 
 /// validate() catches equal thresholds (boundary of >= check).
+// @internal
 #[test]
 fn test_validate_offload_threshold_equal() {
     let config = RelayConfig {
@@ -326,6 +346,7 @@ fn test_validate_partial_mtls(
 
 // ── Peer list parsing (pure logic, no env) ───────────────────────────────────
 
+// @internal
 #[test]
 fn test_federation_peer_list_parsing() {
     let peer_str = "ws://relay-a:8080, ws://relay-b:8080 , ws://relay-c:8080";
@@ -340,6 +361,7 @@ fn test_federation_peer_list_parsing() {
     assert_eq!(peers[2], "ws://relay-c:8080");
 }
 
+// @internal
 #[test]
 fn test_federation_peer_list_empty() {
     let peer_str = "";
@@ -351,6 +373,7 @@ fn test_federation_peer_list_empty() {
     assert!(peers.is_empty());
 }
 
+// @internal
 #[test]
 fn test_federation_peer_whitespace_trimming() {
     let peer_str = "  ws://relay-a:8080  ,  ws://relay-b:8080  ";
@@ -365,6 +388,7 @@ fn test_federation_peer_whitespace_trimming() {
 
 // ── load_relay_id ────────────────────────────────────────────────────────────
 
+// @internal
 #[test]
 fn test_relay_id_file_persistence() {
     let dir = tempfile::tempdir().unwrap();
@@ -380,6 +404,7 @@ fn test_relay_id_file_persistence() {
     assert_eq!(file_content.trim(), id1);
 }
 
+// @internal
 #[test]
 fn test_relay_id_env_var_overrides_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -397,6 +422,7 @@ fn test_relay_id_env_var_overrides_file() {
 }
 
 /// load_relay_id: empty env var falls through to file/generate.
+// @internal
 #[test]
 fn test_relay_id_empty_env_var_ignored() {
     let dir = tempfile::tempdir().unwrap();
@@ -413,6 +439,7 @@ fn test_relay_id_empty_env_var_ignored() {
 }
 
 /// load_relay_id: empty file falls through to generate.
+// @internal
 #[test]
 fn test_relay_id_empty_file_regenerates() {
     let dir = tempfile::tempdir().unwrap();
@@ -457,6 +484,7 @@ fn test_parse_warning_invalid_env_var(#[case] env_var: &str, #[case] bad_value: 
 }
 
 /// Valid RELAY_MAX_CONNECTIONS produces no warning and updates the field.
+// @internal
 #[test]
 fn test_no_warning_max_connections_valid() {
     // TODO: Audit that the environment access only happens in single-threaded code.
@@ -473,6 +501,7 @@ fn test_no_warning_max_connections_valid() {
 }
 
 /// Multiple invalid env vars produce one warning each.
+// @internal
 #[test]
 fn test_parse_warnings_multiple_invalid_vars() {
     // TODO: Audit that the environment access only happens in single-threaded code.
@@ -509,6 +538,7 @@ fn test_parse_warnings_multiple_invalid_vars() {
 }
 
 /// from_env() (thin wrapper) still works and returns config without panicking.
+// @internal
 #[test]
 fn test_from_env_wrapper_still_works() {
     // Even with a bad env var, from_env() must not panic — it discards warnings silently.
@@ -526,6 +556,7 @@ fn test_from_env_wrapper_still_works() {
 }
 
 /// Warning message format: must include env var name, bad value, and default.
+// @internal
 #[test]
 fn test_warning_message_format() {
     // TODO: Audit that the environment access only happens in single-threaded code.
@@ -561,6 +592,7 @@ fn test_warning_message_format() {
 ///
 /// This verifies the call completes and the resulting config has sensible
 /// defaults regardless of what env vars happen to be set in the environment.
+// @internal
 #[test]
 fn test_from_env_with_warnings_returns_valid_config() {
     let (config, _warnings) = RelayConfig::from_env_with_warnings();

@@ -4,7 +4,7 @@
 
 //! Tests for exchange HTTP API functionality.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use base64::Engine;

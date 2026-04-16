@@ -16,10 +16,11 @@ use std::time::{Duration, Instant};
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
 
-mod common;
+use crate::common;
 
 /// Test: High throughput blob storage
 /// Measures storage performance under load
+// @internal
 #[test]
 fn test_high_throughput_storage() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -56,6 +57,7 @@ fn test_high_throughput_storage() {
 
 /// Test: Concurrent writers don't block readers
 /// Verifies read/write concurrency
+// @internal
 #[test]
 fn test_concurrent_read_write() {
     let store = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -103,6 +105,7 @@ fn test_concurrent_read_write() {
 
 /// Test: Rate limiter performance under load
 /// Verifies rate limiter doesn't become a bottleneck
+// @internal
 #[test]
 fn test_rate_limiter_performance() {
     let limiter = RateLimiter::new(1000);
@@ -136,6 +139,7 @@ fn test_rate_limiter_performance() {
 
 /// Test: Cleanup removes all blobs
 /// Verifies cleanup prevents unbounded data growth
+// @internal
 #[test]
 fn test_cleanup_removes_all_blobs() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -163,6 +167,7 @@ fn test_cleanup_removes_all_blobs() {
 
 /// Test: Large blob handling
 /// Verifies system handles large payloads
+// @internal
 #[test]
 fn test_large_blob_handling() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -180,6 +185,7 @@ fn test_large_blob_handling() {
 
 /// Test: Many recipients scalability
 /// Verifies performance with many distinct recipients
+// @internal
 #[test]
 fn test_many_recipients() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -220,6 +226,7 @@ fn test_many_recipients() {
 
 /// Test: Rate limiter cleanup under load
 /// Verifies inactive bucket cleanup works correctly
+// @internal
 #[test]
 fn test_rate_limiter_cleanup() {
     let limiter = RateLimiter::new(100);
@@ -252,6 +259,7 @@ fn test_rate_limiter_cleanup() {
 
 /// Test: Concurrent acknowledgments
 /// Verifies acknowledgments work correctly under concurrency
+// @internal
 #[test]
 fn test_concurrent_acknowledgments() {
     let store = Arc::new(SqliteBlobStore::in_memory().unwrap());
@@ -288,6 +296,7 @@ fn test_concurrent_acknowledgments() {
 
 /// Test: Storage under memory pressure
 /// Verifies storage remains stable with many small blobs
+// @internal
 #[test]
 fn test_storage_memory_pressure() {
     let store = SqliteBlobStore::in_memory().unwrap();

@@ -4,7 +4,7 @@
 
 //! Tests extracted from `src/http_api.rs` — v2 HTTP API endpoint tests.
 
-mod common;
+use crate::common;
 
 use axum::http::{Request, StatusCode};
 use base64::Engine;
