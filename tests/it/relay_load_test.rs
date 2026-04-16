@@ -16,8 +16,6 @@ use std::time::{Duration, Instant};
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
 
-use crate::common;
-
 /// Test: High throughput blob storage
 /// Measures storage performance under load
 // @internal
