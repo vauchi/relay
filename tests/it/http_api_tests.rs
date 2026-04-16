@@ -42,6 +42,7 @@ async fn test_v2_health_endpoint_returns_ok() {
     );
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_health_no_protocol_field() {
     let app = create_v2_router(create_test_state());
@@ -65,6 +66,7 @@ async fn test_v2_health_no_protocol_field() {
 
 // ── Send ──
 
+// @internal
 #[tokio::test]
 async fn test_v2_send_stores_blob() {
     let state = create_test_state();
@@ -93,6 +95,7 @@ async fn test_v2_send_stores_blob() {
     assert_eq!(blobs[0].data, b"base64-data");
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_send_rejects_invalid_recipient_id() {
     let app = create_v2_router(create_test_state());
@@ -114,6 +117,7 @@ async fn test_v2_send_rejects_invalid_recipient_id() {
     assert!(body["error"].as_str().unwrap().contains("recipient_id"));
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_send_rejects_invalid_base64() {
     let app = create_v2_router(create_test_state());
@@ -137,6 +141,7 @@ async fn test_v2_send_rejects_invalid_base64() {
 
 // ── Fetch ──
 
+// @internal
 #[tokio::test]
 async fn test_v2_fetch_returns_stored_blobs() {
     let state = create_test_state();
@@ -164,6 +169,7 @@ async fn test_v2_fetch_returns_stored_blobs() {
     assert_eq!(blobs.len(), 2);
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_fetch_empty_tokens_rejected() {
     let app = create_v2_router(create_test_state());
@@ -183,6 +189,7 @@ async fn test_v2_fetch_empty_tokens_rejected() {
 
 // ── Ack ──
 
+// @internal
 #[tokio::test]
 async fn test_v2_ack_removes_blob() {
     let state = create_test_state();
@@ -242,6 +249,7 @@ fn signed_purge_json(recipient_id: &str) -> serde_json::Value {
     })
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_purge_deletes_all_blobs() {
     let state = create_test_state();
@@ -258,6 +266,7 @@ async fn test_v2_purge_deletes_all_blobs() {
     assert!(storage.peek(&token).is_empty());
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_purge_rejects_missing_signature() {
     let app = create_v2_router(create_test_state());
@@ -279,6 +288,7 @@ async fn test_v2_purge_rejects_missing_signature() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_purge_rejects_bad_signature() {
     let app = create_v2_router(create_test_state());
@@ -294,6 +304,7 @@ async fn test_v2_purge_rejects_bad_signature() {
     assert!(body["error"].as_str().unwrap().contains("signature"));
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_purge_rejects_expired_timestamp() {
     let app = create_v2_router(create_test_state());
@@ -329,6 +340,7 @@ async fn test_v2_purge_rejects_expired_timestamp() {
     assert!(body["error"].as_str().unwrap().contains("timestamp"));
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_purge_replay_rejected() {
     let state = create_test_state();
@@ -358,6 +370,7 @@ async fn test_v2_purge_replay_rejected() {
 
 // ── Register ──
 
+// @internal
 #[tokio::test]
 async fn test_v2_register_returns_count() {
     let app = create_v2_router(create_test_state());
@@ -380,6 +393,7 @@ async fn test_v2_register_returns_count() {
 
 // ── Adversarial / boundary tests (CC-14) ──
 
+// @internal
 #[tokio::test]
 async fn test_v2_send_rejects_non_hex_64_chars() {
     let app = create_v2_router(create_test_state());
@@ -398,6 +412,7 @@ async fn test_v2_send_rejects_non_hex_64_chars() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_send_rejects_empty_recipient_id() {
     let app = create_v2_router(create_test_state());
@@ -414,6 +429,7 @@ async fn test_v2_send_rejects_empty_recipient_id() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_send_rejects_65_char_recipient_id() {
     let app = create_v2_router(create_test_state());
@@ -431,6 +447,7 @@ async fn test_v2_send_rejects_65_char_recipient_id() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_send_rejects_empty_ciphertext() {
     let app = create_v2_router(create_test_state());
@@ -451,6 +468,7 @@ async fn test_v2_send_rejects_empty_ciphertext() {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_fetch_rejects_101_tokens() {
     let app = create_v2_router(create_test_state());
@@ -464,6 +482,7 @@ async fn test_v2_fetch_rejects_101_tokens() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_fetch_accepts_100_tokens() {
     let app = create_v2_router(create_test_state());
@@ -477,6 +496,7 @@ async fn test_v2_fetch_accepts_100_tokens() {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
+// @internal
 #[tokio::test]
 async fn test_v2_send_quota_enforced() {
     let mut state = create_test_state();

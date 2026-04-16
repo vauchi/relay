@@ -304,6 +304,7 @@ fn test_validate_offload_threshold_equal() {
 }
 
 /// R-M3: Partial mTLS config (cert xor key) must produce error; complete config must not.
+// @internal
 #[rstest]
 #[case::cert_without_key(
     Some("/path/to/cert.pem".to_string()),
@@ -462,6 +463,7 @@ fn test_relay_id_empty_file_regenerates() {
 // config_tests binary directly.
 
 /// Invalid env var produces a warning and keeps the default.
+// @internal
 #[rstest]
 #[case::max_connections("RELAY_MAX_CONNECTIONS", "not_a_number")]
 #[case::listen_addr("RELAY_LISTEN_ADDR", "not-an-address")]

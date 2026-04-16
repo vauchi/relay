@@ -16,6 +16,7 @@ use vauchi_relay::noise_key::RelaySigningKey;
 
 // @scenario: security.feature @relay @auth
 /// Test: Config validation detects gossip without mTLS
+// @internal
 #[test]
 fn test_config_validation_gossip_without_mtls() {
     let mut config = RelayConfig::default();
@@ -34,6 +35,7 @@ fn test_config_validation_gossip_without_mtls() {
 
 // @scenario: security.feature @relay @auth
 /// Test: Config validation accepts gossip with mTLS
+// @internal
 #[test]
 fn test_config_validation_gossip_with_mtls() {
     let mut config = RelayConfig::default();
@@ -55,6 +57,7 @@ fn test_config_validation_gossip_with_mtls() {
 
 // @scenario: security.feature @relay @auth
 /// Test: Config validation detects bad offload thresholds
+// @internal
 #[test]
 fn test_config_validation_offload_threshold() {
     let mut config = RelayConfig::default();
@@ -76,6 +79,7 @@ fn test_config_validation_offload_threshold() {
 // @scenario: security.feature @relay @auth
 /// Test: R-C1: Startup validation detects gossip without mTLS and aborts
 /// This is the critical fix: main() must call config.validate() and exit on Error
+// @internal
 #[test]
 fn test_startup_aborts_on_config_error() {
     let mut config = RelayConfig::default();
@@ -105,6 +109,7 @@ fn test_startup_aborts_on_config_error() {
 // @scenario: security.feature @relay @auth @replay
 /// Test: R-C2 and R-M5: Purge request validation
 /// Tests timestamp window and token length checks
+// @internal
 #[test]
 fn test_purge_request_timestamp_window() {
     // This test verifies the purge request structure but the actual
@@ -142,6 +147,7 @@ fn test_purge_request_timestamp_window() {
 // @scenario: security.feature @relay @auth
 /// Test: R-M5: Token length validation
 /// Purge token must be exactly 32 bytes after hex::decode
+// @internal
 #[test]
 fn test_purge_request_token_length() {
     // 32 bytes = 64 hex characters (valid)
@@ -172,6 +178,7 @@ fn test_purge_request_token_length() {
 // @scenario: security.feature @relay @auth @timing
 /// Test: R-C4: Constant-time bearer token comparison
 /// Verify that metrics endpoint uses subtle::ConstantTimeEq for timing-safe comparison
+// @internal
 #[test]
 fn test_bearer_token_constant_time_eq() {
     let token1 = "my_secret_token_123456789";
@@ -208,6 +215,7 @@ fn test_bearer_token_constant_time_eq() {
 // @scenario: security.feature @relay @dos
 /// Test: R-C3: NonceTracker rejects insertions at capacity
 /// Without a cap, an attacker can exhaust relay memory with unlimited nonces.
+// @internal
 #[test]
 fn test_nonce_tracker_rejects_at_capacity() {
     use vauchi_relay::handler::NonceTracker;
@@ -233,6 +241,7 @@ fn test_nonce_tracker_rejects_at_capacity() {
 
 // @scenario: security.feature @relay @dos
 /// Test: R-C3: NonceTracker default capacity is 200_000
+// @internal
 #[test]
 fn test_nonce_tracker_default_capacity() {
     use vauchi_relay::handler::NonceTracker;
@@ -247,6 +256,7 @@ fn test_nonce_tracker_default_capacity() {
 
 // @scenario: security.feature @relay @dos
 /// Test: R-C3: NonceTracker still accepts after eviction frees space
+// @internal
 #[test]
 fn test_nonce_tracker_accepts_after_eviction() {
     use vauchi_relay::handler::NonceTracker;
@@ -275,6 +285,7 @@ fn test_nonce_tracker_accepts_after_eviction() {
 // @scenario: security.feature @relay @auth @signing
 /// Test: R-M4: Forwarding hints must be signed with relay signing key.
 /// Verify sign_hints produces valid signatures verifiable via aws-lc-rs.
+// @internal
 #[test]
 fn test_forwarding_hints_are_signed() {
     let noise_private = [42u8; 32];
@@ -315,6 +326,7 @@ fn test_forwarding_hints_are_signed() {
 }
 
 /// Test: R-M4: Tampered forwarding hints fail verification.
+// @internal
 #[test]
 fn test_forwarding_hints_tampered_rejected() {
     let noise_private = [42u8; 32];
@@ -354,6 +366,7 @@ fn test_forwarding_hints_tampered_rejected() {
 }
 
 /// Test: R-M4: ConnectionDeps has relay_signing_key field.
+// @internal
 #[test]
 fn test_connection_deps_has_signing_key() {
     // Verify the field exists on ConnectionDeps and can be set
