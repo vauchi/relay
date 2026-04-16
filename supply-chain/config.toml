@@ -960,6 +960,10 @@ criteria = "safe-to-deploy"
 version = "0.8.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.uuid]]
+version = "1.23.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.uuid-simd]]
 version = "0.8.0"
 criteria = "safe-to-run"
