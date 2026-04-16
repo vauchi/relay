@@ -2422,9 +2422,9 @@ checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
 name = "uuid"
-version = "1.23.0"
+version = "1.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ac8b6f42ead25368cf5b098aeb3dc8a1a2c05a3eee8a9a1a68c640edbfc79d9"
+checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
@@ -2439,8 +2439,8 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vauchi-protocol"
-version = "0.19.17"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#0a0423209b60522e9940d7e634046c0870649f99"
+version = "0.19.18"
+source = "git+https://gitlab.com/vauchi/core.git?branch=main#acc6a34228ab1d3457e2710f0be481482665f22c"
 dependencies = [
  "serde",
  "serde_json",
