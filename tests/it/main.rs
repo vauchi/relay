@@ -12,6 +12,7 @@ mod escrow_store_tests;
 mod exchange_adversarial_tests;
 mod exchange_broker_tests;
 mod http_api_exchange_tests;
+mod http_api_guardian_tests;
 mod http_api_ohttp_tests;
 mod http_api_recovery_tests;
 mod http_api_tests;
