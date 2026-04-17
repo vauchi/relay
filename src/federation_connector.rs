@@ -20,6 +20,9 @@ use tracing::{debug, info, warn};
 
 use crate::config::RelayConfig;
 use crate::federation_protocol::{self, FEDERATION_PROTOCOL_VERSION, FederationPayload};
+
+/// TCP connect timeout — prevents 75-second OS-level waits on unreachable hosts.
+const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 use crate::forwarding_hints::{ForwardingHint, ForwardingHintStore};
 use crate::integrity;
 use crate::metrics::RelayMetrics;
@@ -127,9 +130,13 @@ async fn try_connect_to_peer(
             .map_err(|e| format!("SSRF: {}", e))?;
 
         // TCP connect to validated address (no re-resolution)
-        let tcp_stream = tokio::net::TcpStream::connect(validated_addr)
-            .await
-            .map_err(|e| format!("TCP connect failed: {}", e))?;
+        let tcp_stream = timeout(
+            TCP_CONNECT_TIMEOUT,
+            tokio::net::TcpStream::connect(validated_addr),
+        )
+        .await
+        .map_err(|_| "TCP connect timed out".to_string())?
+        .map_err(|e| format!("TCP connect failed: {}", e))?;
 
         // WebSocket upgrade over validated TCP stream
         let (ws_stream, _) = tokio_tungstenite::client_async(&federation_url, tcp_stream)
@@ -175,9 +182,13 @@ async fn connect_with_tls(
         .map_err(|e| format!("SSRF: {}", e))?;
 
     // TCP connect to validated address
-    let tcp_stream = tokio::net::TcpStream::connect(validated_addr)
-        .await
-        .map_err(|e| format!("TCP connect failed: {}", e))?;
+    let tcp_stream = timeout(
+        TCP_CONNECT_TIMEOUT,
+        tokio::net::TcpStream::connect(validated_addr),
+    )
+    .await
+    .map_err(|_| "TCP connect timed out".to_string())?
+    .map_err(|e| format!("TCP connect failed: {}", e))?;
 
     // TLS handshake with mTLS client certificate
     let connector = tokio_rustls::TlsConnector::from(client_config.clone());
