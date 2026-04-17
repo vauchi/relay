@@ -720,7 +720,7 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
     if !state.rate_limiter.consume(&req.recipient_id) {
         return ApiResult::RateLimited;
     }
-    if req.recipient_id.len() != 64 || !req.recipient_id.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !crate::handler::validate_client_id(&req.recipient_id) {
         return ApiResult::bad_request("recipient_id must be 64 hex characters");
     }
     let ciphertext = match base64::engine::general_purpose::STANDARD.decode(&req.ciphertext) {
@@ -820,7 +820,7 @@ const MAX_RECOVERY_QUERY_HASHES: usize = 50;
 
 fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest) -> ApiResult {
     // Validate key_hash: must be 64 hex chars (32 bytes)
-    if req.key_hash.len() != 64 || !req.key_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !crate::handler::validate_client_id(&req.key_hash) {
         return ApiResult::bad_request("key_hash must be 64 hex characters (32 bytes)");
     }
 
