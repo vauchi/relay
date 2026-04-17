@@ -31,6 +31,14 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 [imports.zcash]
 url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
 
+[[exemptions.ab_glyph]]
+version = "0.2.32"
+criteria = "safe-to-deploy"
+
+[[exemptions.ab_glyph_rasterizer]]
+version = "0.1.10"
+criteria = "safe-to-deploy"
+
 [[exemptions.ahash]]
 version = "0.8.12"
 criteria = "safe-to-deploy"
@@ -45,6 +53,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.alsa-sys]]
 version = "0.3.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.approx]]
+version = "0.5.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.askama]]
@@ -311,6 +323,10 @@ criteria = "safe-to-deploy"
 version = "0.14.0"
 criteria = "safe-to-run"
 
+[[exemptions.fast_image_resize]]
+version = "5.5.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.fastrand]]
 version = "2.4.1"
 criteria = "safe-to-run"
@@ -361,6 +377,18 @@ criteria = "safe-to-run"
 
 [[exemptions.futures-util]]
 version = "0.3.32"
+criteria = "safe-to-deploy"
+
+[[exemptions.g2gen]]
+version = "1.2.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.g2p]]
+version = "1.2.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.g2poly]]
+version = "1.2.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.generic-array]]
@@ -459,12 +487,20 @@ criteria = "safe-to-deploy"
 version = "0.2.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.imageproc]]
+version = "0.25.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.ipnet]]
 version = "2.12.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.iri-string]]
 version = "0.7.12"
+criteria = "safe-to-deploy"
+
+[[exemptions.itertools]]
+version = "0.12.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.itertools]]
@@ -519,8 +555,16 @@ criteria = "safe-to-deploy"
 version = "0.2.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.lru]]
+version = "0.16.4"
+criteria = "safe-to-deploy"
+
 [[exemptions.matchit]]
 version = "0.7.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.matrixmultiply]]
+version = "0.3.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.memchr]]
@@ -541,6 +585,10 @@ criteria = "safe-to-run"
 
 [[exemptions.moxcms]]
 version = "0.8.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.nalgebra]]
+version = "0.32.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.ndk]]
@@ -582,6 +630,10 @@ criteria = "safe-to-deploy"
 [[exemptions.outref]]
 version = "0.5.2"
 criteria = "safe-to-run"
+
+[[exemptions.owned_ttf_parser]]
+version = "0.25.1"
+criteria = "safe-to-deploy"
 
 [[exemptions.peg]]
 version = "0.6.3"
@@ -696,6 +748,10 @@ criteria = "safe-to-deploy"
 version = "0.9.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.rawpointer]]
+version = "0.2.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.rayon]]
 version = "1.12.0"
 criteria = "safe-to-run"
@@ -722,6 +778,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.ring]]
 version = "0.17.14"
+criteria = "safe-to-deploy"
+
+[[exemptions.rqrr]]
+version = "0.10.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.rstest]]
@@ -763,6 +823,10 @@ criteria = "safe-to-deploy"
 [[exemptions.rusty-fork]]
 version = "0.3.1"
 criteria = "safe-to-run"
+
+[[exemptions.safe_arch]]
+version = "0.7.4"
+criteria = "safe-to-deploy"
 
 [[exemptions.schemars]]
 version = "0.8.22"
@@ -814,6 +878,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.signal-hook-registry]]
 version = "1.4.8"
+criteria = "safe-to-deploy"
+
+[[exemptions.simba]]
+version = "0.8.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.simd-adler32]]
@@ -916,6 +984,10 @@ criteria = "safe-to-deploy"
 version = "0.1.36"
 criteria = "safe-to-deploy"
 
+[[exemptions.ttf-parser]]
+version = "0.25.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.tungstenite]]
 version = "0.24.0"
 criteria = "safe-to-deploy"
@@ -998,6 +1070,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.webpki-roots]]
 version = "1.0.7"
+criteria = "safe-to-deploy"
+
+[[exemptions.wide]]
+version = "0.7.33"
 criteria = "safe-to-deploy"
 
 [[exemptions.x509-parser]]
