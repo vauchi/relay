@@ -668,6 +668,10 @@ criteria = "safe-to-deploy"
 version = "0.1.28"
 criteria = "safe-to-deploy"
 
+[[exemptions.pxfm]]
+version = "0.1.29"
+criteria = "safe-to-deploy"
+
 [[exemptions.qrcode]]
 version = "0.14.1"
 criteria = "safe-to-deploy"
