@@ -901,7 +901,7 @@ fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest
     }
 
     // Rate limit by key_hash
-    let rate_key = format!("recovery:{}", &req.key_hash[..16]);
+    let rate_key = format!("recovery:{}", &req.key_hash);
     if !state.rate_limiter.consume(&rate_key) {
         return ApiResult::RateLimited;
     }
@@ -1002,7 +1002,7 @@ fn handle_guardian_store_logic(state: &HttpApiState, req: V2GuardianStoreRequest
     }
 
     // Rate limit by guardian_hash
-    let rate_key = format!("guardian:{}", &req.guardian_hash[..16]);
+    let rate_key = format!("guardian:{}", &req.guardian_hash);
     if !state.rate_limiter.consume(&rate_key) {
         return ApiResult::RateLimited;
     }
@@ -1046,11 +1046,21 @@ fn handle_guardian_query_logic(state: &HttpApiState, req: V2GuardianQueryRequest
 }
 
 fn handle_guardian_delete_logic(state: &HttpApiState, req: V2GuardianDeleteRequest) -> ApiResult {
+    // Validate guardian_hash
+    if req.guardian_hash.len() != 64 || !req.guardian_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return ApiResult::bad_request("guardian_hash must be 64 hex characters (32 bytes)");
+    }
+
+    // Rate limit by guardian_hash
+    // TODO: Add signature-based authentication (like /v2/purge) before production
+    let rate_key = format!("guardian_delete:{}", &req.guardian_hash);
+    if !state.rate_limiter.consume(&rate_key) {
+        return ApiResult::RateLimited;
+    }
+
     let guardian_hash = match hex_to_32bytes(&req.guardian_hash) {
         Some(h) => h,
-        None => {
-            return ApiResult::bad_request("guardian_hash must be 64 hex characters (32 bytes)");
-        }
+        None => return ApiResult::bad_request("invalid guardian_hash hex"),
     };
 
     let deleted = state.guardian_storage.remove(&guardian_hash);
