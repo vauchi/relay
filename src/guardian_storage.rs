@@ -337,42 +337,49 @@ mod tests {
 
     // SQLite backend tests
 
+    // @internal
     #[test]
     fn test_sqlite_store_and_get() {
         // allow(zero_assertions): delegate to shared test helper
         test_store_and_get_impl(&SqliteGuardianStore::in_memory().unwrap());
     }
 
+    // @internal
     #[test]
     fn test_sqlite_get_nonexistent() {
         // allow(zero_assertions): delegate to shared test helper
         test_get_nonexistent_impl(&SqliteGuardianStore::in_memory().unwrap());
     }
 
+    // @internal
     #[test]
     fn test_sqlite_overwrite() {
         // allow(zero_assertions): delegate to shared test helper
         test_overwrite_impl(&SqliteGuardianStore::in_memory().unwrap());
     }
 
+    // @internal
     #[test]
     fn test_sqlite_remove() {
         // allow(zero_assertions): delegate to shared test helper
         test_remove_impl(&SqliteGuardianStore::in_memory().unwrap());
     }
 
+    // @internal
     #[test]
     fn test_sqlite_set_count() {
         // allow(zero_assertions): delegate to shared test helper
         test_set_count_impl(&SqliteGuardianStore::in_memory().unwrap());
     }
 
+    // @internal
     #[test]
     fn test_sqlite_max_entries_stored() {
         // allow(zero_assertions): delegate to shared test helper
         test_max_entries_stored_impl(&SqliteGuardianStore::in_memory().unwrap());
     }
 
+    // @internal
     #[test]
     fn test_entries_serialization_roundtrip() {
         let original = vec![vec![0u8; 100], vec![0xFF; 50], b"hello world".to_vec()];
@@ -384,6 +391,7 @@ mod tests {
         );
     }
 
+    // @internal
     #[test]
     fn test_empty_entries_roundtrip() {
         let hash = [0xBBu8; 32];
@@ -395,6 +403,7 @@ mod tests {
         assert_eq!(retrieved.entries, Vec::<Vec<u8>>::new());
     }
 
+    // @internal
     #[test]
     fn test_is_not_expired_by_default() {
         let set = StoredGuardianSet::new([0x01u8; 32], vec![vec![1]]);
@@ -405,6 +414,7 @@ mod tests {
         );
     }
 
+    // @internal
     #[test]
     fn test_cleanup_expired_removes_past_entries() {
         let store = SqliteGuardianStore::in_memory().unwrap();
@@ -428,6 +438,7 @@ mod tests {
         assert_eq!(store.set_count(), 0);
     }
 
+    // @internal
     #[test]
     fn test_sqlite_wal_mode_on_file() {
         let temp_dir = std::env::temp_dir();

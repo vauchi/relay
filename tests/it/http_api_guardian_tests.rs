@@ -13,7 +13,7 @@ use vauchi_relay::http_api::create_v2_router;
 
 // ── Store & Query ──────────────────────────────────────────────────
 
-// @scenario: guardian :: store and query roundtrip
+// @scenario: contact_recovery :: store and query roundtrip
 #[tokio::test]
 async fn test_guardian_store_and_query_roundtrip() {
     let state = create_test_state();
@@ -68,7 +68,7 @@ async fn test_guardian_store_and_query_roundtrip() {
     assert!(data_values.contains(&entry3.as_str()));
 }
 
-// @scenario: guardian :: query nonexistent returns empty
+// @scenario: contact_recovery :: query nonexistent returns empty
 #[tokio::test]
 async fn test_guardian_query_nonexistent_returns_empty() {
     let state = create_test_state();
@@ -90,7 +90,7 @@ async fn test_guardian_query_nonexistent_returns_empty() {
     assert!(guardians.is_empty());
 }
 
-// @scenario: guardian :: store overwrites atomically
+// @scenario: contact_recovery :: store overwrites atomically
 #[tokio::test]
 async fn test_guardian_store_overwrites_atomically() {
     let state = create_test_state();
@@ -159,7 +159,7 @@ async fn test_guardian_store_overwrites_atomically() {
 
 // ── Delete ─────────────────────────────────────────────────────────
 
-// @scenario: guardian :: delete removes entries
+// @scenario: contact_recovery :: delete removes entries
 #[tokio::test]
 async fn test_guardian_delete_removes_entries() {
     let state = create_test_state();
@@ -220,7 +220,7 @@ async fn test_guardian_delete_removes_entries() {
 
 // ── Validation ─────────────────────────────────────────────────────
 
-// @scenario: guardian :: store rejects invalid hash
+// @scenario: contact_recovery :: store rejects invalid hash
 #[tokio::test]
 async fn test_guardian_store_invalid_hash() {
     let state = create_test_state();
@@ -238,7 +238,7 @@ async fn test_guardian_store_invalid_hash() {
     assert_eq!(resp.status(), 400);
 }
 
-// @scenario: guardian :: store rejects too many entries
+// @scenario: contact_recovery :: store rejects too many entries
 #[tokio::test]
 async fn test_guardian_store_too_many_entries() {
     let state = create_test_state();
@@ -271,7 +271,7 @@ async fn test_guardian_store_too_many_entries() {
     );
 }
 
-// @scenario: guardian :: store rejects entry too large
+// @scenario: contact_recovery :: store rejects entry too large
 #[tokio::test]
 async fn test_guardian_store_entry_too_large() {
     let state = create_test_state();
@@ -293,7 +293,7 @@ async fn test_guardian_store_entry_too_large() {
     assert_eq!(resp.status(), 400);
 }
 
-// @scenario: guardian :: store rejects total size exceeded
+// @scenario: contact_recovery :: store rejects total size exceeded
 #[tokio::test]
 async fn test_guardian_store_total_size_exceeded() {
     let state = create_test_state();
@@ -316,7 +316,7 @@ async fn test_guardian_store_total_size_exceeded() {
     assert_eq!(resp.status(), 400);
 }
 
-// @scenario: guardian :: store rejects invalid base64
+// @scenario: contact_recovery :: store rejects invalid base64
 #[tokio::test]
 async fn test_guardian_store_invalid_base64() {
     let state = create_test_state();
@@ -336,7 +336,7 @@ async fn test_guardian_store_invalid_base64() {
     assert_eq!(resp.status(), 400);
 }
 
-// @scenario: guardian :: query rejects invalid hash
+// @scenario: contact_recovery :: query rejects invalid hash
 #[tokio::test]
 async fn test_guardian_query_invalid_hash() {
     let state = create_test_state();

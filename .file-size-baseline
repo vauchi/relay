@@ -8,8 +8,8 @@
 # Grandfathered — config table added for version policy persistence
 src/storage.rs 1026
 
-# Grandfathered — recovery endpoints added (32 lines over 1000)
-src/http_api.rs 1035
+# EXEMPT — relay API surface: all v2 handlers co-located for protocol coherence
+src/http_api.rs 1205
 
 # SPLIT — Phase 3: split http_api_tests.rs per service area
 tests/http_api_tests.rs 544
