@@ -500,8 +500,8 @@ user-login = "alexcrichton"
 user-name = "Alex Crichton"
 
 [[publisher.wasip2]]
-version = "1.0.2+wasi-0.2.9"
-when = "2026-01-15"
+version = "1.0.3+wasi-0.2.9"
+when = "2026-04-17"
 user-id = 1
 user-login = "alexcrichton"
 user-name = "Alex Crichton"
@@ -630,6 +630,11 @@ user-name = "Ed Page"
 [[publisher.wit-bindgen]]
 version = "0.51.0"
 when = "2026-01-12"
+trusted-publisher = "github:bytecodealliance/wit-bindgen"
+
+[[publisher.wit-bindgen]]
+version = "0.57.1"
+when = "2026-04-17"
 trusted-publisher = "github:bytecodealliance/wit-bindgen"
 
 [[publisher.wit-bindgen-core]]
