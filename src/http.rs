@@ -444,4 +444,77 @@ mod tests {
         assert_eq!(body["service"], "vauchi-relay");
         assert!(body["endpoints"].is_array());
     }
+
+    /// Helper: assert defense-in-depth security headers on a response.
+    fn assert_security_headers(response: &Response) {
+        let headers = response.headers();
+        assert_eq!(
+            headers
+                .get("x-content-type-options")
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff"),
+            "X-Content-Type-Options must be 'nosniff' on every response"
+        );
+        assert_eq!(
+            headers.get("cache-control").and_then(|v| v.to_str().ok()),
+            Some("no-store"),
+            "Cache-Control must be 'no-store' on every response"
+        );
+        assert_eq!(
+            headers
+                .get("cross-origin-resource-policy")
+                .and_then(|v| v.to_str().ok()),
+            Some("same-origin"),
+            "Cross-Origin-Resource-Policy must be 'same-origin' on every response"
+        );
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn test_security_headers_on_root() {
+        let app = create_router(create_test_state());
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_security_headers(&response);
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn test_security_headers_on_health() {
+        let app = create_router(create_test_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_security_headers(&response);
+    }
+
+    /// 404 responses must also carry the security headers — otherwise a
+    /// caching proxy that saw a 404 could satisfy later requests from cache
+    /// and ZAP's Storable-and-Cacheable rule fires (zap-baseline rule 10049).
+    // @internal
+    #[tokio::test]
+    async fn test_security_headers_on_unknown_path() {
+        let app = create_router(create_test_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/robots.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_security_headers(&response);
+    }
 }
