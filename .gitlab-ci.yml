@@ -386,8 +386,12 @@ dast:zap:
       variables:
         RELAY_LISTEN_ADDR: "0.0.0.0:8080"
         RELAY_MAX_CONNECTIONS: "100"
-        # Service is only reachable on the internal CI Docker network,
-        # so the TLS-proxy requirement does not apply here.
+        # CI-only: bypass the relay's TLS-proxy start guard. The service
+        # container lives on GitLab's per-job Docker network, never reachable
+        # outside this job's lifetime, and no client traffic flows through it.
+        # DO NOT copy this line into any deploy/ manifest — production
+        # deployments must set RELAY_TLS_VERIFIED=true only behind a real TLS
+        # terminator (see deploy/caddy/, deploy/demo/, and relay/README.md).
         RELAY_TLS_VERIFIED: "true"
   before_script: []
   script:
