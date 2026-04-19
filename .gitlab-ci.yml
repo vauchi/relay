@@ -399,8 +399,18 @@ dast:zap:
       done
       curl -sf http://relay:8080/health || { echo "Relay service failed to start after 30 attempts"; exit 1; }
 
-      # ZAP baseline scan against HTTP endpoints
+      # zap-baseline.py refuses to emit reports unless /zap/wrk exists and
+      # writes them relative to that dir — create it, run, then copy the
+      # reports back to CI_PROJECT_DIR so artifact upload can find them.
+      # Preserve ZAP's exit code so `allow_failure: true` keeps reflecting
+      # real scan findings.
+      mkdir -p /zap/wrk
+      set +e
       zap-baseline.py -t http://relay:8080 -r zap-report.html -J zap-report.json
+      zap_exit=$?
+      set -e
+      cp /zap/wrk/zap-report.html /zap/wrk/zap-report.json "$CI_PROJECT_DIR/" 2>/dev/null || true
+      exit "$zap_exit"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
