@@ -386,6 +386,9 @@ dast:zap:
       variables:
         RELAY_LISTEN_ADDR: "0.0.0.0:8080"
         RELAY_MAX_CONNECTIONS: "100"
+        # Service is only reachable on the internal CI Docker network,
+        # so the TLS-proxy requirement does not apply here.
+        RELAY_TLS_VERIFIED: "true"
   before_script: []
   script:
     - |
