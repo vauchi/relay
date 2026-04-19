@@ -384,8 +384,14 @@ dast:zap:
     - name: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
       alias: relay
       variables:
+        # Main listener: federation WebSocket + main-port /health probe.
         RELAY_LISTEN_ADDR: "0.0.0.0:8080"
         RELAY_MAX_CONNECTIONS: "100"
+        # HTTP/REST surface: /health, /metrics, /pubkey, /build-info, /v2/*.
+        # This is the real client-facing API — ZAP targets this port, not 8080,
+        # so the scan actually covers the endpoints users hit.
+        RELAY_METRICS_ADDR: "0.0.0.0:8081"
+        RELAY_HTTP_API_ENABLED: "true"
         # CI-only: bypass the relay's TLS-proxy start guard. The service
         # container lives on GitLab's per-job Docker network, never reachable
         # outside this job's lifetime, and no client traffic flows through it.
@@ -396,12 +402,12 @@ dast:zap:
   before_script: []
   script:
     - |
-      # Wait for relay service to be ready
+      # Wait for the HTTP API listener (the port ZAP will scan).
       for i in $(seq 1 30); do
-        curl -sf http://relay:8080/health >/dev/null 2>&1 && break
+        curl -sf http://relay:8081/health >/dev/null 2>&1 && break
         sleep 1
       done
-      curl -sf http://relay:8080/health || { echo "Relay service failed to start after 30 attempts"; exit 1; }
+      curl -sf http://relay:8081/health || { echo "Relay HTTP API failed to start after 30 attempts"; exit 1; }
 
       # zap-baseline.py refuses to emit reports unless /zap/wrk exists and
       # writes them relative to that dir — create it, run, then copy the
@@ -410,7 +416,7 @@ dast:zap:
       # real scan findings.
       mkdir -p /zap/wrk
       set +e
-      zap-baseline.py -t http://relay:8080 -r zap-report.html -J zap-report.json
+      zap-baseline.py -t http://relay:8081 -r zap-report.html -J zap-report.json
       zap_exit=$?
       set -e
       cp /zap/wrk/zap-report.html /zap/wrk/zap-report.json "$CI_PROJECT_DIR/" 2>/dev/null || true
