@@ -32,6 +32,7 @@ use crate::escrow::EscrowStore;
 use crate::exchange_broker::ExchangeBroker;
 use crate::guardian_storage::GuardianStore;
 use crate::handler::NonceTracker;
+use crate::http::security_headers_middleware;
 use crate::metrics::RelayMetrics;
 use crate::ohttp_gateway::OhttpGateway;
 use crate::rate_limit::RateLimiter;
@@ -116,6 +117,7 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
             state.clone(),
             version_check_middleware,
         ))
+        .layer(middleware::from_fn(security_headers_middleware))
         .layer(DefaultBodyLimit::max(128 * 1024))
         .with_state(state)
 }

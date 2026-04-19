@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use axum::{
     Json, Router,
     extract::State,
-    http::{Request, StatusCode, header},
+    http::{HeaderValue, Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -90,6 +90,30 @@ async fn metrics_auth_middleware(
     next.run(request).await
 }
 
+/// Middleware: attach defense-in-depth security headers to every response.
+///
+/// The relay serves only JSON and Prometheus scrape payloads; none of it
+/// should ever be sniffed as HTML, cached by intermediaries, or embedded
+/// cross-origin. Applying the headers in middleware catches 404s and
+/// error responses too — not just the routes we authored.
+pub async fn security_headers_middleware(
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(
+        axum::http::HeaderName::from_static("cross-origin-resource-policy"),
+        HeaderValue::from_static("same-origin"),
+    );
+    response
+}
+
 /// Creates the HTTP router with metrics endpoints.
 pub fn create_router(state: HttpState) -> Router {
     Router::new()
@@ -102,6 +126,7 @@ pub fn create_router(state: HttpState) -> Router {
             state.clone(),
             metrics_auth_middleware,
         ))
+        .layer(middleware::from_fn(security_headers_middleware))
         .with_state(state)
 }
 
