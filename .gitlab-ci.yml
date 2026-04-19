@@ -426,8 +426,6 @@ dast:zap:
       exit "$zap_exit"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-  allow_failure: true
   artifacts:
     paths:
       - zap-report.html
