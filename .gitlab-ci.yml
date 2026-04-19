@@ -545,7 +545,10 @@ build:docker:
       fi
     # Generate build metadata for deploy traceability
     - BUILD_INFO="{\"sha\":\"$CI_COMMIT_SHA\",\"short_sha\":\"$CI_COMMIT_SHORT_SHA\",\"ref\":\"$CI_COMMIT_REF_NAME\",\"built\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"pipeline\":\"$CI_PIPELINE_URL\"}"
-    - docker build --build-arg BUILD_INFO="$BUILD_INFO" --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    # --pull forces a fresh base-image fetch on every build so upstream
+    # security patches in distroless/debian land in the next image.
+    # --cache-from still reuses our own intermediate layers for speed.
+    - docker build --pull --build-arg BUILD_INFO="$BUILD_INFO" --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
     - |
       if [ -n "$CI_REGISTRY_PASSWORD" ]; then
         docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
