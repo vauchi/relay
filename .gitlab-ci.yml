@@ -546,11 +546,19 @@ build:docker:
     # Generate build metadata for deploy traceability
     - BUILD_INFO="{\"sha\":\"$CI_COMMIT_SHA\",\"short_sha\":\"$CI_COMMIT_SHORT_SHA\",\"ref\":\"$CI_COMMIT_REF_NAME\",\"built\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"pipeline\":\"$CI_PIPELINE_URL\"}"
     - docker build --build-arg BUILD_INFO="$BUILD_INFO" --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
-    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest
     - |
       if [ -n "$CI_REGISTRY_PASSWORD" ]; then
         docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
-        docker push $CI_REGISTRY_IMAGE:latest
+        # :latest is consumed by deploy/{demo,test,docker-compose.ohttp}.yml —
+        # only advance it when the pipeline represents a production-ready
+        # artifact (main branch, or a release tag). MR-pipeline builds push
+        # only the SHA tag; they must not overwrite what demo consumers pull.
+        if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] || [ -n "$CI_COMMIT_TAG" ]; then
+          docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest
+          docker push $CI_REGISTRY_IMAGE:latest
+        else
+          echo "Skipping :latest push — pipeline context ($CI_PIPELINE_SOURCE) is not main/tag."
+        fi
       fi
   rules:
     # Main + release-tag pipelines build unconditionally — deploy:trigger
