@@ -679,12 +679,20 @@ criteria = "safe-to-deploy"
 version = "0.10.77"
 criteria = "safe-to-deploy"
 
+[[exemptions.openssl]]
+version = "0.10.78"
+criteria = "safe-to-deploy"
+
 [[exemptions.openssl-probe]]
 version = "0.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.openssl-sys]]
 version = "0.9.113"
+criteria = "safe-to-deploy"
+
+[[exemptions.openssl-sys]]
+version = "0.9.114"
 criteria = "safe-to-deploy"
 
 [[exemptions.ort]]
@@ -1178,6 +1186,10 @@ criteria = "safe-to-run"
 
 [[exemptions.webpki-root-certs]]
 version = "1.0.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.webpki-root-certs]]
+version = "1.0.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.webpki-roots]]
