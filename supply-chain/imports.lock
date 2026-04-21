@@ -621,8 +621,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.winnow]]
-version = "1.0.1"
-when = "2026-03-30"
+version = "1.0.2"
+when = "2026-04-21"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
