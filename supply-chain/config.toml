@@ -351,6 +351,10 @@ criteria = "safe-to-run"
 version = "0.15.3"
 criteria = "safe-to-run"
 
+[[exemptions.fraction]]
+version = "0.15.4"
+criteria = "safe-to-run"
+
 [[exemptions.fs-err]]
 version = "2.11.0"
 criteria = "safe-to-deploy"
