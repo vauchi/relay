@@ -442,20 +442,14 @@ dast:zap:
       cp /zap/wrk/zap-report.html /zap/wrk/zap-report.json "$CI_PROJECT_DIR/" 2>/dev/null || true
       exit "$zap_exit"
   rules:
-    # Mirror build:docker's coverage so `needs: build:docker` always
-    # resolves. On main we additionally scope to image-relevant changes
-    # — doc-only commits can't produce a scan result different from the
-    # previous main pipeline, so running again is waste.
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      changes: &relay-image-inputs
-        - src/**/*
-        - Cargo.toml
-        - Cargo.lock
-        - Dockerfile
-        - .gitlab-ci.yml
-        - .zap/**/*
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes: *relay-image-inputs
+    # Narrowed 2026-04-22 (T3.2): was main + MR on image-input changes,
+    # adding ~2:18 of blocking latency to every image-affecting MR and
+    # main pipeline. The HTTP attack surface (header injection, CORS,
+    # info disclosure) changes on a much slower cadence than our Rust
+    # code — a nightly schedule catches regressions with no MR impact.
+    # Container-level CVEs are still caught by container_scanning on
+    # every main pipeline. See 2026-04-22-ci-pipeline-health-audit T3.2.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
   artifacts:
     paths:
       - zap-report.html
@@ -564,8 +558,14 @@ build:docker:
     - BUILD_INFO="{\"sha\":\"$CI_COMMIT_SHA\",\"short_sha\":\"$CI_COMMIT_SHORT_SHA\",\"ref\":\"$CI_COMMIT_REF_NAME\",\"built\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"pipeline\":\"$CI_PIPELINE_URL\"}"
     # --pull forces a fresh base-image fetch on every build so upstream
     # security patches in distroless/debian land in the next image.
-    # --cache-from still reuses our own intermediate layers for speed.
-    - docker build --pull --build-arg BUILD_INFO="$BUILD_INFO" --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    # --cache-from reuses our own intermediate layers for speed.
+    # BUILDKIT_INLINE_CACHE=1 embeds cache metadata in the pushed image
+    # so the next build's `--cache-from :latest` can reuse layer hashes
+    # from the BuildKit graph, not just filesystem-level diff. Combined
+    # with DOCKER_BUILDKIT=1 + cargo-chef's dep-only `cook` stage, this
+    # keeps the long-tail 6:05 build under ~3 min when deps haven't
+    # changed. See 2026-04-22-ci-pipeline-health-audit T3.2.
+    - docker build --pull --build-arg BUILD_INFO="$BUILD_INFO" --build-arg BUILDKIT_INLINE_CACHE=1 --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
     - |
       if [ -n "$CI_REGISTRY_PASSWORD" ]; then
         docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
@@ -607,12 +607,18 @@ build:docker:
     # doc-only main commits (continuity of the `latest` tag).
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
-    # MR pipelines build only when changes could affect the image. This
-    # keeps dast:zap runnable on MRs (it `needs: build:docker`) without
-    # burning docker:dind minutes on doc-only or test-only diffs.
-    # `changes:` list mirrors the anchor from dast:zap above.
+    # Schedule pipelines run dast:zap (T3.2 moved it here) which needs
+    # the image, so build unconditionally on schedule too.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    # MR pipelines build only when changes could affect the image — no
+    # doc-only or test-only docker:dind burn.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes: *relay-image-inputs
+      changes:
+        - src/**/*
+        - Cargo.toml
+        - Cargo.lock
+        - Dockerfile
+        - .gitlab-ci.yml
 
 # ============================================================
 # Deploy Stage
