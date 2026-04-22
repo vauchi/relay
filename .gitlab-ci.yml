@@ -173,6 +173,12 @@ bench:compare:
 # Fuzz Stage (nightly, libfuzzer via cargo-fuzz)
 # ============================================================
 
+# Schedule-only libfuzzer run. Fuzz findings are noisy by nature (false-
+# positives from harness shape, intentional panics, etc.); the value is
+# in the corpus + a human review of crashes after the run, not in a hard
+# pass/fail gate. allow_failure: true keeps the schedule pipeline green
+# while still surfacing crashes via the fuzz/artifacts/ upload.
+# Audited 2026-04-22 T1.2/T2.5.
 fuzz:nightly:
   extends: [.rust-runner]
   timeout: 12h
@@ -278,6 +284,14 @@ secret_detection:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
+# Container vulnerability scan. Tag pipelines and schedule pipelines
+# block on findings (release gate); main-branch pipelines are advisory
+# because CVEs land continuously and we don't want every transitive
+# advisory to red the merge train. Findings on main route to GitLab
+# Security Dashboard.
+# **Open policy question** (T1.2 audit, 2026-04-22): if nobody watches
+# the dashboard, the main-branch advisory is a silent gap. Routing
+# decision deferred to 2026-02-03-cicd-observability Tier 3.
 container_scanning:
   stage: scan
   needs: ["build:docker"]
@@ -320,6 +334,9 @@ security:vet:
 # k6 WebSocket load test — runs against a local relay instance.
 # Thresholds: p95 connection < 500ms, throughput > 10 msg/s.
 # Runs on nightly schedule and release tags (advisory).
+# allow_failure: true because runner resource fluctuation makes a
+# hard threshold gate too noisy; trend analysis uses summary.json.
+# Audited 2026-04-22 T1.2/T2.5.
 load:k6:
   extends: [.linux-runner, .timeout-standard]
   stage: load
