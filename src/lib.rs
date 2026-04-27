@@ -10,6 +10,8 @@ pub mod federation_connector;
 pub mod federation_handler;
 pub mod federation_protocol;
 pub mod federation_tls;
+#[cfg(feature = "flame")]
+pub mod flame;
 pub mod forwarding_hints;
 pub mod guardian_storage;
 pub mod handler;

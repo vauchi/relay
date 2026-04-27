@@ -18,6 +18,9 @@ Thumbs.db
 *.db-journal
 data/
 
+# Profiling artifacts (tracing-flame folded traces, rendered SVGs)
+/artifacts/
+
 # Mutation testing output (cargo-mutants)
 mutants.out/
 mutants.out.old/

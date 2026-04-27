@@ -9,6 +9,13 @@ edition = "2024"
 description = "Relay server for Vauchi - encrypted blob storage and forwarding"
 license = "GPL-3.0-or-later"
 
+[features]
+default = []
+# Profiling: install a tracing-flame layer at startup. Writes a `.folded`
+# trace file to `$VAUCHI_FLAME_OUT` (default: `relay/artifacts/flame/`).
+# Render with `inferno-flamegraph` or `just flame-render`.
+flame = ["dep:tracing-flame"]
+
 [dependencies]
 # Async runtime (minimal features: excludes fs, process, io-std, parking_lot)
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "signal"] }
@@ -33,6 +40,9 @@ hex = "0.4"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Profiling layer (enabled via `flame` feature)
+tracing-flame = { version = "0.2", optional = true }
 
 # SQLite for persistent storage
 rusqlite = { version = "0.32", features = ["bundled"] }

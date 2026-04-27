@@ -43,20 +43,27 @@ use vauchi_relay::storage::{BlobStore, StorageBackend, create_blob_store};
 
 #[tokio::main]
 async fn main() {
-    // Initialize logging (supports RELAY_LOG_FORMAT=json for structured output)
-    let env_filter = tracing_subscriber::EnvFilter::from_default_env().add_directive(
-        "vauchi_relay=info"
-            .parse()
-            .expect("hardcoded log directive must be valid"),
-    );
-    let log_format = std::env::var("RELAY_LOG_FORMAT").unwrap_or_default();
-    if log_format == "json" {
-        tracing_subscriber::fmt()
-            .json()
-            .with_env_filter(env_filter)
-            .init();
-    } else {
-        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    // Initialize logging. With the `flame` feature, swap in a tracing-flame
+    // layer that emits a folded profile alongside fmt logs.
+    #[cfg(feature = "flame")]
+    vauchi_relay::flame::init();
+
+    #[cfg(not(feature = "flame"))]
+    {
+        let env_filter = tracing_subscriber::EnvFilter::from_default_env().add_directive(
+            "vauchi_relay=info"
+                .parse()
+                .expect("hardcoded log directive must be valid"),
+        );
+        let log_format = std::env::var("RELAY_LOG_FORMAT").unwrap_or_default();
+        if log_format == "json" {
+            tracing_subscriber::fmt()
+                .json()
+                .with_env_filter(env_filter)
+                .init();
+        } else {
+            tracing_subscriber::fmt().with_env_filter(env_filter).init();
+        }
     }
 
     // Load configuration (warnings for invalid numeric/address env vars are logged below)

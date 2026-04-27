@@ -470,6 +470,7 @@ async fn ohttp_key_handler(State(state): State<HttpApiState>) -> axum::response:
 /// handler, and return an OHTTP-encapsulated response.
 ///
 /// Content-type of successful response: `message/ohttp-res` (RFC 9458 §3.3).
+#[tracing::instrument(level = "debug", skip_all, fields(in_len = body.len()), name = "relay.ohttp")]
 async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::response::Response {
     let Some(gw) = &state.ohttp_gateway else {
         return build_ohttp_error(StatusCode::NOT_FOUND, "ohttp not enabled");
@@ -778,6 +779,7 @@ fn verify_purge_signature(
 
 // ── Extracted handler logic (shared with OHTTP dispatcher) ──────────
 
+#[tracing::instrument(level = "debug", skip_all, fields(ct_b64_len = req.ciphertext.len()), name = "relay.send")]
 fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
     if !state.rate_limiter.consume(&req.recipient_id) {
         return ApiResult::RateLimited;
@@ -813,6 +815,7 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
     ApiResult::ok(serde_json::json!({ "status": "ok", "blob_id": blob_id }))
 }
 
+#[tracing::instrument(level = "debug", skip_all, fields(token_count = req.mailbox_tokens.len()), name = "relay.fetch")]
 fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
     // Rate-limit by first token (representative of the client session).
     if let Some(first) = req.mailbox_tokens.first()
@@ -838,6 +841,7 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
     ApiResult::ok(serde_json::json!({ "status": "ok", "blobs": blob_data }))
 }
 
+#[tracing::instrument(level = "debug", skip_all, name = "relay.ack")]
 fn handle_ack_logic(state: &HttpApiState, req: V2AckRequest) -> ApiResult {
     if !state.rate_limiter.consume(&req.recipient_id) {
         return ApiResult::RateLimited;
