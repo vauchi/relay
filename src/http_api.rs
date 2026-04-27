@@ -479,7 +479,16 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
     // 1. Decapsulate the OHTTP request
     let (plaintext, srv_response) = match gw.decapsulate(&body) {
         Ok(pair) => pair,
-        Err(_) => {
+        Err(e) => {
+            // Log the failure so e2e/dev tests can diagnose stale-key
+            // and protocol drift without rebuilding the relay. Body
+            // length only (no plaintext to leak); error type comes
+            // from `ohttp` crate.
+            tracing::warn!(
+                in_len = body.len(),
+                error = %e,
+                "OHTTP decapsulate failed"
+            );
             return build_ohttp_error(StatusCode::BAD_REQUEST, "failed to decapsulate request");
         }
     };
@@ -488,6 +497,10 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
     let plaintext = match crate::padding::unpad(&plaintext) {
         Some(p) => p,
         None => {
+            tracing::warn!(
+                plaintext_len = plaintext.len(),
+                "OHTTP unpad failed (plaintext is not a recognised bucket size)"
+            );
             return build_ohttp_error(StatusCode::BAD_REQUEST, "invalid padding in OHTTP request");
         }
     };
