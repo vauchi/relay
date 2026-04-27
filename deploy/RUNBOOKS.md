@@ -1,5 +1,6 @@
 <!-- SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me> -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- markdownlint-disable line-length-backtick-exempt MD031 MD032 MD040 -->
 
 # Vauchi Relay Operational Runbooks
 
@@ -412,10 +413,17 @@ just check relay
 
 The relay is designed to scale horizontally via federation. Each relay instance is independent; clients are directed to a relay by the app.
 
-```
-Client A ─── Relay 1 ──┐
-                        ├── Federation offload ──── Relay 2 ─── Client B
-Client C ─── Relay 1 ──┘
+```mermaid
+flowchart LR
+    ClientA["Client A"]
+    ClientC["Client C"]
+    Relay1["Relay 1"]
+    Relay2["Relay 2"]
+    ClientB["Client B"]
+    ClientA --> Relay1
+    ClientC --> Relay1
+    Relay1 -- "Federation offload" --> Relay2
+    Relay2 --> ClientB
 ```
 
 **Steps to add a relay to a federation:**
