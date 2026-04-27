@@ -417,14 +417,22 @@ The relay is designed to scale horizontally via federation. Each relay instance 
 flowchart LR
     ClientA["Client A"]
     ClientC["Client C"]
+    Gateway["OHTTP Gateway<br/>(strips client IP)"]
     Relay1["Relay 1"]
     Relay2["Relay 2"]
     ClientB["Client B"]
-    ClientA --> Relay1
-    ClientC --> Relay1
+    ClientA -- "OHTTP" --> Gateway
+    ClientC -- "OHTTP" --> Gateway
+    Gateway -- "TLS" --> Relay1
     Relay1 -- "Federation offload" --> Relay2
-    Relay2 --> ClientB
+    Relay2 -- "TLS" --> Gateway
+    Gateway -- "OHTTP" --> ClientB
 ```
+
+> **Note:** Production deployments route all client↔relay traffic
+> through an OHTTP gateway per ADR-037 — the relay never sees client
+> IP addresses; the gateway never sees request content. Federation
+> offload between relays is direct mTLS.
 
 **Steps to add a relay to a federation:**
 
