@@ -830,11 +830,12 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
     let blobs = state.storage.peek_many(&token_refs);
     let blob_data: Vec<serde_json::Value> = blobs
         .iter()
-        .map(|b| {
+        .map(|(token, blob)| {
             serde_json::json!({
-                "blob_id": b.id,
-                "ciphertext": base64::engine::general_purpose::STANDARD.encode(&b.data),
-                "created_at": b.created_at_secs,
+                "blob_id": blob.id,
+                "ciphertext": base64::engine::general_purpose::STANDARD.encode(&blob.data),
+                "created_at": blob.created_at_secs,
+                "mailbox_token": token,
             })
         })
         .collect();

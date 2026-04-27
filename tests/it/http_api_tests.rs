@@ -167,6 +167,53 @@ async fn test_v2_fetch_returns_stored_blobs() {
     assert_eq!(body["status"], "ok");
     let blobs = body["blobs"].as_array().unwrap();
     assert_eq!(blobs.len(), 2);
+    for blob in blobs {
+        assert_eq!(
+            blob["mailbox_token"].as_str(),
+            Some(token.as_str()),
+            "fetch response must attribute each blob to the token it arrived for"
+        );
+    }
+}
+
+// @internal
+#[tokio::test]
+async fn test_v2_fetch_attributes_blobs_to_their_token() {
+    let state = create_test_state();
+    let storage = state.storage.clone();
+    let app = create_v2_router(state);
+
+    let alice_token = "a".repeat(64);
+    let bob_token = "b".repeat(64);
+    storage.store(&alice_token, StoredBlob::new(b"from-alice".to_vec()));
+    storage.store(&bob_token, StoredBlob::new(b"from-bob-1".to_vec()));
+    storage.store(&bob_token, StoredBlob::new(b"from-bob-2".to_vec()));
+
+    let resp = post_json(
+        &app,
+        "/v2/fetch",
+        &serde_json::json!({
+            "version": 2,
+            "mailbox_tokens": [alice_token, bob_token],
+        }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_json(resp).await;
+    let blobs = body["blobs"].as_array().unwrap();
+    assert_eq!(blobs.len(), 3);
+
+    let alice_count = blobs
+        .iter()
+        .filter(|b| b["mailbox_token"].as_str() == Some(&"a".repeat(64)))
+        .count();
+    let bob_count = blobs
+        .iter()
+        .filter(|b| b["mailbox_token"].as_str() == Some(&"b".repeat(64)))
+        .count();
+    assert_eq!(alice_count, 1);
+    assert_eq!(bob_count, 2);
 }
 
 // @internal

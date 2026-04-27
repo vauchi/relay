@@ -77,7 +77,12 @@ pub trait BlobStore: Send + Sync {
     fn peek(&self, recipient_id: &str) -> Vec<StoredBlob>;
 
     /// Retrieves all stored blobs matching any of the given recipient tokens.
-    fn peek_many(&self, tokens: &[&str]) -> Vec<StoredBlob>;
+    ///
+    /// Returns `(token, blob)` pairs. The token is the registered mailbox
+    /// token the blob arrived for; clients use it to attribute blobs back
+    /// to a specific contact in O(1) without exposing anything new to the
+    /// relay (the relay already has the token; the recipient computed it).
+    fn peek_many(&self, tokens: &[&str]) -> Vec<(String, StoredBlob)>;
 
     /// Retrieves and removes all pending blobs for a recipient.
     fn take(&self, recipient_id: &str) -> Vec<StoredBlob>;
@@ -233,14 +238,14 @@ impl BlobStore for SqliteBlobStore {
         .collect()
     }
 
-    fn peek_many(&self, tokens: &[&str]) -> Vec<StoredBlob> {
+    fn peek_many(&self, tokens: &[&str]) -> Vec<(String, StoredBlob)> {
         if tokens.is_empty() {
             return Vec::new();
         }
         let conn = self.conn.lock();
         let placeholders: String = tokens.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT id, data, created_at_secs, hop_count FROM blobs WHERE recipient_id IN ({}) ORDER BY created_at_secs ASC",
+            "SELECT id, data, created_at_secs, hop_count, recipient_id FROM blobs WHERE recipient_id IN ({}) ORDER BY created_at_secs ASC",
             placeholders
         );
         let mut stmt = conn.prepare(&sql).expect("peek_many SQL must be valid");
@@ -249,12 +254,15 @@ impl BlobStore for SqliteBlobStore {
             .map(|t| t as &dyn rusqlite::types::ToSql)
             .collect();
         stmt.query_map(rusqlite::params_from_iter(params), |row| {
-            Ok(StoredBlob {
-                id: row.get(0)?,
-                data: row.get(1)?,
-                created_at_secs: row.get::<_, i64>(2)? as u64,
-                hop_count: row.get::<_, i64>(3)? as u8,
-            })
+            Ok((
+                row.get::<_, String>(4)?,
+                StoredBlob {
+                    id: row.get(0)?,
+                    data: row.get(1)?,
+                    created_at_secs: row.get::<_, i64>(2)? as u64,
+                    hop_count: row.get::<_, i64>(3)? as u8,
+                },
+            ))
         })
         .expect("peek_many query must succeed")
         .filter_map(|r| r.ok())
@@ -858,9 +866,35 @@ mod tests {
 
         let results = store.peek_many(&["token_a", "token_c"]);
         assert_eq!(results.len(), 2);
-        let ids: Vec<&str> = results.iter().map(|b| b.id.as_str()).collect();
+        let ids: Vec<&str> = results.iter().map(|(_, b)| b.id.as_str()).collect();
         assert!(ids.contains(&id1.as_str()));
         assert!(ids.contains(&id3.as_str()));
+
+        // Each returned blob must be paired with the token it arrived for.
+        for (token, blob) in &results {
+            if blob.id == id1 {
+                assert_eq!(token, "token_a");
+            } else if blob.id == id3 {
+                assert_eq!(token, "token_c");
+            } else {
+                panic!("unexpected blob id: {}", blob.id);
+            }
+        }
+    }
+
+    #[test]
+    fn test_peek_many_attributes_blobs_to_their_token() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        store.store("alice_token", StoredBlob::new(vec![1]));
+        store.store("alice_token", StoredBlob::new(vec![2]));
+        store.store("bob_token", StoredBlob::new(vec![3]));
+
+        let results = store.peek_many(&["alice_token", "bob_token"]);
+        assert_eq!(results.len(), 3);
+        let alice_count = results.iter().filter(|(t, _)| t == "alice_token").count();
+        let bob_count = results.iter().filter(|(t, _)| t == "bob_token").count();
+        assert_eq!(alice_count, 2);
+        assert_eq!(bob_count, 1);
     }
 
     #[test]
