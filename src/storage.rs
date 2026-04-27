@@ -882,6 +882,7 @@ mod tests {
         }
     }
 
+    // @internal
     #[test]
     fn test_peek_many_attributes_blobs_to_their_token() {
         let store = SqliteBlobStore::in_memory().unwrap();

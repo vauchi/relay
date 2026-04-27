@@ -6,9 +6,10 @@
 # Files must not grow beyond baseline. EXEMPT/SPLIT per PRB-2026-032.
 
 # Grandfathered — config table added for version policy persistence
-# (+34 for `peek_many` returning (token, blob) per ADR-029 addendum 2026-04-27
-# — receive-phase token attribution for O(1) client routing)
-src/storage.rs 1060
+# (+35 for `peek_many` returning (token, blob) + tests + annotation per
+# ADR-029 addendum 2026-04-27 — receive-phase token attribution for O(1)
+# client routing)
+src/storage.rs 1061
 
 # EXEMPT — relay API surface: all v2 handlers co-located for protocol coherence
 # (+4 for #[tracing::instrument] on handle_send/fetch/ack/ohttp_logic — profiling, no logic change)
