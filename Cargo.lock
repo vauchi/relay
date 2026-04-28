@@ -1733,9 +1733,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.39"
+version = "0.23.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c2c118cb077cca2822033836dfb1b975355dfb784b5e8da48f7b6c5db74e60e"
+checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -2452,8 +2452,8 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vauchi-protocol"
-version = "0.29.0"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#b39d886cf406130a9d97fb302129f62f2921c685"
+version = "0.30.1"
+source = "git+https://gitlab.com/vauchi/core.git?branch=main#9a812d6f18a041365803e09c11283a08d130a8ad"
 dependencies = [
  "serde",
  "serde_json",
