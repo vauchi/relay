@@ -544,9 +544,9 @@ build:docker:
   extends: .timeout-standard
   stage: build
   tags: [docker]
-  image: docker:27
+  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/docker:27
   services:
-    - docker:dind
+    - ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/docker:dind
   variables:
     DOCKER_BUILDKIT: "1"
   script:
