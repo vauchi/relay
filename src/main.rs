@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_limit::ConnectionLimiter;
@@ -194,10 +194,36 @@ async fn main() {
         Some(&config.storage.data_dir),
     ));
 
-    // Load persisted min_version_changed_at timestamp
-    let min_version_changed_at = storage
-        .get_config("min_version_changed_at")
+    // Load persisted min_version_changed_at timestamp.
+    //
+    // Test-only override: `RELAY_VERSION_CHANGED_AT_SECS` (a unix
+    // timestamp) takes precedence over storage. Lets e2e tests
+    // simulate "min_version was raised long ago, grace already
+    // expired" so they can exercise the rejection path
+    // deterministically. Production deployments must NOT set this
+    // env var (the relay logs WARN if it sees it, see below) — the
+    // storage-backed timestamp is the single source of truth in
+    // production. See problem record
+    // `2026-04-27-version-enforcement-tests-fail`.
+    let env_override = std::env::var("RELAY_VERSION_CHANGED_AT_SECS")
+        .ok()
         .and_then(|s| s.parse::<u64>().ok());
+    let min_version_changed_at = match env_override {
+        Some(t) => {
+            // WARN-loud — this is an in-band production-defence so a
+            // leaked env var in a real deploy is visible in logs.
+            warn!(
+                "Using test override for min_version_changed_at: {} \
+                 (RELAY_VERSION_CHANGED_AT_SECS) — \
+                 must NOT be set in production",
+                t
+            );
+            Some(t)
+        }
+        None => storage
+            .get_config("min_version_changed_at")
+            .and_then(|s| s.parse::<u64>().ok()),
+    };
 
     let version_policy = Arc::new(parking_lot::RwLock::new(
         vauchi_relay::version_policy::VersionPolicyState::new(
@@ -206,8 +232,13 @@ async fn main() {
         ),
     ));
 
-    // If version policy detects a NEW change in min_version, persist it
-    if let Some(changed_at) = version_policy.read().min_version_changed_at()
+    // If version policy detects a NEW change in min_version, persist it.
+    // The env override is treated as authoritative — it intentionally
+    // does NOT get re-persisted, so a test run with the override does
+    // not pollute the storage backend that a subsequent override-less
+    // run would read.
+    if env_override.is_none()
+        && let Some(changed_at) = version_policy.read().min_version_changed_at()
         && Some(changed_at) != min_version_changed_at
     {
         info!("Persisting new min_version_changed_at: {}", changed_at);
