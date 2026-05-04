@@ -216,12 +216,19 @@ impl OhttpGateway {
     }
 
     fn generate_state(key_id: u8) -> Result<GatewayState, OhttpGatewayError> {
+        // ADR-019: chacha-family AEAD across the project. RFC 9180
+        // (HPKE) does not allow the XChaCha20-Poly1305 nonce extension
+        // — the standard ChaCha20-Poly1305 (96-bit nonce) is the
+        // closest compliant choice and is the chacha-family option
+        // RFC 9458 (OHTTP) negotiates. ADR-019 governs application-
+        // level AEAD; ADR-amendment-pending scopes HPKE-internal
+        // AEAD to the RFC 9180 set, with this default.
         let config = KeyConfig::new(
             key_id,
             hpke::Kem::X25519Sha256,
             vec![SymmetricSuite::new(
                 hpke::Kdf::HkdfSha256,
-                hpke::Aead::Aes128Gcm,
+                hpke::Aead::ChaCha20Poly1305,
             )],
         )?;
         let encoded_config = Zeroizing::new(config.encode()?);
