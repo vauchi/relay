@@ -77,8 +77,9 @@ pub struct OhttpGateway {
 impl OhttpGateway {
     /// Generate a fresh keypair and build the gateway.
     ///
-    /// Uses X25519-SHA256 KEM with HKDF-SHA256 / AES-128-GCM (the
-    /// mandatory-to-implement suite from RFC 9180).
+    /// Uses X25519-SHA256 KEM with HKDF-SHA256 / ChaCha20-Poly1305 —
+    /// the chacha-family option RFC 9180 (HPKE) negotiates, per
+    /// ADR-046. See [`Self::generate_state`] for the suite rationale.
     pub fn new() -> Result<Self, OhttpGatewayError> {
         Self::with_rotation_hours(24)
     }
