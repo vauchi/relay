@@ -565,7 +565,13 @@ build:docker:
     # with DOCKER_BUILDKIT=1 + cargo-chef's dep-only `cook` stage, this
     # keeps the long-tail 6:05 build under ~3 min when deps haven't
     # changed. See 2026-04-22-ci-pipeline-health-audit T3.2.
-    - docker build --pull --build-arg BUILD_INFO="$BUILD_INFO" --build-arg BUILDKIT_INLINE_CACHE=1 --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    # --build-arg HUB= routes the Dockerfile's `FROM rust:1.93-bookworm`
+    # stages through GitLab's dependency proxy. Bare Docker Hub pulls
+    # from inside `docker build` are anonymous and rate-limited
+    # (took down `relay!270` pipeline `2497693079`). Default in the
+    # Dockerfile is `docker.io/library` so local `docker build .`
+    # still works without args.
+    - docker build --pull --build-arg HUB="${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}" --build-arg BUILD_INFO="$BUILD_INFO" --build-arg BUILDKIT_INLINE_CACHE=1 --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
     - |
       if [ -n "$CI_REGISTRY_PASSWORD" ]; then
         docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA

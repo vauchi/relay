@@ -2,22 +2,30 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+# Defaults to the canonical Docker Hub path so `docker build .` works
+# locally without any build args. CI overrides this to GitLab's
+# group-level dependency proxy via
+# `--build-arg HUB=${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}` so the
+# Hub rate limit doesn't take builds down (see _private!1143 +
+# relay!270 for the cross-repo cascade).
+ARG HUB=docker.io/library
+
 # Planner stage: generate recipe.json for dependency caching
-FROM rust:1.93-bookworm AS planner
+FROM ${HUB}/rust:1.93-bookworm AS planner
 RUN cargo install cargo-chef
 WORKDIR /app
 COPY . ./relay
 RUN cd relay && cargo chef prepare --recipe-path /app/recipe.json
 
 # Cook stage: build dependencies only (cached layer)
-FROM rust:1.93-bookworm AS cook
+FROM ${HUB}/rust:1.93-bookworm AS cook
 RUN cargo install cargo-chef
 WORKDIR /app
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build stage: compile the actual source (deps already cached)
-FROM rust:1.93-bookworm AS builder
+FROM ${HUB}/rust:1.93-bookworm AS builder
 WORKDIR /app
 COPY --from=cook /app/target target
 COPY --from=cook /usr/local/cargo /usr/local/cargo
