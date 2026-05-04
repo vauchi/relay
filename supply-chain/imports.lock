@@ -408,6 +408,13 @@ user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
+[[publisher.tokio]]
+version = "1.52.2"
+when = "2026-05-04"
+user-id = 6741
+user-login = "Darksonn"
+user-name = "Alice Ryhl"
+
 [[publisher.tokio-macros]]
 version = "2.7.0"
 when = "2026-04-03"
