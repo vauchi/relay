@@ -167,8 +167,8 @@ user-login = "Amanieu"
 user-name = "Amanieu d'Antras"
 
 [[publisher.hashbrown]]
-version = "0.17.0"
-when = "2026-04-09"
+version = "0.17.1"
+when = "2026-05-09"
 user-id = 55123
 user-login = "rust-lang-owner"
 
