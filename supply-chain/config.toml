@@ -115,6 +115,10 @@ criteria = "safe-to-deploy"
 version = "0.2.4"
 criteria = "safe-to-run"
 
+[[exemptions.bs58]]
+version = "0.5.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.bytecount]]
 version = "0.6.9"
 criteria = "safe-to-run"
@@ -133,6 +137,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.cc]]
 version = "1.2.61"
+criteria = "safe-to-deploy"
+
+[[exemptions.cc]]
+version = "1.2.62"
 criteria = "safe-to-deploy"
 
 [[exemptions.cesu8]]
@@ -719,8 +727,16 @@ criteria = "safe-to-deploy"
 version = "1.1.11"
 criteria = "safe-to-run"
 
+[[exemptions.pin-project]]
+version = "1.1.13"
+criteria = "safe-to-run"
+
 [[exemptions.pin-project-internal]]
 version = "1.1.11"
+criteria = "safe-to-run"
+
+[[exemptions.pin-project-internal]]
+version = "1.1.13"
 criteria = "safe-to-run"
 
 [[exemptions.pin-project-lite]]
@@ -948,8 +964,16 @@ criteria = "safe-to-deploy"
 version = "3.19.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.serde_with]]
+version = "3.20.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.serde_with_macros]]
 version = "3.19.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.serde_with_macros]]
+version = "3.20.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.signal-hook-registry]]
@@ -1140,6 +1164,10 @@ criteria = "safe-to-deploy"
 version = "0.4.70"
 criteria = "safe-to-deploy"
 
+[[exemptions.wasm-bindgen-futures]]
+version = "0.4.71"
+criteria = "safe-to-deploy"
+
 [[exemptions.wasm-bindgen-macro]]
 version = "0.2.120"
 criteria = "safe-to-deploy"
@@ -1210,6 +1238,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy-derive]]
 version = "0.8.48"
+criteria = "safe-to-deploy"
+
+[[exemptions.zerofrom]]
+version = "0.1.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.zune-core]]

@@ -2461,8 +2461,8 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vauchi-protocol"
-version = "0.51.0"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#817b5e48f6dc5a06f78f5e49b2a1535a0e7f66a0"
+version = "0.51.1"
+source = "git+https://gitlab.com/vauchi/core.git?branch=main#b6103d8af3d00487999094c38e6a64578462568a"
 dependencies = [
  "serde",
  "serde_json",
