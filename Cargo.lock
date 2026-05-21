@@ -589,9 +589,9 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "either"
-version = "1.15.0"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
 name = "equivalent"
@@ -2462,7 +2462,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "vauchi-protocol"
 version = "0.51.5"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#94582505d88be494d21b5f2991fe8e679a9a94eb"
+source = "git+https://gitlab.com/vauchi/core.git?branch=main#a4c7e522e599d8750034e574137a9a9fe701d4cb"
 dependencies = [
  "serde",
  "serde_json",
