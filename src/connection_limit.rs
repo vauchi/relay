@@ -63,12 +63,6 @@ impl ConnectionLimiter {
     pub fn active_count(&self) -> usize {
         self.inner.active.load(Ordering::SeqCst)
     }
-
-    /// Returns the maximum allowed connections.
-    #[allow(dead_code)]
-    pub fn max_connections(&self) -> usize {
-        self.inner.max_connections
-    }
 }
 
 /// RAII guard that releases the connection slot on drop.
