@@ -134,9 +134,9 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "autocfg"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
+checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "aws-lc-rs"
@@ -2462,7 +2462,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "vauchi-protocol"
 version = "0.51.11"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#ca581d68e0c6216caa82d647e093311a0ecad3f3"
+source = "git+https://gitlab.com/vauchi/core.git?branch=main#e1e773bc89614081143b65b6dcde38b2ae48d05e"
 dependencies = [
  "serde",
  "serde_json",
