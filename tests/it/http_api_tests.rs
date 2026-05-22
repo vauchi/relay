@@ -415,19 +415,21 @@ async fn test_v2_purge_replay_rejected() {
     );
 }
 
-// ── Register ──
+// ── Register (informational, see ADR-029 addendum 2026-05-22) ──
 
 // @internal
 #[tokio::test]
-async fn test_v2_register_returns_count() {
+async fn test_v2_register_accepts_valid_tokens() {
     let app = create_v2_router(create_test_state());
+    let token_a = "a".repeat(64);
+    let token_b = "b".repeat(64);
 
     let resp = post_json(
         &app,
         "/v2/register",
         &serde_json::json!({
             "version": 2,
-            "mailbox_tokens": ["token1", "token2"],
+            "mailbox_tokens": [token_a, token_b],
         }),
     )
     .await;
@@ -435,7 +437,127 @@ async fn test_v2_register_returns_count() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = response_json(resp).await;
     assert_eq!(body["status"], "ok");
-    assert_eq!(body["registered"], 2);
+    assert_eq!(body["accepted"], 2);
+}
+
+// @internal
+#[tokio::test]
+async fn test_v2_register_accepts_empty_list() {
+    let app = create_v2_router(create_test_state());
+
+    let resp = post_json(
+        &app,
+        "/v2/register",
+        &serde_json::json!({
+            "version": 2,
+            "mailbox_tokens": [],
+        }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["accepted"], 0);
+}
+
+// @internal
+#[tokio::test]
+async fn test_v2_register_rejects_non_hex_token() {
+    let app = create_v2_router(create_test_state());
+    // Index 1 is bad: 64 chars but contains 'z'
+    let good = "a".repeat(64);
+    let bad = "z".repeat(64);
+
+    let resp = post_json(
+        &app,
+        "/v2/register",
+        &serde_json::json!({
+            "version": 2,
+            "mailbox_tokens": [good, bad],
+        }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"], "error");
+    assert_eq!(body["error"], "mailbox_tokens[1] must be 64 hex characters");
+}
+
+// @internal
+#[tokio::test]
+async fn test_v2_register_rejects_wrong_length_token() {
+    let app = create_v2_router(create_test_state());
+    // 63 chars instead of 64 — common off-by-one mistake
+    let short = "a".repeat(63);
+
+    let resp = post_json(
+        &app,
+        "/v2/register",
+        &serde_json::json!({
+            "version": 2,
+            "mailbox_tokens": [short],
+        }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"], "error");
+    assert_eq!(body["error"], "mailbox_tokens[0] must be 64 hex characters");
+}
+
+// @internal
+#[tokio::test]
+async fn test_v2_register_rejects_over_max_tokens() {
+    let app = create_v2_router(create_test_state());
+    // MAX_MAILBOX_TOKENS_PER_REQUEST is 1,900 (kept tight below the
+    // relay-wide 128 KiB body limit so the handler returns 400 rather
+    // than the framework returning 413). 1,901 must be rejected with
+    // a precise error.
+    let token = "a".repeat(64);
+    let tokens: Vec<String> = (0..1_901).map(|_| token.clone()).collect();
+
+    let resp = post_json(
+        &app,
+        "/v2/register",
+        &serde_json::json!({
+            "version": 2,
+            "mailbox_tokens": tokens,
+        }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"], "error");
+    assert_eq!(body["error"], "too many mailbox_tokens: 1901 (max 1900)");
+}
+
+// @internal
+#[tokio::test]
+async fn test_v2_register_accepts_max_tokens() {
+    let app = create_v2_router(create_test_state());
+    // Exactly the cap — boundary case must succeed and stay under
+    // the 128 KiB body limit.
+    let token = "a".repeat(64);
+    let tokens: Vec<String> = (0..1_900).map(|_| token.clone()).collect();
+
+    let resp = post_json(
+        &app,
+        "/v2/register",
+        &serde_json::json!({
+            "version": 2,
+            "mailbox_tokens": tokens,
+        }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["accepted"], 1_900);
 }
 
 // ── Adversarial / boundary tests (CC-14) ──

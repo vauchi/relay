@@ -411,11 +411,12 @@ async fn test_ohttp_response_is_padded_to_bucket_size() {
         .await
         .unwrap();
 
-    // Send a simple request and check that the decapsulated response is a valid bucket size
+    // Send a simple request and check that the decapsulated response is a valid bucket size.
+    // Token must be 64 hex chars (see /v2/register validation).
     let inner = serde_json::json!({
         "version": 2,
         "action": "register",
-        "mailbox_tokens": ["token1"],
+        "mailbox_tokens": ["a".repeat(64)],
     });
     let (enc_req, client_resp) = ohttp_encrypt(&key_bytes, &inner);
     let resp = post_ohttp_bytes(&app, enc_req).await;

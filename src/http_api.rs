@@ -347,8 +347,15 @@ async fn ack_handler(
     logic_response(handle_ack_logic(&state, req))
 }
 
-/// Register mailbox tokens (placeholder — tokens are meaningful with
-/// live WebSocket delivery; for HTTP polling, fetch uses tokens directly).
+/// Register mailbox tokens (informational under HTTP transport).
+///
+/// HTTP transport uses pull-by-token semantics: `POST /v2/fetch`
+/// is the load-bearing operation and consumes the token list at
+/// request time. `/v2/register` validates input shape (token
+/// count + hex format) and acknowledges; it does not persist
+/// tokens, gate later fetches, or maintain a `MailboxRegistry`.
+/// See ADR-029 addendum 2026-05-22 for the design decision and
+/// the WebSocket-transport future this preserves.
 async fn register_handler(
     JsonBadRequest(req): JsonBadRequest<V2RegisterRequest>,
 ) -> impl IntoResponse {
@@ -870,8 +877,44 @@ fn handle_ack_logic(state: &HttpApiState, req: V2AckRequest) -> ApiResult {
     ApiResult::ok(serde_json::json!({ "status": "ok", "acknowledged": removed }))
 }
 
+/// Maximum mailbox tokens per `/v2/register` request.
+///
+/// ADR-029 sized batch registration to cover 30-day catch-up
+/// with a 20,000-token spec cap, but that figure was for the
+/// envisioned WebSocket transport. Under HTTP transport the
+/// relay-wide `DefaultBodyLimit::max(128 * 1024)` (line 121)
+/// caps a register request at roughly 1,955 64-hex tokens
+/// (`(128 KiB - JSON wrapper) / 67 bytes-per-token`). We
+/// reject earlier — at 1,900 — to keep ~4 KiB headroom for
+/// future wire-shape additions, so the rejection path is the
+/// handler's `400` and not the framework's `413`. The 20K
+/// spec cap is preserved for the WebSocket transport future
+/// (see ADR-029 addendum 2026-05-22).
+const MAX_MAILBOX_TOKENS_PER_REQUEST: usize = 1_900;
+
+/// `/v2/register` is informational under HTTP transport (see
+/// `register_handler` doc-comment and ADR-029 addendum
+/// 2026-05-22). This validates input shape and acknowledges;
+/// no relay-side state is mutated.
 fn handle_register_logic(req: V2RegisterRequest) -> ApiResult {
-    ApiResult::ok(serde_json::json!({ "status": "ok", "registered": req.mailbox_tokens.len() }))
+    if req.mailbox_tokens.len() > MAX_MAILBOX_TOKENS_PER_REQUEST {
+        return ApiResult::bad_request(format!(
+            "too many mailbox_tokens: {} (max {})",
+            req.mailbox_tokens.len(),
+            MAX_MAILBOX_TOKENS_PER_REQUEST
+        ));
+    }
+    for (i, token) in req.mailbox_tokens.iter().enumerate() {
+        if !crate::handler::validate_client_id(token) {
+            return ApiResult::bad_request(format!(
+                "mailbox_tokens[{i}] must be 64 hex characters"
+            ));
+        }
+    }
+    ApiResult::ok(serde_json::json!({
+        "status": "ok",
+        "accepted": req.mailbox_tokens.len(),
+    }))
 }
 
 fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> ApiResult {

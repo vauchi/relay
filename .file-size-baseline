@@ -14,7 +14,10 @@ src/storage.rs 1061
 # EXEMPT — relay API surface: all v2 handlers co-located for protocol coherence
 # (+4 for #[tracing::instrument] on handle_send/fetch/ack/ohttp_logic — profiling, no logic change)
 # (+1 for mailbox_token field in fetch JSON response per ADR-029 addendum 2026-04-27)
-src/http_api.rs 1225
+# (+43 for real input validation on /v2/register — handler stub replaced with
+#  count cap + 64-hex-per-token check + doc-comments per ADR-029 addendum
+#  2026-05-22; closes audit 30 C-1)
+src/http_api.rs 1268
 
 # SPLIT — Phase 3: split http_api_tests.rs per service area
 tests/http_api_tests.rs 544
