@@ -17,6 +17,10 @@ use parking_lot::RwLock;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
+/// Length of the persisted HPKE input-keying-material seed, in bytes.
+/// 32 bytes (≥ X25519 `Nsk`) is sufficient for `KeyConfig::derive`.
+const OHTTP_SEED_LEN: usize = 32;
+
 /// Errors that can arise in the OHTTP gateway.
 #[derive(Debug)]
 pub enum OhttpGatewayError {
@@ -100,48 +104,94 @@ impl OhttpGateway {
         })
     }
 
-    /// Create a gateway from a persisted key config file.
+    /// Create a gateway from a persisted key **seed** file.
     ///
-    /// If the file exists, the keypair is loaded from it.
-    /// If the file does not exist, a new keypair is generated and saved.
-    /// This ensures the encoded key config is stable across restarts,
-    /// allowing clients to bundle it at compile time.
+    /// The file holds a 32-byte HPKE input-keying-material seed (NOT the
+    /// public key config). The keypair is deterministically derived from it
+    /// via `KeyConfig::derive`, so the public config is stable across
+    /// restarts AND the gateway always holds the secret key it needs to
+    /// decapsulate. If the file is missing — or has the wrong length, e.g. a
+    /// legacy persisted public config from before this fix — a fresh seed is
+    /// generated and written (self-healing). File is written `0600` on unix.
     ///
-    /// Key rotation still works — `rotate()` generates a fresh key and
-    /// replaces the in-memory state (the key file is the initial state only).
+    /// Persisting `KeyConfig::encode()` (the public config) was the bug
+    /// behind 2026-05-25-relay-ohttp-forward-hop-502: `KeyConfig::decode`
+    /// yields `sk = None`, so `Server::new` panicked on every restart.
+    ///
+    /// Key rotation still works — `rotate()` generates a fresh random key and
+    /// replaces the in-memory state (the seed file is the initial state only).
     pub fn from_key_file(path: &Path, rotation_hours: u64) -> Result<Self, OhttpGatewayError> {
-        let inner = if path.exists() {
-            let bytes = std::fs::read(path).map_err(|e| {
-                OhttpGatewayError::Io(format!("failed to read OHTTP key file: {e}"))
-            })?;
-            let config = KeyConfig::decode(&bytes).map_err(OhttpGatewayError::Ohttp)?;
-            let encoded_config = Zeroizing::new(config.encode().map_err(OhttpGatewayError::Ohttp)?);
-            let server = Server::new(config).map_err(OhttpGatewayError::Ohttp)?;
-            info!("OHTTP gateway loaded from key file: {}", path.display());
-            GatewayState {
-                server,
-                encoded_config,
+        let seed = match std::fs::read(path) {
+            Ok(bytes) if bytes.len() == OHTTP_SEED_LEN => {
+                info!(
+                    "OHTTP gateway seed loaded from key file: {}",
+                    path.display()
+                );
+                Zeroizing::new(bytes)
             }
-        } else {
-            let state = Self::generate_state(0)?;
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+            Ok(bytes) => {
+                warn!(
+                    "OHTTP key file {} has unexpected length {} (expected {}); \
+                     regenerating seed (legacy public-config file or corruption)",
+                    path.display(),
+                    bytes.len(),
+                    OHTTP_SEED_LEN,
+                );
+                Self::generate_and_save_seed(path)?
             }
-            std::fs::write(path, &state.encoded_config).map_err(|e| {
-                OhttpGatewayError::Io(format!("failed to write OHTTP key file: {e}"))
-            })?;
-            info!(
-                "OHTTP gateway key generated and persisted to: {}",
-                path.display()
-            );
-            state
+            Err(_) => Self::generate_and_save_seed(path)?,
         };
+
+        let inner = Self::state_from_seed(0, &seed)?;
 
         Ok(Self {
             state: RwLock::new(Arc::new(inner)),
             previous_state: RwLock::new(None),
             rotation_interval: Duration::from_secs(rotation_hours * 3600),
             next_key_id: AtomicU8::new(1),
+        })
+    }
+
+    /// Generate a fresh random seed, persist it (`0600` on unix), and return it.
+    fn generate_and_save_seed(path: &Path) -> Result<Zeroizing<Vec<u8>>, OhttpGatewayError> {
+        use rand::RngCore;
+        let mut seed = Zeroizing::new(vec![0u8; OHTTP_SEED_LEN]);
+        rand::rngs::OsRng.fill_bytes(&mut seed);
+
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(path, &*seed)
+            .map_err(|e| OhttpGatewayError::Io(format!("failed to write OHTTP key file: {e}")))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+        info!(
+            "OHTTP gateway seed generated and persisted to: {}",
+            path.display()
+        );
+        Ok(seed)
+    }
+
+    /// Derive a gateway state (keypair + encoded public config) from a seed.
+    fn state_from_seed(key_id: u8, ikm: &[u8]) -> Result<GatewayState, OhttpGatewayError> {
+        // Same suite as `generate_state` (ADR-046: ChaCha20-Poly1305).
+        let config = KeyConfig::derive(
+            key_id,
+            hpke::Kem::X25519Sha256,
+            vec![SymmetricSuite::new(
+                hpke::Kdf::HkdfSha256,
+                hpke::Aead::ChaCha20Poly1305,
+            )],
+            ikm,
+        )?;
+        let encoded_config = Zeroizing::new(config.encode()?);
+        let server = Server::new(config)?;
+        Ok(GatewayState {
+            server,
+            encoded_config,
         })
     }
 
