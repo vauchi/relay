@@ -374,6 +374,59 @@ mod tests {
         assert_eq!(gw.rotation_interval(), Duration::from_secs(12 * 3600));
     }
 
+    // @scenario: ohttp_gateway :: persisted key reloads as a usable keypair
+    #[test]
+    fn from_key_file_reload_preserves_working_keypair() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ohttp_key");
+
+        // First start generates + persists the key.
+        let gw1 = OhttpGateway::from_key_file(&path, 24).expect("first load must succeed");
+        let cfg1 = gw1.encoded_key_config();
+
+        // Restart: loading from the same file must NOT panic and must yield a
+        // gateway that still holds the SECRET key (can decapsulate). The old
+        // code persisted only the public config, so `Server::new` hit
+        // `assert!(config.sk.is_some())` and the relay crash-looped on every
+        // restart after the first (problem 2026-05-25-relay-ohttp-forward-hop-502).
+        let gw2 = OhttpGateway::from_key_file(&path, 24).expect("reload must succeed");
+        let cfg2 = gw2.encoded_key_config();
+        assert_eq!(
+            cfg1, cfg2,
+            "persisted key config must be stable across restarts"
+        );
+
+        let client = ClientRequest::from_encoded_config(&cfg2).expect("client config");
+        let (enc, _resp) = client.encapsulate(b"reload test").expect("encapsulate");
+        let (plaintext, _srv) = gw2
+            .decapsulate(&enc)
+            .expect("reloaded gateway must decapsulate (has the secret key)");
+        assert_eq!(plaintext, b"reload test");
+    }
+
+    // @scenario: ohttp_gateway :: a legacy public-config key file self-heals
+    #[test]
+    fn from_key_file_regenerates_on_legacy_public_config_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ohttp_key");
+
+        // Simulate the broken legacy file: a persisted PUBLIC KeyConfig
+        // (what the old code wrote). It is not a 32-byte seed.
+        let legacy = OhttpGateway::new().unwrap().encoded_key_config();
+        std::fs::write(&path, &legacy).expect("write legacy file");
+
+        // Must not panic — detect the bad format and regenerate a usable key.
+        let gw = OhttpGateway::from_key_file(&path, 24)
+            .expect("legacy public-config file must be healed, not fatal");
+        let cfg = gw.encoded_key_config();
+        let client = ClientRequest::from_encoded_config(&cfg).expect("client config");
+        let (enc, _) = client.encapsulate(b"healed").expect("encapsulate");
+        let (pt, _) = gw
+            .decapsulate(&enc)
+            .expect("healed gateway must decapsulate");
+        assert_eq!(pt, b"healed");
+    }
+
     // @scenario: ohttp_gateway :: key rotation produces distinct key_ids
     #[test]
     fn test_successive_rotations_produce_different_key_ids() {
