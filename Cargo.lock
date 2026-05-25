@@ -1093,9 +1093,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.29"
+version = "0.4.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
 name = "matchers"
@@ -2461,8 +2461,8 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vauchi-protocol"
-version = "0.51.11"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#6b13290b4689519279d93c2a49b3350b96d84968"
+version = "0.51.14"
+source = "git+https://gitlab.com/vauchi/core.git?branch=main#cc1b773050a479691cfb6cd2049553bc464b4d3c"
 dependencies = [
  "serde",
  "serde_json",
