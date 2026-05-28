@@ -430,8 +430,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.toml_edit]]
-version = "0.25.11+spec-1.1.0"
-when = "2026-04-07"
+version = "0.25.12+spec-1.1.0"
+when = "2026-05-27"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -677,15 +677,15 @@ user-login = "rozbb"
 user-name = "Michael Rosenberg"
 
 [[publisher.zerocopy]]
-version = "0.8.48"
-when = "2026-03-28"
+version = "0.8.49"
+when = "2026-05-27"
 user-id = 7178
 user-login = "joshlf"
 user-name = "Joshua Liebow-Feeser"
 
 [[publisher.zerocopy-derive]]
-version = "0.8.48"
-when = "2026-03-28"
+version = "0.8.49"
+when = "2026-05-27"
 user-id = 7178
 user-login = "joshlf"
 user-name = "Joshua Liebow-Feeser"
