@@ -227,8 +227,8 @@ user-login = "Amanieu"
 user-name = "Amanieu d'Antras"
 
 [[publisher.mio]]
-version = "1.2.0"
-when = "2026-03-27"
+version = "1.2.1"
+when = "2026-05-28"
 user-id = 6025
 user-login = "Thomasdezeeuw"
 user-name = "Thomas de Zeeuw"
@@ -374,8 +374,8 @@ user-login = "mcginty"
 user-name = "Jake McGinty"
 
 [[publisher.socket2]]
-version = "0.6.3"
-when = "2026-03-06"
+version = "0.6.4"
+when = "2026-05-28"
 user-id = 6025
 user-login = "Thomasdezeeuw"
 user-name = "Thomas de Zeeuw"
