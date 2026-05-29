@@ -30,7 +30,7 @@ use vauchi_relay::federation_tls;
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
 use vauchi_relay::guardian_storage::{GuardianStore, SqliteGuardianStore};
 use vauchi_relay::handler;
-use vauchi_relay::http::{HttpState, create_router};
+use vauchi_relay::http::{ConnectionRoute, HttpState, classify_connection, create_router};
 use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key;
@@ -764,101 +764,72 @@ async fn main() {
             // Keep the guard alive for the duration of the connection
             let _guard = connection_guard;
 
-            // Peek at the first bytes to detect HTTP request vs WebSocket upgrade
-            // Buffer needs to be large enough to capture Upgrade header (typically ~200 bytes)
+            // Peek (do not consume) the first bytes to route the connection.
+            // Federation WS upgrades proceed to the handshake below; health
+            // probes and everything else are answered or dropped here. The
+            // routing decision lives in `classify_connection` (unit-tested in
+            // http.rs) so these rejection paths stay covered — the accept
+            // loop only writes the response that matches each route.
+            // Buffer is large enough to capture the Upgrade header (~200 bytes).
             let mut peek_buf = [0u8; 512];
-            let mut ws_path = "/".to_string();
-            match stream.peek(&mut peek_buf).await {
-                Ok(n) if n > 0 => {
-                    let peek_str = String::from_utf8_lossy(&peek_buf[..n]);
-
-                    // Use case-insensitive check since HTTP headers are case-insensitive
-                    let peek_lower = peek_str.to_ascii_lowercase();
-
-                    let is_websocket_upgrade = peek_lower.contains("upgrade: websocket")
-                        && peek_lower.contains("connection:")
-                        && peek_lower.contains("upgrade");
-
-                    // Parse HTTP request path from first line (e.g., "GET /federation HTTP/1.1")
-                    ws_path = peek_str
-                        .lines()
-                        .next()
-                        .and_then(|line| line.split_whitespace().nth(1))
-                        .unwrap_or("/")
-                        .to_string();
-
-                    if is_websocket_upgrade {
-                        if ws_path != "/federation" {
-                            // Client WS removed — all clients use HTTP v2
-                            let body = r#"{"error":"WebSocket not supported. Use /v2/ HTTP API."}"#;
-                            let response = format!(
-                                "HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                                body.len(),
-                                body
-                            );
-                            let mut stream = stream;
-                            let _ = stream.write_all(response.as_bytes()).await;
-                            let _ = stream.shutdown().await;
-                            tracing::debug!("Rejected non-federation WebSocket upgrade");
-                            return;
-                        }
-                        // Federation WS — fall through to accept_async below
-                    } else {
-                        let is_http_get = peek_lower.starts_with("get ");
-
-                        if is_http_get {
-                            // Update storage metrics before encoding
-                            metrics.blobs_stored.set(storage.blob_count() as i64);
-
-                            let path = if peek_lower.contains("get /health") {
-                                Some("/health")
-                            } else if peek_lower.contains("get /up") {
-                                Some("/up")
-                            } else if peek_lower.contains("get /ready") {
-                                Some("/ready")
-                            } else {
-                                None
-                            };
-
-                            if let Some(path) = path {
-                                // R-SA1: Main port health response omits version, uptime,
-                                // and blob_count to prevent information disclosure.
-                                // Detailed metrics are available on the operator-only
-                                // metrics endpoint (RELAY_METRICS_ADDR).
-                                let health_response = r#"{"status":"healthy"}"#;
-                                let response = format!(
-                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                                    health_response.len(),
-                                    health_response
-                                );
-                                let mut stream = stream;
-                                let _ = stream.write_all(response.as_bytes()).await;
-                                let _ = stream.shutdown().await;
-                                tracing::debug!("Handled HTTP {}", path);
-                                return;
-                            }
-
-                            // Root or other paths - return info/error
-                            let body = r#"{"error":"Not found. Use /health for status or /v2/ for the API."}"#;
-                            let response = format!(
-                                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                                body.len(),
-                                body
-                            );
-                            let mut stream = stream;
-                            let _ = stream.write_all(response.as_bytes()).await;
-                            let _ = stream.shutdown().await;
-                            tracing::debug!("Handled HTTP root/other (404)");
-                            return;
-                        }
-                    }
+            let n = stream.peek(&mut peek_buf).await.unwrap_or(0);
+            match classify_connection(&peek_buf[..n]) {
+                ConnectionRoute::RejectWebSocket => {
+                    // Client WS removed — all clients use HTTP v2
+                    let body = r#"{"error":"WebSocket not supported. Use /v2/ HTTP API."}"#;
+                    let response = format!(
+                        "HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let mut stream = stream;
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                    tracing::debug!("Rejected non-federation WebSocket upgrade");
+                    return;
                 }
-                _ => {}
-            }
-
-            // Only federation WebSocket upgrades reach here
-            if ws_path != "/federation" {
-                return;
+                ConnectionRoute::Health => {
+                    // R-SA1: Main port health response omits version, uptime,
+                    // and blob_count to prevent information disclosure.
+                    // Detailed metrics are available on the operator-only
+                    // metrics endpoint (RELAY_METRICS_ADDR).
+                    metrics.blobs_stored.set(storage.blob_count() as i64);
+                    let health_response = r#"{"status":"healthy"}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        health_response.len(),
+                        health_response
+                    );
+                    let mut stream = stream;
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                    tracing::debug!("Handled HTTP health probe");
+                    return;
+                }
+                ConnectionRoute::NotFound => {
+                    // Update storage metrics before encoding (parity with the
+                    // health path: every served HTTP GET refreshes the gauge).
+                    metrics.blobs_stored.set(storage.blob_count() as i64);
+                    let body =
+                        r#"{"error":"Not found. Use /health for status or /v2/ for the API."}"#;
+                    let response = format!(
+                        "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let mut stream = stream;
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                    tracing::debug!("Handled HTTP root/other (404)");
+                    return;
+                }
+                ConnectionRoute::Drop => {
+                    // Non-HTTP, non-federation bytes — close silently.
+                    return;
+                }
+                ConnectionRoute::FederationWebSocket => {
+                    // Fall through to the federation handshake below.
+                }
             }
 
             // R-H1: Apply max_message_size at WebSocket accept time

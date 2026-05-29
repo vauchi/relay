@@ -174,13 +174,223 @@ async fn metrics_handler(State(state): State<HttpState>) -> impl IntoResponse {
     )
 }
 
-// INLINE_TEST_REQUIRED: Binary crate without lib.rs - tests cannot be external
+/// How the main listener should route a freshly-accepted connection,
+/// decided from the first bytes peeked (not consumed) off the socket.
+///
+/// The main port multiplexes federation WebSocket upgrades with a tiny
+/// set of plaintext health probes; everything else is rejected. Keeping
+/// the decision in one pure function lets us exercise the rejection
+/// paths (which otherwise live inside the async accept loop and never
+/// reach an HTTP handler) under unit test — see `classify_connection`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionRoute {
+    /// A WebSocket upgrade targeting `/federation` — proceed to the
+    /// federation handshake.
+    FederationWebSocket,
+    /// A WebSocket upgrade on any other path — reject with
+    /// `426 Upgrade Required`. Client WebSocket support was removed; all
+    /// clients use the HTTP `/v2/` API.
+    RejectWebSocket,
+    /// A plaintext `GET` to a health path (`/health`, `/up`, `/ready`) —
+    /// answer `200 OK`.
+    Health,
+    /// A plaintext `GET` to any other path — answer `404 Not Found`.
+    NotFound,
+    /// Anything else (non-HTTP bytes, an empty peek, a non-`GET` method on
+    /// a non-`/federation` target) — close the socket silently.
+    Drop,
+}
+
+/// Classify an accepted connection from the bytes peeked off its socket.
+///
+/// HTTP header and method names are case-insensitive, so detection
+/// lowercases the peeked prefix before matching. The request-target is
+/// parsed from the first request line (`GET /path HTTP/1.1`). This
+/// mirrors, byte-for-byte, the routing the main accept loop performs in
+/// `main.rs`; the loop writes the corresponding response for each route.
+pub fn classify_connection(peek: &[u8]) -> ConnectionRoute {
+    if peek.is_empty() {
+        return ConnectionRoute::Drop;
+    }
+
+    let peek_str = String::from_utf8_lossy(peek);
+    let peek_lower = peek_str.to_ascii_lowercase();
+
+    // A WebSocket upgrade must carry both an `Upgrade: websocket` header
+    // and a `Connection: …upgrade…` token.
+    let is_websocket_upgrade = peek_lower.contains("upgrade: websocket")
+        && peek_lower.contains("connection:")
+        && peek_lower.contains("upgrade");
+
+    // Request-target from the first line, e.g. "GET /federation HTTP/1.1".
+    let path = peek_str
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or("/");
+
+    if is_websocket_upgrade {
+        if path == "/federation" {
+            ConnectionRoute::FederationWebSocket
+        } else {
+            ConnectionRoute::RejectWebSocket
+        }
+    } else if peek_lower.starts_with("get ") {
+        if peek_lower.contains("get /health")
+            || peek_lower.contains("get /up")
+            || peek_lower.contains("get /ready")
+        {
+            ConnectionRoute::Health
+        } else {
+            ConnectionRoute::NotFound
+        }
+    } else {
+        // Non-`GET`, non-WebSocket bytes fall through to the federation
+        // accept path in the loop, which proceeds only for `/federation`
+        // (and fails the handshake otherwise). Mirror that here.
+        if path == "/federation" {
+            ConnectionRoute::FederationWebSocket
+        } else {
+            ConnectionRoute::Drop
+        }
+    }
+}
+
+// INLINE_TEST_REQUIRED: several handlers under test (root_handler,
+// health_handler, the auth/security-header middleware) are module-private
+// and not re-exported by the lib crate, so tests must live alongside them.
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;
+
+    // --- classify_connection: main-listener connection routing ---------
+    //
+    // These exercise the WebSocket-rejection and health/404 routing that
+    // lives in the raw TCP accept loop in `main.rs` — code no router-based
+    // test can reach. Each case asserts the EXACT route (CC-03), and the
+    // set is parameterized over adversarial byte shapes (CC-14): empty
+    // peeks, mixed-case headers, wrong paths, non-HTTP garbage.
+
+    // @internal
+    #[test]
+    fn test_classify_federation_websocket_upgrade_accepted() {
+        let req = b"GET /federation HTTP/1.1\r\nHost: relay\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n";
+        assert_eq!(
+            classify_connection(req),
+            ConnectionRoute::FederationWebSocket
+        );
+    }
+
+    // @internal
+    #[test]
+    fn test_classify_non_federation_websocket_rejected() {
+        // Client WebSocket support was removed: a WS upgrade on any path
+        // other than /federation must be rejected (-> 426 in main.rs).
+        for path in ["/", "/v2/", "/exchange", "/federation/../v2"] {
+            let req = format!(
+                "GET {path} HTTP/1.1\r\nHost: relay\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+            );
+            assert_eq!(
+                classify_connection(req.as_bytes()),
+                ConnectionRoute::RejectWebSocket,
+                "WS upgrade on {path:?} must be rejected"
+            );
+        }
+    }
+
+    // @internal
+    #[test]
+    fn test_classify_websocket_detection_is_case_insensitive() {
+        // HTTP headers are case-insensitive; a lower/upper/mixed mix must
+        // still be detected as a (rejected, non-federation) WS upgrade.
+        let req = b"get /chat HTTP/1.1\r\nhOsT: relay\r\nuPgRaDe: WebSocket\r\nCONNECTION: keep-alive, Upgrade\r\n\r\n";
+        assert_eq!(classify_connection(req), ConnectionRoute::RejectWebSocket);
+    }
+
+    // @internal
+    #[test]
+    fn test_classify_health_paths_return_health() {
+        for path in ["/health", "/up", "/ready"] {
+            let req = format!("GET {path} HTTP/1.1\r\nHost: relay\r\n\r\n");
+            assert_eq!(
+                classify_connection(req.as_bytes()),
+                ConnectionRoute::Health,
+                "GET {path} must route to Health"
+            );
+        }
+    }
+
+    // @internal
+    #[test]
+    fn test_classify_unknown_get_paths_return_not_found() {
+        for path in ["/", "/v2/", "/robots.txt", "/metrics", "/../etc/passwd"] {
+            let req = format!("GET {path} HTTP/1.1\r\nHost: relay\r\n\r\n");
+            assert_eq!(
+                classify_connection(req.as_bytes()),
+                ConnectionRoute::NotFound,
+                "GET {path} must route to NotFound"
+            );
+        }
+    }
+
+    /// Characterization: the production health detection is a *substring*
+    /// match (`contains("get /health")`), not an exact-path match, so any
+    /// path prefixed with a health probe name (`/healthz`, `/upgrade`,
+    /// `/readyz`) also routes to Health. This is pre-existing behavior; the
+    /// health response discloses nothing (`{"status":"healthy"}`), so it is
+    /// harmless — pinned here so a future exact-match tightening is a
+    /// deliberate, reviewed change rather than a silent regression.
+    // @internal
+    #[test]
+    fn test_classify_health_prefixed_paths_match_health_substring() {
+        for path in ["/healthz", "/health-check", "/upgrade", "/readyz"] {
+            let req = format!("GET {path} HTTP/1.1\r\nHost: relay\r\n\r\n");
+            assert_eq!(
+                classify_connection(req.as_bytes()),
+                ConnectionRoute::Health,
+                "GET {path} matches the health substring (documented quirk)"
+            );
+        }
+    }
+
+    // @internal
+    #[test]
+    fn test_classify_empty_peek_is_dropped() {
+        assert_eq!(classify_connection(&[]), ConnectionRoute::Drop);
+    }
+
+    // @internal
+    #[test]
+    fn test_classify_non_http_bytes_are_dropped() {
+        // TLS ClientHello-ish prefix and raw binary must not match any
+        // HTTP/WS shape — close silently rather than reply.
+        assert_eq!(
+            classify_connection(&[0x16, 0x03, 0x01, 0x00, 0xff]),
+            ConnectionRoute::Drop
+        );
+        assert_eq!(
+            classify_connection(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"),
+            ConnectionRoute::Drop
+        );
+    }
+
+    // @internal
+    #[test]
+    fn test_classify_non_get_non_ws_methods_are_dropped() {
+        // POST/PUT/etc. without a WS upgrade and not targeting /federation
+        // fall through the accept loop and are closed.
+        for method in ["POST", "PUT", "DELETE", "OPTIONS", "HEAD"] {
+            let req = format!("{method} /v2/ HTTP/1.1\r\nHost: relay\r\n\r\n");
+            assert_eq!(
+                classify_connection(req.as_bytes()),
+                ConnectionRoute::Drop,
+                "{method} /v2/ must be dropped"
+            );
+        }
+    }
 
     fn create_test_state() -> HttpState {
         HttpState {
