@@ -143,6 +143,10 @@ criteria = "safe-to-deploy"
 version = "1.2.62"
 criteria = "safe-to-deploy"
 
+[[exemptions.cc]]
+version = "1.2.63"
+criteria = "safe-to-deploy"
+
 [[exemptions.cesu8]]
 version = "1.1.0"
 criteria = "safe-to-deploy"
@@ -605,6 +609,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.lzma-rust2]]
 version = "0.15.7"
+criteria = "safe-to-deploy"
+
+[[exemptions.lzma-rust2]]
+version = "0.15.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.matchit]]
@@ -1160,6 +1168,10 @@ criteria = "safe-to-deploy"
 version = "0.4.71"
 criteria = "safe-to-deploy"
 
+[[exemptions.wasm-bindgen-futures]]
+version = "0.4.72"
+criteria = "safe-to-deploy"
+
 [[exemptions.wasm-bindgen-macro]]
 version = "0.2.121"
 criteria = "safe-to-deploy"
@@ -1228,8 +1240,16 @@ criteria = "safe-to-run"
 version = "0.8.48"
 criteria = "safe-to-deploy"
 
+[[exemptions.zerocopy]]
+version = "0.8.50"
+criteria = "safe-to-deploy"
+
 [[exemptions.zerocopy-derive]]
 version = "0.8.48"
+criteria = "safe-to-deploy"
+
+[[exemptions.zerocopy-derive]]
+version = "0.8.50"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerofrom]]
