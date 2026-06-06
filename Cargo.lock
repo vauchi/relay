@@ -248,9 +248,9 @@ dependencies = [
 
 [[package]]
 name = "bitflags"
-version = "2.12.1"
+version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84d7ced0ae9557296835c32bf1b1e02b44c746701f898460fb000d7eaa84f00a"
+checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
 name = "blake2"
@@ -2461,8 +2461,8 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vauchi-protocol"
-version = "0.51.40"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#ad17b33284e74a7f2ddac45803253d2d297d64c9"
+version = "0.51.43"
+source = "git+https://gitlab.com/vauchi/core.git?branch=main#45ee4d2b5ebfe59c7276fc3ad82a743b0e2fa615"
 dependencies = [
  "serde",
  "serde_json",
