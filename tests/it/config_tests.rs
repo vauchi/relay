@@ -262,6 +262,55 @@ fn test_validate_gossip_with_mtls_ok() {
     );
 }
 
+// gossip peer discovery cannot run while the federation subsystem is off;
+// the combination is a misconfiguration and must fail fast.
+// @internal
+#[test]
+fn test_validate_gossip_requires_enabled() {
+    let config = RelayConfig {
+        federation: FederationConfig {
+            gossip_enabled: true,
+            enabled: false,
+            // mTLS set so the assertion isolates the enabled error from the
+            // pre-existing gossip-requires-mTLS error.
+            tls_cert_path: Some("/path/to/cert.pem".to_string()),
+            tls_key_path: Some("/path/to/key.pem".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let warnings = config.validate();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.level == ConfigWarningLevel::Error
+                && w.message.contains("federation_enabled")),
+        "Gossip while federation is disabled should produce an error"
+    );
+}
+
+// @internal
+#[test]
+fn test_validate_gossip_with_enabled_ok() {
+    let config = RelayConfig {
+        federation: FederationConfig {
+            gossip_enabled: true,
+            enabled: true,
+            tls_cert_path: Some("/path/to/cert.pem".to_string()),
+            tls_key_path: Some("/path/to/key.pem".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let warnings = config.validate();
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| w.message.contains("federation_enabled")),
+        "Gossip with federation enabled should not warn about enabled"
+    );
+}
+
 // @internal
 #[test]
 fn test_validate_offload_threshold_sanity() {

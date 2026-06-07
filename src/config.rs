@@ -699,6 +699,19 @@ impl RelayConfig {
             });
         }
 
+        // Gossip peer discovery cannot run while the federation subsystem is
+        // disabled — the combination is a misconfiguration. Fail fast rather
+        // than silently doing nothing (#2026-06-07-config-type-state-invariants).
+        if self.federation.gossip_enabled && !self.federation.enabled {
+            warnings.push(ConfigWarning {
+                level: ConfigWarningLevel::Error,
+                message: "federation_gossip_enabled=true requires federation_enabled=true. \
+                    Gossip peer discovery cannot run while the federation subsystem is \
+                    disabled."
+                    .to_string(),
+            });
+        }
+
         // R-M3: Detect partial mTLS configuration (cert without key or vice versa).
         let has_cert = self.federation.tls_cert_path.is_some();
         let has_key = self.federation.tls_key_path.is_some();
