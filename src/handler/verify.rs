@@ -35,9 +35,13 @@ pub(crate) fn verify_purge_ed25519(
         ));
     }
 
+    // Fail closed with a truthful error if the relay clock is before the
+    // Unix epoch, rather than silently defaulting to 0 (which would reject
+    // every real request as "timestamp outside window" — misleading, though
+    // not a bypass: the signature still binds the timestamp).
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
+        .map_err(|_| "relay clock is set before the Unix epoch".to_string())?
         .as_secs();
     if now.abs_diff(timestamp) > TIMESTAMP_WINDOW {
         return Err("purge timestamp outside acceptable window".to_string());
@@ -104,9 +108,13 @@ pub(crate) fn verify_guardian_ed25519(
         ));
     }
 
+    // Fail closed with a truthful error if the relay clock is before the
+    // Unix epoch, rather than silently defaulting to 0 (which would reject
+    // every real request as "timestamp outside window" — misleading, though
+    // not a bypass: the signature still binds the timestamp).
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
+        .map_err(|_| "relay clock is set before the Unix epoch".to_string())?
         .as_secs();
     if now.abs_diff(timestamp) > TIMESTAMP_WINDOW {
         return Err("guardian request timestamp outside acceptable window".to_string());
