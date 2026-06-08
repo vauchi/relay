@@ -251,7 +251,6 @@ impl RelayConfig {
         let mut config = Self::default();
         let mut warnings: Vec<String> = Vec::new();
 
-        // Network configuration
         if let Ok(addr) = std::env::var("RELAY_LISTEN_ADDR") {
             match addr.parse() {
                 Ok(parsed) => config.network.listen_addr = parsed,
@@ -292,7 +291,6 @@ impl RelayConfig {
             }
         }
 
-        // Storage configuration
         if let Ok(val) = std::env::var("RELAY_BLOB_TTL_SECS") {
             match val.parse() {
                 Ok(parsed) => config.storage.blob_ttl_secs = parsed,
@@ -361,7 +359,6 @@ impl RelayConfig {
             }
         }
 
-        // Security configuration
         if let Ok(val) = std::env::var("RELAY_RATE_LIMIT") {
             match val.parse() {
                 Ok(parsed) => config.security.rate_limit_per_min = parsed,
@@ -402,7 +399,6 @@ impl RelayConfig {
             }
         }
 
-        // Federation configuration
         if let Ok(val) = std::env::var("RELAY_FEDERATION_ENABLED") {
             config.federation.enabled = val == "true" || val == "1";
         }
@@ -465,7 +461,6 @@ impl RelayConfig {
             }
         }
 
-        // Gossip discovery
         if let Ok(val) = std::env::var("RELAY_FEDERATION_GOSSIP_ENABLED") {
             config.federation.gossip_enabled = val == "true" || val == "1";
         }
@@ -490,7 +485,6 @@ impl RelayConfig {
             }
         }
 
-        // Federation mTLS configuration
         if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_CERT")
             && !val.is_empty()
         {
@@ -529,10 +523,8 @@ impl RelayConfig {
             }
         }
 
-        // Load or generate relay_id
         config.federation.relay_id = load_relay_id(&config.storage.data_dir);
 
-        // HTTP API v2 configuration
         if let Ok(val) = std::env::var("RELAY_HTTP_API_ENABLED") {
             config.http_api.enabled = val == "true" || val == "1";
         }
@@ -595,7 +587,6 @@ impl RelayConfig {
             }
         }
 
-        // Version policy configuration
         let defaults = VersionPolicyConfig::default();
         let mut vp_min = defaults.min_version();
         let mut vp_warn = defaults.warn_version();
@@ -735,7 +726,6 @@ impl RelayConfig {
             });
         }
 
-        // Offload threshold sanity
         if self.federation.offload_threshold >= self.federation.offload_refuse {
             warnings.push(ConfigWarning {
                 level: ConfigWarningLevel::Warning,
@@ -772,14 +762,12 @@ pub struct ConfigWarning {
 /// 2. `{data_dir}/relay_id` file (read existing)
 /// 3. Generate new UUID and write to file
 pub fn load_relay_id(data_dir: &Path) -> String {
-    // 1. Check env var first
     if let Ok(val) = std::env::var("RELAY_FEDERATION_RELAY_ID")
         && !val.is_empty()
     {
         return val;
     }
 
-    // 2. Try reading from file
     let relay_id_path = data_dir.join("relay_id");
     if let Ok(id) = std::fs::read_to_string(&relay_id_path) {
         let id = id.trim().to_string();
@@ -788,7 +776,6 @@ pub fn load_relay_id(data_dir: &Path) -> String {
         }
     }
 
-    // 3. Generate new UUID and persist
     let id = uuid::Uuid::new_v4().to_string();
     let _ = std::fs::create_dir_all(data_dir);
     let _ = std::fs::write(&relay_id_path, &id);

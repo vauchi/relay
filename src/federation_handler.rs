@@ -80,7 +80,6 @@ where
 
     let (mut write, mut read) = ws_stream.split();
 
-    // Wait for PeerHandshake with timeout
     let peer_timeout = std::time::Duration::from_secs(config.federation.peer_timeout_secs);
     let (peer_relay_id, _peer_version) = match timeout(peer_timeout, read.next()).await {
         Ok(Some(Ok(Message::Binary(data)))) => {
@@ -146,7 +145,6 @@ where
     info!("[fed-{}] Peer connected", session);
     metrics.federation_peers_connected.inc();
 
-    // Register peer in PeerRegistry
     let used_bytes = storage.storage_size_bytes();
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -163,7 +161,6 @@ where
         last_seen_secs: now_secs,
     });
 
-    // Send PeerHandshakeAck
     let ack =
         federation_protocol::create_federation_envelope(FederationPayload::PeerHandshakeAck {
             relay_id: config.federation.relay_id.clone(),
@@ -182,7 +179,6 @@ where
 
     let mut offload_count: usize = 0;
 
-    // Main message loop
     loop {
         let msg = match timeout(
             std::time::Duration::from_secs(config.federation.peer_timeout_secs * 2),
@@ -203,7 +199,6 @@ where
 
         match msg {
             Ok(Message::Binary(data)) => {
-                // Per-peer rate limiting for federation messages
                 if !federation_rate_limiter.consume(&peer_relay_id) {
                     warn!("[fed-{}] Federation peer rate limited", session);
                     metrics.federation_rate_limited.inc();
@@ -257,7 +252,6 @@ where
                             continue;
                         }
 
-                        // Unpad blob data (remove federation padding)
                         let unpadded_data = match padding::unpad(&blob_data) {
                             Some(data) => data,
                             None => {
@@ -267,7 +261,6 @@ where
                             }
                         };
 
-                        // Check capacity
                         let current_usage = storage.storage_size_bytes();
                         let usage_ratio =
                             current_usage as f64 / config.storage.max_storage_bytes as f64;
@@ -285,7 +278,6 @@ where
                             continue;
                         }
 
-                        // Store blob with incremented hop_count
                         let blob = StoredBlob::with_metadata(
                             unpadded_data,
                             created_at_secs,
@@ -295,7 +287,6 @@ where
                         offload_count += 1;
                         metrics.federation_offloads_received.inc();
 
-                        // Send acceptance ack
                         send_federation_msg(
                             &mut write,
                             FederationPayload::OffloadAck {

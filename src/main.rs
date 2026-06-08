@@ -66,7 +66,6 @@ async fn main() {
         }
     }
 
-    // Load configuration (warnings for invalid numeric/address env vars are logged below)
     let (config, parse_warnings) = RelayConfig::from_env_with_warnings();
     for warning in &parse_warnings {
         tracing::warn!("Configuration parse warning: {}", warning);
@@ -124,7 +123,6 @@ async fn main() {
     let connection_limiter = ConnectionLimiter::new(config.network.max_connections);
     let _start_time = Instant::now();
 
-    // Parse HTTP listen address for health/metrics endpoints
     // By default, bind to localhost for security (metrics contain internal info)
     // Use RELAY_METRICS_ADDR to expose on other interfaces if needed
     let http_addr =
@@ -145,7 +143,6 @@ async fn main() {
     info!("Storage backend: {:?}", config.storage.backend);
     info!("Idle timeout: {}s", config.network.idle_timeout_secs);
 
-    // Load or generate Noise keypair for inner transport encryption
     let noise_keypair = noise_key::load_or_generate_keypair(&config.storage.data_dir);
     let noise_pubkey_b64 = noise_key::public_key_base64url(&noise_keypair.public);
     info!("Noise public key: {}", noise_pubkey_b64);
@@ -157,10 +154,8 @@ async fn main() {
     }
     info!("Noise encryption: REQUIRED (Noise NK mandatory since v0.1)");
 
-    // Initialize metrics
     let metrics = RelayMetrics::new();
 
-    // Spawn tokio runtime metrics update task (updates gauges every 15s)
     {
         let tokio_metrics = metrics.clone();
         tokio::spawn(async move {
@@ -177,7 +172,6 @@ async fn main() {
         });
     }
 
-    // Install panic hook: log structured error and increment relay_panics_total
     {
         let panics_metric = metrics.panics_total.clone();
         let prev_hook = std::panic::take_hook();
@@ -188,7 +182,6 @@ async fn main() {
         }));
     }
 
-    // Initialize shared state
     let storage: Arc<dyn BlobStore> = Arc::from(create_blob_store(
         config.storage.backend,
         Some(&config.storage.data_dir),
@@ -245,7 +238,6 @@ async fn main() {
         storage.set_config("min_version_changed_at", &changed_at.to_string());
     }
 
-    // Initialize recovery proof storage
     // Always use SQLite - in-memory for Memory backend, file-based for Sqlite backend
     let recovery_storage: Arc<dyn RecoveryProofStore> = match config.storage.backend {
         StorageBackend::Memory => Arc::new(
@@ -260,7 +252,6 @@ async fn main() {
         }
     };
 
-    // Initialize guardian entry storage
     let guardian_storage: Arc<dyn GuardianStore> = match config.storage.backend {
         StorageBackend::Memory => Arc::new(
             SqliteGuardianStore::in_memory().expect("Failed to create in-memory guardian db"),
@@ -275,7 +266,6 @@ async fn main() {
 
     let nonce_tracker = Arc::new(handler::NonceTracker::new());
 
-    // Initialize federation state
     let config = Arc::new(config);
     let peer_registry = Arc::new(PeerRegistry::new(config.federation.offload_refuse));
     let federation_rate_limiter = Arc::new(RateLimiter::new(
@@ -297,7 +287,6 @@ async fn main() {
             config.federation.peers.len()
         );
 
-        // Load mTLS configuration for federation connections
         let federation_tls_config = match federation_tls::load_federation_tls(&config) {
             Ok(Some(tls_config)) => {
                 info!("Federation mTLS enabled — outbound and inbound connections authenticated");
@@ -316,7 +305,6 @@ async fn main() {
             }
         };
 
-        // Extract client config for outbound connections
         let tls_client_config = federation_tls_config
             .as_ref()
             .map(|c| c.client_config.clone());
@@ -331,7 +319,6 @@ async fn main() {
             pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         });
 
-        // Spawn per-peer connector tasks (with optional mTLS)
         for peer_url in &config.federation.peers {
             let peer_url = peer_url.clone();
             let own_relay_id = config.federation.relay_id.clone();
@@ -354,7 +341,6 @@ async fn main() {
             });
         }
 
-        // Spawn mTLS federation listener when configured
         if let Some(ref tls_config) = federation_tls_config {
             let mtls_addr = config.federation.mtls_addr.unwrap_or_else(|| {
                 let mut addr = config.network.listen_addr;
@@ -409,7 +395,6 @@ async fn main() {
                             ..Default::default()
                         };
 
-                        // WebSocket upgrade over TLS
                         match tokio_tungstenite::accept_async_with_config(
                             tls_stream,
                             Some(fed_ws_config),
@@ -440,7 +425,6 @@ async fn main() {
             });
         }
 
-        // Spawn capacity monitor / offload task
         let capacity_interval = config.federation.capacity_interval_secs;
         let offload_mgr_task = offload_manager.clone();
         tokio::spawn(async move {
@@ -450,7 +434,6 @@ async fn main() {
             }
         });
 
-        // Spawn forwarding hints cleanup task (reuse cleanup_interval timing)
         let cleanup_hints = hint_store.clone();
         let hints_cleanup_interval = config.cleanup_interval();
         let hints_cleanup_metrics = metrics.clone();
@@ -473,7 +456,6 @@ async fn main() {
             }
         });
 
-        // Spawn gossip task if enabled
         if config.federation.gossip_enabled {
             info!(
                 "Gossip discovery enabled: interval={}s, peer_ttl={}s",
@@ -488,7 +470,6 @@ async fn main() {
         }
     }
 
-    // Check for metrics auth token (optional additional protection)
     let metrics_token = std::env::var("RELAY_METRICS_TOKEN").ok();
     if metrics_token.is_some() {
         info!("Metrics endpoint protected with bearer token");
@@ -497,7 +478,6 @@ async fn main() {
         info!("Consider setting RELAY_METRICS_TOKEN for production use");
     }
 
-    // Start HTTP server for health/metrics (+ optional v2 API)
     let http_state = HttpState {
         metrics: metrics.clone(),
         metrics_token,
@@ -505,7 +485,6 @@ async fn main() {
     };
     let mut http_router = create_router(http_state);
 
-    // Conditionally enable v2 HTTP API (REST, OHTTP, exchange broker)
     if config.http_api.enabled {
         let ohttp_gateway = if config.http_api.ohttp_enabled {
             let rotation_secs = config
@@ -532,7 +511,6 @@ async fn main() {
                             .unwrap_or("ephemeral"),
                     );
                     let gw = Arc::new(gw);
-                    // Spawn periodic key rotation task.
                     let _rotation_handle = OhttpGateway::spawn_rotation_task(gw.clone());
                     Some(gw)
                 }
@@ -613,7 +591,6 @@ async fn main() {
         axum::serve(http_listener, http_router).await.unwrap();
     });
 
-    // Start cleanup task for expired blobs
     let cleanup_storage = storage.clone();
     let cleanup_metrics = metrics.clone();
     let blob_ttl = config.blob_ttl();
@@ -629,12 +606,10 @@ async fn main() {
         }
     });
 
-    // Start cleanup task for recovery proofs
     let cleanup_recovery = recovery_storage.clone();
     let cleanup_recovery_metrics = metrics.clone();
     tokio::spawn(async move {
         loop {
-            // Check every hour for expired proofs
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
             let removed = cleanup_recovery.cleanup_expired();
             if removed > 0 {
@@ -646,7 +621,6 @@ async fn main() {
         }
     });
 
-    // Start cleanup task for guardian entries
     let cleanup_guardian = guardian_storage.clone();
     tokio::spawn(async move {
         loop {
@@ -659,13 +633,11 @@ async fn main() {
         }
     });
 
-    // Start cleanup task for rate limiters (remove stale client buckets)
     let cleanup_rate_limiter = rate_limiter.clone();
     let cleanup_recovery_rate_limiter = recovery_rate_limiter.clone();
     let cleanup_federation_rate_limiter = federation_rate_limiter.clone();
     tokio::spawn(async move {
         loop {
-            // Clean up every 10 minutes, removing clients idle for 30 minutes
             tokio::time::sleep(std::time::Duration::from_secs(600)).await;
             let removed =
                 cleanup_rate_limiter.cleanup_inactive(std::time::Duration::from_secs(1800));
@@ -718,7 +690,6 @@ async fn main() {
         shutdown_for_signal.notify_waiters();
     });
 
-    // Accept connections (races against shutdown signal)
     loop {
         let stream = tokio::select! {
             result = listener.accept() => {
@@ -735,7 +706,6 @@ async fn main() {
             }
         };
         let _addr = stream.peer_addr().ok();
-        // Enforce connection limit
         let connection_guard = match connection_limiter.try_acquire() {
             Some(guard) => guard,
             None => {
@@ -745,7 +715,6 @@ async fn main() {
                     config.network.max_connections
                 );
                 metrics.connection_errors.inc();
-                // Drop the stream to close the connection
                 drop(stream);
                 continue;
             }
@@ -884,7 +853,6 @@ async fn main() {
         });
     }
 
-    // === Graceful shutdown: drain existing connections ===
     let drain_timeout = Duration::from_secs(30);
     let active = connection_limiter.active_count();
     if active > 0 {
@@ -907,13 +875,11 @@ async fn main() {
                     break;
                 }
                 _ = tokio::time::sleep(Duration::from_millis(250)) => {
-                    // Poll again
                 }
             }
         }
     }
 
-    // === WAL checkpoint on all SQLite databases ===
     info!("Running WAL checkpoint on databases...");
     storage.shutdown();
     info!("Shutdown complete");

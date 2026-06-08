@@ -489,7 +489,6 @@ mod tests {
         gw.rotate().expect("second rotation");
         let config_2 = gw.encoded_key_config();
 
-        // Decode the key_id byte from each config.
         // RFC 9458 KeyConfig encoding: first byte after the 2-byte length prefix
         // is the key_id. The ohttp crate's encode() returns the raw KeyConfig
         // without length prefix, so byte 0 is key_id.

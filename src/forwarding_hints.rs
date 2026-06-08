@@ -41,10 +41,6 @@ pub trait ForwardingHintStore: Send + Sync {
     fn hint_count(&self) -> usize;
 }
 
-// ============================================================================
-// SQLite Implementation
-// ============================================================================
-
 /// SQLite-backed forwarding hint store using a separate database file
 /// (`federation.db`) to avoid contention with BlobStore's `blobs.db`.
 pub struct SqliteForwardingHintStore {

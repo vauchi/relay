@@ -103,7 +103,6 @@ pub fn load_keypair(data_dir: &Path) -> std::io::Result<RelayKeypair> {
 /// 2. Existing key file at `{data_dir}/relay_noise_key.bin`
 /// 3. Generate new keypair and save to file
 pub fn load_or_generate_keypair(data_dir: &Path) -> RelayKeypair {
-    // 1. Check env var override (base64url-encoded 64 bytes: private + public)
     if let Ok(key_b64) = std::env::var("RELAY_NOISE_STATIC_KEY")
         && let Ok(key_bytes) = URL_SAFE_NO_PAD.decode(&key_b64)
         && key_bytes.len() == KEY_FILE_SIZE
@@ -115,12 +114,10 @@ pub fn load_or_generate_keypair(data_dir: &Path) -> RelayKeypair {
         return RelayKeypair { private, public };
     }
 
-    // 2. Try loading from file
     if let Ok(keypair) = load_keypair(data_dir) {
         return keypair;
     }
 
-    // 3. Generate new keypair and save
     let keypair = generate_relay_keypair();
     let _ = save_keypair(&keypair, data_dir);
     keypair

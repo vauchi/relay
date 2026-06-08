@@ -109,7 +109,6 @@ pub fn load_federation_tls(config: &RelayConfig) -> Result<Option<FederationTlsC
 
     info!("Loading federation mTLS certificates");
 
-    // Load our client certificate and private key
     let client_certs = load_certs(cert_path)?;
     let client_key = load_private_key(key_path)?;
     let root_store = load_ca_certs(ca_path)?;

@@ -133,10 +133,6 @@ pub trait BlobStore: Send + Sync {
     fn shutdown(&self) {}
 }
 
-// ============================================================================
-// SQLite Storage
-// ============================================================================
-
 /// SQLite-backed persistent storage for blobs.
 pub struct SqliteBlobStore {
     conn: Mutex<Connection>,
@@ -147,15 +143,12 @@ impl SqliteBlobStore {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, rusqlite::Error> {
         let conn = Connection::open(path)?;
 
-        // Enable WAL mode for better concurrent performance
-        // WAL allows readers and writers to operate concurrently
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
              PRAGMA cache_size=10000;",
         )?;
 
-        // Create table if not exists
         conn.execute(
             "CREATE TABLE IF NOT EXISTS blobs (
                 id TEXT PRIMARY KEY,
@@ -167,19 +160,16 @@ impl SqliteBlobStore {
             [],
         )?;
 
-        // Create index for recipient lookups
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_blobs_recipient ON blobs(recipient_id)",
             [],
         )?;
 
-        // Create index for expiration cleanup
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_blobs_created ON blobs(created_at_secs)",
             [],
         )?;
 
-        // Create config table for persisting global state
         conn.execute(
             "CREATE TABLE IF NOT EXISTS config (
                 key TEXT PRIMARY KEY,
@@ -340,7 +330,6 @@ impl BlobStore for SqliteBlobStore {
 
     fn storage_size_bytes(&self) -> usize {
         let conn = self.conn.lock();
-        // Get page count and page size
         let page_count: i64 = conn
             .query_row("PRAGMA page_count", [], |row| row.get(0))
             .unwrap_or(0);
@@ -448,10 +437,6 @@ impl BlobStore for SqliteBlobStore {
     }
 }
 
-// ============================================================================
-// Storage Factory
-// ============================================================================
-
 /// Storage backend type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StorageBackend {
@@ -473,7 +458,6 @@ pub fn create_blob_store(backend: StorageBackend, data_dir: Option<&Path>) -> Bo
                 .map(|d| d.join("blobs.db"))
                 .unwrap_or_else(|| std::path::PathBuf::from("blobs.db"));
 
-            // Ensure directory exists
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -482,10 +466,6 @@ pub fn create_blob_store(backend: StorageBackend, data_dir: Option<&Path>) -> Bo
         }
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 // INLINE_TEST_REQUIRED: Binary crate without lib.rs - tests cannot be external
 #[cfg(test)]

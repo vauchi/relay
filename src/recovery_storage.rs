@@ -82,10 +82,6 @@ pub trait RecoveryProofStore: Send + Sync {
     fn proof_count(&self) -> usize;
 }
 
-// ============================================================================
-// SQLite Storage
-// ============================================================================
-
 /// SQLite-backed persistent storage for recovery proofs.
 pub struct SqliteRecoveryProofStore {
     conn: Mutex<Connection>,
@@ -96,14 +92,12 @@ impl SqliteRecoveryProofStore {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, rusqlite::Error> {
         let conn = Connection::open(path)?;
 
-        // Enable WAL mode for better concurrent performance
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
              PRAGMA cache_size=10000;",
         )?;
 
-        // Create table if not exists
         conn.execute(
             "CREATE TABLE IF NOT EXISTS recovery_proofs (
                 key_hash BLOB PRIMARY KEY,
@@ -114,7 +108,6 @@ impl SqliteRecoveryProofStore {
             [],
         )?;
 
-        // Create index for expiration cleanup
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_recovery_expires ON recovery_proofs(expires_at_secs)",
             [],
@@ -215,10 +208,6 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
         .unwrap_or(0) as usize
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 // INLINE_TEST_REQUIRED: Binary crate without lib.rs - tests cannot be external
 #[cfg(test)]

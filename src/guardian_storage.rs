@@ -84,10 +84,6 @@ pub trait GuardianStore: Send + Sync {
     fn set_count(&self) -> usize;
 }
 
-// ============================================================================
-// Serialization helpers
-// ============================================================================
-
 /// Serializes a list of opaque entry blobs to JSON (base64-encoded strings).
 fn serialize_entries(entries: &[Vec<u8>]) -> Vec<u8> {
     let encoded: Vec<String> = entries.iter().map(|e| BASE64.encode(e)).collect();
@@ -103,10 +99,6 @@ fn deserialize_entries(data: &[u8]) -> Vec<Vec<u8>> {
         .collect()
 }
 
-// ============================================================================
-// SQLite Storage
-// ============================================================================
-
 /// SQLite-backed persistent storage for guardian entry sets.
 pub struct SqliteGuardianStore {
     conn: Mutex<Connection>,
@@ -117,14 +109,12 @@ impl SqliteGuardianStore {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, rusqlite::Error> {
         let conn = Connection::open(path)?;
 
-        // Enable WAL mode for better concurrent performance
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
              PRAGMA cache_size=10000;",
         )?;
 
-        // Create table if not exists
         conn.execute(
             "CREATE TABLE IF NOT EXISTS guardian_sets (
                 guardian_hash BLOB PRIMARY KEY,
@@ -135,7 +125,6 @@ impl SqliteGuardianStore {
             [],
         )?;
 
-        // Create index for expiration cleanup
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_guardian_expires ON guardian_sets(expires_at_secs)",
             [],
@@ -232,10 +221,6 @@ impl GuardianStore for SqliteGuardianStore {
         .unwrap_or(0) as usize
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 // INLINE_TEST_REQUIRED: Binary crate — tests cannot be external
 #[cfg(test)]

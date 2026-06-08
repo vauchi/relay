@@ -85,8 +85,6 @@ pub struct OhttpInnerRequest {
     pub payload: serde_json::Value,
 }
 
-// ── Router ──────────────────────────────────────────────────────────
-
 /// Creates the v2 HTTP API router.
 ///
 /// Applies a 128 KiB body size limit to all endpoints. This is a transport-layer
@@ -216,8 +214,6 @@ where
         }
     }
 }
-
-// ── Handlers ────────────────────────────────────────────────────────
 
 /// Health check — returns 200 with JSON status.
 async fn health_handler() -> impl IntoResponse {
@@ -370,8 +366,6 @@ async fn purge_handler(
     logic_response(handle_purge_logic(&state, req))
 }
 
-// ── Recovery ───────────────────────────────────────────────────────
-
 /// Store a recovery proof.
 async fn recovery_store_handler(
     State(state): State<HttpApiState>,
@@ -387,8 +381,6 @@ async fn recovery_query_handler(
 ) -> impl IntoResponse {
     logic_response(handle_recovery_query_logic(&state, req))
 }
-
-// ── Guardian ──────────────────────────────────────────────────────
 
 /// Store guardian entries (atomic replace).
 async fn guardian_store_handler(
@@ -414,8 +406,6 @@ async fn guardian_delete_handler(
     logic_response(handle_guardian_delete_logic(&state, req))
 }
 
-// ── Exchange ────────────────────────────────────────────────────────
-
 /// Create an exchange offer and return a 6-digit code.
 async fn exchange_offer_handler(
     State(state): State<HttpApiState>,
@@ -439,8 +429,6 @@ async fn exchange_complete_handler(
 ) -> impl IntoResponse {
     logic_response(handle_exchange_complete_logic(&state, req))
 }
-
-// ── OHTTP ───────────────────────────────────────────────────────────
 
 /// Return the server's OHTTP public-key configuration.
 ///
@@ -483,7 +471,6 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
         return build_ohttp_error(StatusCode::NOT_FOUND, "ohttp not enabled");
     };
 
-    // 1. Decapsulate the OHTTP request
     let (plaintext, srv_response) = match gw.decapsulate(&body) {
         Ok(pair) => pair,
         Err(e) => {
@@ -500,7 +487,6 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
         }
     };
 
-    // 2. Unpad the plaintext
     let plaintext = match crate::padding::unpad(&plaintext) {
         Some(p) => p,
         None => {
@@ -512,7 +498,6 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
         }
     };
 
-    // 3. Parse the inner JSON envelope
     let inner: OhttpInnerRequest = match serde_json::from_slice(&plaintext) {
         Ok(r) => r,
         Err(e) => {
@@ -523,7 +508,6 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
         }
     };
 
-    // 3. Validate protocol version (must be 2)
     if inner.version != 2 {
         let v = inner.version;
         let err = serde_json::json!({ "status": "error", "error": format!("unsupported protocol version: {v}") });
@@ -543,10 +527,8 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
         };
     }
 
-    // 4. Dispatch to the appropriate handler logic
     let response_json = dispatch_ohttp_action(&state, &inner.action, inner.payload).await;
 
-    // 5. Serialize response, pad to fixed bucket size, and encapsulate.
     // OHTTP-08: Padding prevents action-type leakage via response size.
     let resp_bytes = serde_json::to_vec(&response_json).unwrap_or_default();
     let padded_bytes = crate::padding::pad(&resp_bytes);
@@ -750,8 +732,6 @@ async fn dispatch_ohttp_action(
     }
 }
 
-// ── Validation helpers ──────────────────────────────────────────────
-
 /// Randomized hash for rate limiting keys. Uses SipHash with per-process
 /// random seed — collision-resistant against targeted attacks.
 fn rate_limit_hash(s: &str) -> u64 {
@@ -796,8 +776,6 @@ fn verify_purge_signature(
 
     Ok(())
 }
-
-// ── Extracted handler logic (shared with OHTTP dispatcher) ──────────
 
 #[tracing::instrument(level = "debug", skip_all, fields(ct_b64_len = req.ciphertext.len()), name = "relay.send")]
 fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
@@ -934,20 +912,16 @@ fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> ApiResult {
     ApiResult::ok(serde_json::json!({ "status": "ok", "blobs_deleted": deleted }))
 }
 
-// ── Recovery handler logic ──────────────────────────────────────────
-
 /// Maximum recovery proof data size (4 KiB).
 const MAX_RECOVERY_PROOF_SIZE: usize = 4096;
 /// Maximum number of key hashes per query.
 const MAX_RECOVERY_QUERY_HASHES: usize = 50;
 
 fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest) -> ApiResult {
-    // Validate key_hash: must be 64 hex chars (32 bytes)
     if !crate::handler::validate_client_id(&req.key_hash) {
         return ApiResult::bad_request("key_hash must be 64 hex characters (32 bytes)");
     }
 
-    // Decode proof_data from base64
     let proof_bytes = base64::engine::general_purpose::STANDARD
         .decode(&req.proof_data)
         .map_err(|_| "invalid base64 in proof_data");
@@ -963,13 +937,11 @@ fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest
         ));
     }
 
-    // Rate limit by key_hash
     let rate_key = format!("recovery:{}", &req.key_hash);
     if !state.rate_limiter.consume(&rate_key) {
         return ApiResult::RateLimited;
     }
 
-    // Decode key_hash to bytes
     let key_hash = hex_to_32bytes(&req.key_hash);
     let key_hash = match key_hash {
         Some(h) => h,
@@ -990,7 +962,6 @@ fn handle_recovery_query_logic(state: &HttpApiState, req: V2RecoveryQueryRequest
         ));
     }
 
-    // Decode all hex hashes
     let mut key_hashes = Vec::with_capacity(req.key_hashes.len());
     for hex in &req.key_hashes {
         match hex_to_32bytes(hex) {
@@ -1017,18 +988,14 @@ fn handle_recovery_query_logic(state: &HttpApiState, req: V2RecoveryQueryRequest
     ApiResult::ok(serde_json::json!({ "status": "ok", "proofs": proofs }))
 }
 
-// ── Guardian handler logic ─────────────────────────────────────────
-
 /// Individual entry size limit (padded to 184, but allow some margin).
 const MAX_GUARDIAN_ENTRY_SIZE: usize = 256;
 
 fn handle_guardian_store_logic(state: &HttpApiState, req: V2GuardianStoreRequest) -> ApiResult {
-    // Validate guardian_hash: must be 64 hex chars
     if req.guardian_hash.len() != 64 || !req.guardian_hash.chars().all(|c| c.is_ascii_hexdigit()) {
         return ApiResult::bad_request("guardian_hash must be 64 hex characters (32 bytes)");
     }
 
-    // Validate entry count
     if req.entries.len() > crate::guardian_storage::MAX_GUARDIAN_ENTRIES {
         return ApiResult::bad_request(format!(
             "too many entries (max {})",
@@ -1036,7 +1003,6 @@ fn handle_guardian_store_logic(state: &HttpApiState, req: V2GuardianStoreRequest
         ));
     }
 
-    // Decode entries from base64 and validate sizes
     let mut decoded_entries = Vec::with_capacity(req.entries.len());
     let mut total_size = 0usize;
     for entry in &req.entries {
@@ -1064,13 +1030,11 @@ fn handle_guardian_store_logic(state: &HttpApiState, req: V2GuardianStoreRequest
         ));
     }
 
-    // Rate limit by guardian_hash
     let rate_key = format!("guardian:{}", &req.guardian_hash);
     if !state.rate_limiter.consume(&rate_key) {
         return ApiResult::RateLimited;
     }
 
-    // Decode hash
     let guardian_hash = match hex_to_32bytes(&req.guardian_hash) {
         Some(h) => h,
         None => return ApiResult::bad_request("invalid guardian_hash hex"),
@@ -1083,7 +1047,6 @@ fn handle_guardian_store_logic(state: &HttpApiState, req: V2GuardianStoreRequest
 }
 
 fn handle_guardian_query_logic(state: &HttpApiState, req: V2GuardianQueryRequest) -> ApiResult {
-    // Validate guardian_hash
     let guardian_hash = match hex_to_32bytes(&req.guardian_hash) {
         Some(h) => h,
         None => {
@@ -1109,12 +1072,10 @@ fn handle_guardian_query_logic(state: &HttpApiState, req: V2GuardianQueryRequest
 }
 
 fn handle_guardian_delete_logic(state: &HttpApiState, req: V2GuardianDeleteRequest) -> ApiResult {
-    // Validate guardian_hash
     if req.guardian_hash.len() != 64 || !req.guardian_hash.chars().all(|c| c.is_ascii_hexdigit()) {
         return ApiResult::bad_request("guardian_hash must be 64 hex characters (32 bytes)");
     }
 
-    // Rate limit by guardian_hash
     // TODO: Add signature-based authentication (like /v2/purge) before production
     let rate_key = format!("guardian_delete:{}", &req.guardian_hash);
     if !state.rate_limiter.consume(&rate_key) {
@@ -1140,8 +1101,6 @@ fn hex_to_32bytes(hex: &str) -> Option<[u8; 32]> {
     arr.copy_from_slice(&bytes);
     Some(arr)
 }
-
-// ── Exchange handler logic ───────────────────────────────────────────
 
 fn handle_exchange_offer_logic(state: &HttpApiState, req: V2ExchangeOfferRequest) -> ApiResult {
     // S3: Global rate limit on offer creation prevents a single attacker from

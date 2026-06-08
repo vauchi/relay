@@ -62,7 +62,6 @@ pub async fn maintain_peer_connection(
         .await
         {
             Ok(()) => {
-                // Connection ended normally, reset backoff
                 backoff_secs = 1;
             }
             Err(e) => {
@@ -129,7 +128,6 @@ async fn try_connect_to_peer(
             .await
             .map_err(|e| format!("SSRF: {}", e))?;
 
-        // TCP connect to validated address (no re-resolution)
         let tcp_stream = timeout(
             TCP_CONNECT_TIMEOUT,
             tokio::net::TcpStream::connect(validated_addr),
@@ -138,7 +136,6 @@ async fn try_connect_to_peer(
         .map_err(|_| "TCP connect timed out".to_string())?
         .map_err(|e| format!("TCP connect failed: {}", e))?;
 
-        // WebSocket upgrade over validated TCP stream
         let (ws_stream, _) = tokio_tungstenite::client_async(&federation_url, tcp_stream)
             .await
             .map_err(|e| format!("WebSocket upgrade failed: {}", e))?;
@@ -160,7 +157,6 @@ async fn connect_with_tls(
     url: &str,
     client_config: &Arc<tokio_rustls::rustls::ClientConfig>,
 ) -> Result<WebSocketStream<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>, String> {
-    // Parse host and port from WebSocket URL
     let stripped = url
         .strip_prefix("wss://")
         .or_else(|| url.strip_prefix("ws://"))
@@ -181,7 +177,6 @@ async fn connect_with_tls(
         .await
         .map_err(|e| format!("SSRF: {}", e))?;
 
-    // TCP connect to validated address
     let tcp_stream = timeout(
         TCP_CONNECT_TIMEOUT,
         tokio::net::TcpStream::connect(validated_addr),
@@ -190,7 +185,6 @@ async fn connect_with_tls(
     .map_err(|_| "TCP connect timed out".to_string())?
     .map_err(|e| format!("TCP connect failed: {}", e))?;
 
-    // TLS handshake with mTLS client certificate
     let connector = tokio_rustls::TlsConnector::from(client_config.clone());
     let server_name = tokio_rustls::rustls::pki_types::ServerName::try_from(host)
         .map_err(|e| format!("Invalid server name: {}", e))?;
@@ -199,7 +193,6 @@ async fn connect_with_tls(
         .await
         .map_err(|e| format!("TLS handshake failed: {}", e))?;
 
-    // WebSocket upgrade over TLS
     let (ws_stream, _) = tokio_tungstenite::client_async(url, tls_stream)
         .await
         .map_err(|e| format!("WebSocket upgrade over TLS failed: {}", e))?;
@@ -223,7 +216,6 @@ where
 {
     let (mut write, mut read) = ws_stream.split();
 
-    // Send PeerHandshake
     let handshake =
         federation_protocol::create_federation_envelope(FederationPayload::PeerHandshake {
             relay_id: own_relay_id.to_string(),
@@ -237,7 +229,6 @@ where
         .await
         .map_err(|e| format!("Failed to send handshake: {}", e))?;
 
-    // Wait for PeerHandshakeAck
     let peer_timeout = std::time::Duration::from_secs(config.federation.peer_timeout_secs);
     let peer_relay_id = match timeout(peer_timeout, read.next()).await {
         Ok(Some(Ok(Message::Binary(data)))) => {
@@ -255,10 +246,8 @@ where
                             return Err("Peer rejected handshake".to_string());
                         }
 
-                        // Create sender channel for sending messages to this peer
                         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
 
-                        // Register peer
                         let now_secs = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
@@ -274,7 +263,6 @@ where
                             last_seen_secs: now_secs,
                         });
 
-                        // Spawn a task to forward outgoing messages from the channel to the WS
                         let write = Arc::new(tokio::sync::Mutex::new(write));
                         let write_clone = write.clone();
                         tokio::spawn(async move {
@@ -301,7 +289,6 @@ where
         Err(_) => return Err("Handshake ack timeout".to_string()),
     };
 
-    // Read loop for incoming messages from peer
     loop {
         let msg = match timeout(
             std::time::Duration::from_secs(config.federation.peer_timeout_secs * 4),
@@ -347,7 +334,6 @@ where
                                 session, blob_id, reason
                             );
                         }
-                        // Delegate to OffloadManager to delete or retry
                         if let Some(ref offload_mgr) = offload_manager {
                             offload_mgr.handle_offload_ack(&blob_id, accepted);
                         }
@@ -361,12 +347,10 @@ where
                     }
                     FederationPayload::DrainNotice { .. } => {
                         peer_registry.set_status(&peer_relay_id, PeerStatus::Draining);
-                        // Send DrainAck via the sender channel
                         let ack = federation_protocol::create_federation_envelope(
                             FederationPayload::DrainAck,
                         );
                         if let Ok(data) = federation_protocol::encode_federation_message(&ack) {
-                            // Use the sender channel
                             let peers = peer_registry.connected_peers();
                             if let Some(peer) = peers.iter().find(|p| p.relay_id == peer_relay_id)
                                 && let Some(ref sender) = peer.sender
@@ -451,7 +435,6 @@ impl OffloadManager {
         let batch_size = 10;
         let candidates = self.storage.get_oldest_blobs(batch_size);
 
-        // Filter out blobs that are already pending ack
         let pending_ids: std::collections::HashSet<String> = {
             let pending = self.pending_offloads.lock();
             pending.keys().cloned().collect()
