@@ -17,7 +17,7 @@ src/storage.rs 1061
 # (+43 for real input validation on /v2/register — handler stub replaced with
 #  count cap + 64-hex-per-token check + doc-comments per ADR-029 addendum
 #  2026-05-22; closes audit 30 C-1)
-src/http_api.rs 1268
+src/http_api.rs 1274
 
 # SPLIT — Phase 3: split http_api_tests.rs per service area
 tests/http_api_tests.rs 544

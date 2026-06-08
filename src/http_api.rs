@@ -777,6 +777,32 @@ fn verify_purge_signature(
     Ok(())
 }
 
+/// Verify Ed25519 auth on a guardian store/delete request and check replay.
+///
+/// The signature is the replay token. Returns the validated 32-byte
+/// guardian hash on success.
+fn verify_guardian_signature(
+    domain: &[u8],
+    guardian_hash: &str,
+    designator_pk: &str,
+    timestamp: u64,
+    signature: &str,
+    nonce_tracker: &NonceTracker,
+) -> Result<[u8; 32], String> {
+    let hash = crate::handler::verify::verify_guardian_ed25519(
+        domain,
+        designator_pk,
+        guardian_hash,
+        timestamp,
+        signature,
+    )?;
+    let sig_bytes = hex::decode(signature).map_err(|e| format!("invalid signature hex: {e}"))?;
+    if !nonce_tracker.check_and_insert(&sig_bytes) {
+        return Err("guardian signature replay detected".to_string());
+    }
+    Ok(hash)
+}
+
 #[tracing::instrument(level = "debug", skip_all, fields(ct_b64_len = req.ciphertext.len()), name = "relay.send")]
 fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
     if !state.rate_limiter.consume(&req.recipient_id) {
@@ -996,6 +1022,19 @@ fn handle_guardian_store_logic(state: &HttpApiState, req: V2GuardianStoreRequest
         return ApiResult::bad_request("guardian_hash must be 64 hex characters (32 bytes)");
     }
 
+    // Authenticate the owner before any work, so an attacker cannot
+    // overwrite/poison a victim's guardian set (guardian_hash is public).
+    if let Err(e) = verify_guardian_signature(
+        b"guardian-store",
+        &req.guardian_hash,
+        &req.designator_pk,
+        req.timestamp,
+        &req.signature,
+        &state.nonce_tracker,
+    ) {
+        return ApiResult::unauthorized(e);
+    }
+
     if req.entries.len() > crate::guardian_storage::MAX_GUARDIAN_ENTRIES {
         return ApiResult::bad_request(format!(
             "too many entries (max {})",
@@ -1076,16 +1115,24 @@ fn handle_guardian_delete_logic(state: &HttpApiState, req: V2GuardianDeleteReque
         return ApiResult::bad_request("guardian_hash must be 64 hex characters (32 bytes)");
     }
 
-    // TODO: Add signature-based authentication (like /v2/purge) before production
+    // Authenticate before rate limiting so an attacker cannot exhaust a
+    // victim's bucket with unsigned requests (mirrors /v2/purge).
+    let guardian_hash = match verify_guardian_signature(
+        b"guardian-delete",
+        &req.guardian_hash,
+        &req.designator_pk,
+        req.timestamp,
+        &req.signature,
+        &state.nonce_tracker,
+    ) {
+        Ok(h) => h,
+        Err(e) => return ApiResult::unauthorized(e),
+    };
+
     let rate_key = format!("guardian_delete:{}", &req.guardian_hash);
     if !state.rate_limiter.consume(&rate_key) {
         return ApiResult::RateLimited;
     }
-
-    let guardian_hash = match hex_to_32bytes(&req.guardian_hash) {
-        Some(h) => h,
-        None => return ApiResult::bad_request("invalid guardian_hash hex"),
-    };
 
     let deleted = state.guardian_storage.remove(&guardian_hash);
     ApiResult::ok(serde_json::json!({ "status": "ok", "deleted": deleted }))
