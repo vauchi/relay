@@ -888,9 +888,9 @@ dependencies = [
 
 [[package]]
 name = "http"
-version = "1.4.1"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be7462df143984c4598a256ef469b251d7d7f9e271135073e78fc535414f3d0"
+checksum = "6970f50e31d6fc17d3fa27329444bfa74e196cf62e95052a3f6fee181dba6425"
 dependencies = [
  "bytes",
  "itoa",
@@ -2462,7 +2462,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "vauchi-protocol"
 version = "0.51.49"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#69f27960e223408a5c123ddfc7406430bdb99003"
+source = "git+https://gitlab.com/vauchi/core.git?branch=main#37aff45fc976d80e75e5b42e1a9e4b6ecc0e3134"
 dependencies = [
  "serde",
  "serde_json",
