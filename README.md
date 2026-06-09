@@ -178,7 +178,7 @@ SIGTERM/SIGINT → stop accepting → drain connections
 - OHTTP gateway (RFC 9458) for client IP privacy
 - SSRF validation on federation peer URLs
   (blocks private/loopback/link-local)
-- Noise NK encryption for federation transport
+- mTLS (mutual client+server certs) for federation transport (ADR-052)
 
 ### Container Image
 
