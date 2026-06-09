@@ -99,7 +99,8 @@ pub trait BlobStore: Send + Sync {
     /// Returns the number of recipients with pending blobs.
     fn recipient_count(&self) -> usize;
 
-    /// Returns storage size in bytes (approximate).
+    /// Returns the total logical size of stored blobs in bytes (sum of
+    /// payload + id + per-row overhead), consistent with `storage_size_for`.
     /// Used for monitoring and federation offload decisions.
     fn storage_size_bytes(&self) -> usize;
 
@@ -329,14 +330,19 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn storage_size_bytes(&self) -> usize {
+        // Logical stored-blob bytes, consistent with `storage_size_for` (just
+        // without the recipient filter). The previous `page_count * page_size`
+        // measured the SQLite file size, which counts schema/free-page overhead
+        // and never shrinks after DELETE (SQLite reuses pages) — so federation
+        // offload threshold/refuse ratios were driven by file growth, not real
+        // data, and an empty relay falsely read as ~28 KB "used".
         let conn = self.conn.lock();
-        let page_count: i64 = conn
-            .query_row("PRAGMA page_count", [], |row| row.get(0))
-            .unwrap_or(0);
-        let page_size: i64 = conn
-            .query_row("PRAGMA page_size", [], |row| row.get(0))
-            .unwrap_or(4096);
-        (page_count * page_size) as usize
+        conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(data) + LENGTH(id) + 8), 0) FROM blobs",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as usize
     }
 
     fn blob_count_for(&self, recipient_id: &str) -> usize {

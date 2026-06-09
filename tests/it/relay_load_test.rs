@@ -159,8 +159,10 @@ fn test_cleanup_removes_all_blobs() {
 
     // All blobs should be removed
     assert_eq!(store.blob_count(), 0);
-    // Note: SQLite doesn't release pages after DELETE, it reuses them.
-    // So storage_size_bytes() won't return 0, but blob_count() == 0 is what matters.
+    // storage_size_bytes() is logical stored-blob bytes, so it returns 0 once
+    // every blob is removed (the SQLite file keeps its pages, but that overhead
+    // no longer counts toward "storage used").
+    assert_eq!(store.storage_size_bytes(), 0);
 }
 
 /// Test: Large blob handling

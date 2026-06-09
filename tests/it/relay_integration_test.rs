@@ -174,6 +174,43 @@ fn test_storage_metrics() {
     assert!(size > 0, "Storage size should be non-zero");
 }
 
+/// Test: storage_size_bytes reports logical blob bytes (consistent with
+/// storage_size_for), not the SQLite file size — so it starts at zero, grows
+/// with stored payload, and shrinks back to zero when blobs are removed. The
+/// federation offload threshold/refuse ratios depend on this being the real
+/// stored-data size, not page-allocation overhead that never shrinks.
+// @internal
+#[test]
+fn test_storage_size_is_logical_and_shrinks() {
+    let store = SqliteBlobStore::in_memory().unwrap();
+    assert_eq!(
+        store.storage_size_bytes(),
+        0,
+        "empty store reports zero, not DB page overhead"
+    );
+
+    store.store("r1", StoredBlob::new(vec![0u8; 100]));
+    let after_one = store.storage_size_bytes();
+    assert!(
+        after_one >= 100,
+        "must count the stored payload, got {after_one}"
+    );
+
+    store.store("r2", StoredBlob::new(vec![0u8; 200]));
+    assert!(
+        store.storage_size_bytes() > after_one,
+        "grows as more payload is stored"
+    );
+
+    let removed = store.cleanup_expired(Duration::ZERO);
+    assert_eq!(removed, 2);
+    assert_eq!(
+        store.storage_size_bytes(),
+        0,
+        "shrinks back to zero once all blobs are gone (not the SQLite file size)"
+    );
+}
+
 /// Test: Thread-safe concurrent access
 /// Based on: Scenario: Multiple clients connect simultaneously
 // @scenario: relay_network:Multiple clients connect simultaneously

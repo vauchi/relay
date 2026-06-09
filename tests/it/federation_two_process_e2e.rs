@@ -86,10 +86,9 @@ fn spawn_relay(cert: &str, key: &str, ca: &str, peer: Option<&str>) -> RelayProc
         .env("RELAY_FEDERATION_TLS_CERT", cert)
         .env("RELAY_FEDERATION_TLS_KEY", key)
         .env("RELAY_FEDERATION_TLS_CA", ca)
-        // storage_size_bytes() is the whole SQLite file (page_count*page_size),
-        // tens of KB even when empty — so max must comfortably exceed that. With
-        // threshold 0.0 A always attempts to offload; refuse 0.99 leaves B (near
-        // empty) accepting.
+        // threshold 0.0 makes A always attempt to offload; refuse 0.99 leaves B
+        // (near empty) accepting. storage_size_bytes() is logical blob bytes, so
+        // these ratios track real stored data.
         .env("RELAY_MAX_STORAGE_BYTES", "50000000")
         .env("RELAY_MAX_STORAGE_PER_USER", "1000000")
         .env("RELAY_MAX_BLOBS_PER_USER", "1000")
