@@ -3,20 +3,29 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Integration tests for the federation mTLS-HTTP transport
-//! (`/v2/federation/*`, ADR-052). mTLS itself is the listener's concern
-//! (terminated before the router); these drive the router directly via
-//! `oneshot`, with the peer relay id supplied through the
+//! (`/v2/federation/*`, ADR-052). Most tests drive the router directly via
+//! `oneshot` with the peer relay id supplied through the
 //! `X-Federation-Relay-Id` header (the HTTP analogue of the WS handshake).
+//! `offload_round_trips_over_real_mtls` additionally exercises the full
+//! `serve_connection` path end-to-end: a real mTLS TCP listener serving the
+//! router, hit by a real mTLS hyper client.
 
+use std::io::Write;
 use std::sync::Arc;
 
 use crate::common::http_helpers::*;
 use serde_json::Value;
+use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::rustls::pki_types::ServerName;
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 use tower::ServiceExt;
 
-use vauchi_relay::config::RelayConfig;
-use vauchi_relay::federation_http::{FederationHttpState, create_federation_router};
+use vauchi_relay::config::{FederationConfig, RelayConfig};
+use vauchi_relay::federation_http::{
+    FederationHttpState, RELAY_ID_HEADER, create_federation_router, serve_connection,
+};
 use vauchi_relay::federation_protocol::{FederationPayload, create_federation_envelope};
+use vauchi_relay::federation_tls::load_federation_tls;
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::peer_registry::PeerRegistry;
 use vauchi_relay::rate_limit::RateLimiter;
@@ -163,4 +172,121 @@ async fn peer_advertisement_no_content_when_gossip_disabled() {
     let resp = post_msg(&app, Some("peer-1"), &env).await;
 
     assert_eq!(resp.status(), 204);
+}
+
+// ── Real mTLS round-trip ───────────────────────────────────────────
+
+/// Generates a throwaway CA + leaf cert/key (ServerAuth + ClientAuth EKU,
+/// SAN `localhost`) written to temp files. The leaf doubles as the
+/// listener's server identity and the connecting peer's client identity.
+fn generate_mtls_certs() -> (
+    tempfile::NamedTempFile,
+    tempfile::NamedTempFile,
+    tempfile::NamedTempFile,
+) {
+    use rcgen::{
+        BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose,
+        IsCa, Issuer, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, SanType,
+    };
+
+    let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut ca_params = CertificateParams::default();
+    let mut ca_dn = DistinguishedName::new();
+    ca_dn.push(DnType::CommonName, "Test CA");
+    ca_params.distinguished_name = ca_dn;
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+    let ca_issuer = Issuer::new(ca_params, ca_key);
+
+    let leaf_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut leaf_params = CertificateParams::default();
+    let mut leaf_dn = DistinguishedName::new();
+    leaf_dn.push(DnType::CommonName, "test-relay");
+    leaf_params.distinguished_name = leaf_dn;
+    leaf_params.is_ca = IsCa::NoCa;
+    leaf_params.subject_alt_names = vec![SanType::DnsName("localhost".try_into().unwrap())];
+    leaf_params.extended_key_usages = vec![
+        ExtendedKeyUsagePurpose::ServerAuth,
+        ExtendedKeyUsagePurpose::ClientAuth,
+    ];
+    let leaf_cert = leaf_params.signed_by(&leaf_key, &ca_issuer).unwrap();
+
+    let mut ca_file = tempfile::NamedTempFile::new().unwrap();
+    ca_file.write_all(ca_cert.pem().as_bytes()).unwrap();
+    let mut cert_file = tempfile::NamedTempFile::new().unwrap();
+    cert_file.write_all(leaf_cert.pem().as_bytes()).unwrap();
+    let mut key_file = tempfile::NamedTempFile::new().unwrap();
+    key_file
+        .write_all(leaf_key.serialize_pem().as_bytes())
+        .unwrap();
+    (ca_file, cert_file, key_file)
+}
+
+// @internal
+#[tokio::test]
+async fn offload_round_trips_over_real_mtls() {
+    let (ca_file, cert_file, key_file) = generate_mtls_certs();
+    let tls_config = RelayConfig {
+        federation: FederationConfig {
+            tls_cert_path: Some(cert_file.path().to_str().unwrap().to_string()),
+            tls_key_path: Some(key_file.path().to_str().unwrap().to_string()),
+            tls_ca_path: Some(ca_file.path().to_str().unwrap().to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let tls = load_federation_tls(&tls_config).unwrap().unwrap();
+    let acceptor = TlsAcceptor::from(tls.server_config.clone());
+    let connector = TlsConnector::from(tls.client_config.clone());
+
+    let (state, storage) = fed_state();
+    let router = create_federation_router(state);
+
+    // Server: one mTLS connection, served via the production `serve_connection`.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let tls_stream = acceptor.accept(tcp).await.expect("server mTLS handshake");
+        serve_connection(tls_stream, router).await;
+    });
+
+    // Client: real mTLS hyper connection.
+    let server_name = ServerName::try_from("localhost").unwrap();
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let tls_stream = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("client mTLS handshake");
+    let (mut sender, conn) =
+        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tls_stream))
+            .await
+            .unwrap();
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    let env = offload_envelope("lb1", "lb-route", b"loopback-mtls-payload", 0);
+    let request = hyper::Request::builder()
+        .method("POST")
+        .uri("/v2/federation/message")
+        .header("content-type", "application/json")
+        .header(RELAY_ID_HEADER, "peer-B")
+        .body(axum::body::Body::from(serde_json::to_vec(&env).unwrap()))
+        .unwrap();
+
+    let resp = sender.send_request(request).await.unwrap();
+    assert_eq!(resp.status(), 200, "offload POST over mTLS must succeed");
+
+    let bytes = axum::body::to_bytes(axum::body::Body::new(resp.into_body()), 1 << 20)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["payload"]["type"], "OffloadAck");
+    assert_eq!(body["payload"]["accepted"], true);
+
+    let stored = storage.take("lb-route");
+    assert_eq!(stored.len(), 1, "blob offloaded over mTLS must be stored");
+    assert_eq!(stored[0].data, b"loopback-mtls-payload");
 }

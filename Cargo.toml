@@ -50,6 +50,11 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # HTTP server for health/metrics endpoints
 axum = "0.7"
 
+# Federation transport: serve/consume the axum router over the in-process
+# mTLS stream (ADR-052). Already in the tree transitively via axum.
+hyper = { version = "1", features = ["server", "http1", "client"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+
 # Prometheus metrics (process feature: process_cpu_seconds, open_fds, rss, vsize, threads)
 prometheus = { version = "0.14", features = ["process"] }
 
@@ -89,10 +94,13 @@ tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 rustls-pemfile = "2"
 
+# tower::Service: drive the axum federation router from hyper's
+# per-connection serve over the mTLS stream (ADR-052).
+tower = { version = "0.5", features = ["util"] }
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.0"
-tower = { version = "0.5", features = ["util"] }
 rcgen = "0.14.7"
 proptest = "1"
 rstest = "0.26"
@@ -125,3 +133,4 @@ harness = false
 [[bench]]
 name = "transport_benchmarks"
 harness = false
+

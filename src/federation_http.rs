@@ -58,6 +58,31 @@ pub fn create_federation_router(state: FederationHttpState) -> Router {
         .with_state(state)
 }
 
+/// Serves the federation HTTP router over a single already-mTLS-terminated
+/// connection. The federation listener accepts TCP, performs the mTLS
+/// handshake (rejecting peers without a CA-signed client cert), then hands
+/// the resulting stream here — one task per peer connection, so a slow
+/// handshake never blocks the accept loop.
+pub async fn serve_connection<IO>(io: IO, router: Router)
+where
+    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use tower::Service as _;
+
+    let hyper_service =
+        hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
+            let mut router = router.clone();
+            async move { router.call(request.map(axum::body::Body::new)).await }
+        });
+
+    if let Err(err) = hyper::server::conn::http1::Builder::new()
+        .serve_connection(hyper_util::rt::TokioIo::new(io), hyper_service)
+        .await
+    {
+        tracing::debug!("Federation HTTP connection ended: {err}");
+    }
+}
+
 async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
