@@ -22,7 +22,9 @@ use tower::ServiceExt;
 
 use vauchi_relay::config::{FederationConfig, RelayConfig};
 use vauchi_relay::federation_http::{
-    FederationHttpState, RELAY_ID_HEADER, create_federation_router, serve_connection,
+    BLOB_ID_HEADER, CREATED_AT_HEADER, FederationHttpState, HOP_COUNT_HEADER,
+    INTEGRITY_HASH_HEADER, OFFLOAD_CONTENT_TYPE, RELAY_ID_HEADER, ROUTING_ID_HEADER,
+    create_federation_router, serve_connection,
 };
 use vauchi_relay::federation_protocol::{FederationPayload, create_federation_envelope};
 use vauchi_relay::federation_tls::load_federation_tls;
@@ -172,6 +174,88 @@ async fn peer_advertisement_no_content_when_gossip_disabled() {
     let resp = post_msg(&app, Some("peer-1"), &env).await;
 
     assert_eq!(resp.status(), 204);
+}
+
+// ── Raw-binary offload (G5, octet-stream content-negotiation) ──────
+
+#[allow(clippy::too_many_arguments)]
+async fn post_offload_binary(
+    app: &axum::Router,
+    relay_id: Option<&str>,
+    blob_id: &str,
+    routing_id: &str,
+    payload: &[u8],
+    hop_count: u8,
+    include_metadata: bool,
+) -> ax_response::Response {
+    let padded = padding::pad(payload);
+    let integrity_hash = integrity::compute_integrity_hash(&padded);
+    let mut builder = ax_http::Request::builder()
+        .method("POST")
+        .uri("/v2/federation/message")
+        .header("content-type", OFFLOAD_CONTENT_TYPE);
+    if let Some(id) = relay_id {
+        builder = builder.header(RELAY_ID_HEADER, id);
+    }
+    if include_metadata {
+        builder = builder
+            .header(BLOB_ID_HEADER, blob_id)
+            .header(ROUTING_ID_HEADER, routing_id)
+            .header(CREATED_AT_HEADER, "1700000000")
+            .header(INTEGRITY_HASH_HEADER, integrity_hash)
+            .header(HOP_COUNT_HEADER, hop_count.to_string());
+    }
+    let req = builder.body(ax_body::Body::from(padded)).unwrap();
+    app.clone().oneshot(req).await.unwrap()
+}
+
+// @internal
+#[tokio::test]
+async fn offload_as_octet_stream_accepts_and_stores_blob() {
+    let (state, storage) = fed_state();
+    let app = create_federation_router(state);
+
+    let resp = post_offload_binary(
+        &app,
+        Some("peer-1"),
+        "bin-1",
+        "bin-route",
+        b"raw-binary-offload",
+        0,
+        true,
+    )
+    .await;
+
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["payload"]["type"], "OffloadAck");
+    assert_eq!(body["payload"]["accepted"], true);
+
+    let stored = storage.take("bin-route");
+    assert_eq!(stored.len(), 1, "binary-offloaded blob stored");
+    assert_eq!(stored[0].data, b"raw-binary-offload");
+    assert_eq!(stored[0].hop_count, 1);
+}
+
+// @internal
+#[tokio::test]
+async fn offload_as_octet_stream_missing_metadata_header_is_rejected() {
+    let (state, storage) = fed_state();
+    let app = create_federation_router(state);
+
+    let resp =
+        post_offload_binary(&app, Some("peer-1"), "bin-2", "bin-route-2", b"x", 0, false).await;
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "missing X-Federation-* metadata must 400"
+    );
+    assert_eq!(
+        storage.take("bin-route-2").len(),
+        0,
+        "nothing stored on a malformed offload"
+    );
 }
 
 // ── Real mTLS round-trip ───────────────────────────────────────────

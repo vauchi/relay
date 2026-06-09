@@ -8,12 +8,14 @@
 //! client protocol (4-byte BE length prefix + JSON) but with federation-specific
 //! message types.
 //!
-//! ## Encoding Overhead (Tracker #135)
+//! ## Encoding (Tracker #135)
 //!
-//! Blob data is currently JSON-encoded (base64 for `Vec<u8>` via serde_json),
-//! adding ~33% overhead for binary payloads. A future optimization would switch
-//! to a binary encoding (postcard, MessagePack, or raw length-prefixed frames)
-//! for `OffloadBlob` while keeping JSON for control messages.
+//! Control messages are JSON-encoded. Offload blobs travel as a raw binary
+//! body over mTLS-HTTP — the `data` field never crosses serde on the wire
+//! (see `federation_http::decode_payload`, ADR-052 Amendment 2 / G5) — so the
+//! blob avoids the byte-array inflation a JSON-encoded `Vec<u8>` would incur.
+//! These envelope types are still used by `encode_federation_message` for the
+//! length-prefixed control framing and for serde round-trip tests.
 
 use serde::{Deserialize, Serialize};
 

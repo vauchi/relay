@@ -17,14 +17,18 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
+use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
+use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 
 use crate::config::RelayConfig;
 use crate::federation_core;
-use crate::federation_protocol::{FederationEnvelope, create_federation_envelope};
+use crate::federation_protocol::{
+    FederationEnvelope, FederationPayload, create_federation_envelope,
+};
 use crate::metrics::RelayMetrics;
 use crate::peer_registry::PeerRegistry;
 use crate::rate_limit::RateLimiter;
@@ -33,6 +37,17 @@ use crate::storage::BlobStore;
 /// Header carrying the calling peer's relay id (mTLS-authenticated at the
 /// TLS layer; the HTTP analogue of the WebSocket handshake).
 pub const RELAY_ID_HEADER: &str = "X-Federation-Relay-Id";
+
+/// Content type for an offload posted as a raw binary body (G5): the blob
+/// bytes ride the body directly and its metadata travels in the headers
+/// below, avoiding the JSON array-of-bytes inflation a `Vec<u8>` envelope
+/// field incurs. Control messages keep `application/json` (ADR-052 Amend. 2).
+pub const OFFLOAD_CONTENT_TYPE: &str = "application/octet-stream";
+pub const BLOB_ID_HEADER: &str = "X-Federation-Blob-Id";
+pub const ROUTING_ID_HEADER: &str = "X-Federation-Routing-Id";
+pub const CREATED_AT_HEADER: &str = "X-Federation-Created-At";
+pub const INTEGRITY_HASH_HEADER: &str = "X-Federation-Integrity-Hash";
+pub const HOP_COUNT_HEADER: &str = "X-Federation-Hop-Count";
 
 /// Shared state for the federation HTTP handlers.
 #[derive(Clone)]
@@ -88,13 +103,14 @@ async fn health_handler() -> impl IntoResponse {
 }
 
 /// Handles a single federation message: authenticates the declared peer
-/// id, rate-limits per peer, applies the message via `federation_core`,
-/// and returns the response envelope (or `204 No Content` when the
-/// message has no reply).
+/// id, rate-limits per peer, decodes the payload (JSON envelope, or a raw
+/// binary offload — see [`decode_payload`]), applies it via `federation_core`,
+/// and returns the response envelope (or `204 No Content` when the message
+/// has no reply).
 async fn message_handler(
     State(state): State<FederationHttpState>,
     headers: HeaderMap,
-    Json(envelope): Json<FederationEnvelope>,
+    body: Bytes,
 ) -> Response {
     let peer_relay_id = match headers.get(RELAY_ID_HEADER).and_then(|v| v.to_str().ok()) {
         Some(id) if !id.is_empty() => id.to_string(),
@@ -106,8 +122,13 @@ async fn message_handler(
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
 
+    let payload = match decode_payload(&headers, body) {
+        Ok(payload) => payload,
+        Err(resp) => return resp,
+    };
+
     let result = federation_core::apply_message(
-        envelope.payload,
+        payload,
         state.storage.as_ref(),
         &state.config,
         &state.peer_registry,
@@ -121,4 +142,44 @@ async fn message_handler(
         }
         None => StatusCode::NO_CONTENT.into_response(),
     }
+}
+
+/// Decodes the request body into a `FederationPayload`, content-negotiating
+/// on the `Content-Type` (ADR-052 Amendment 2): an `application/octet-stream`
+/// body is a raw offload blob whose metadata rides the `X-Federation-*`
+/// headers; anything else is parsed as a JSON `FederationEnvelope`.
+fn decode_payload(headers: &HeaderMap, body: Bytes) -> Result<FederationPayload, Response> {
+    let is_offload = headers
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with(OFFLOAD_CONTENT_TYPE));
+
+    if !is_offload {
+        return serde_json::from_slice::<FederationEnvelope>(&body)
+            .map(|envelope| envelope.payload)
+            .map_err(|_| (StatusCode::BAD_REQUEST, "invalid federation envelope").into_response());
+    }
+
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    let bad = |what: &str| (StatusCode::BAD_REQUEST, format!("offload: {what}")).into_response();
+
+    let blob_id = header(BLOB_ID_HEADER).ok_or_else(|| bad("missing blob id"))?;
+    let routing_id = header(ROUTING_ID_HEADER).ok_or_else(|| bad("missing routing id"))?;
+    let integrity_hash =
+        header(INTEGRITY_HASH_HEADER).ok_or_else(|| bad("missing integrity hash"))?;
+    let created_at_secs = header(CREATED_AT_HEADER)
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| bad("bad created-at"))?;
+    let hop_count = header(HOP_COUNT_HEADER)
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| bad("bad hop count"))?;
+
+    Ok(FederationPayload::OffloadBlob {
+        blob_id: blob_id.to_string(),
+        routing_id: routing_id.to_string(),
+        data: body.to_vec(),
+        created_at_secs,
+        integrity_hash: integrity_hash.to_string(),
+        hop_count,
+    })
 }

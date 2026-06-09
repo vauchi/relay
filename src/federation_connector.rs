@@ -22,7 +22,10 @@ use tokio_rustls::rustls::pki_types::ServerName;
 use tracing::{debug, info, warn};
 
 use crate::config::RelayConfig;
-use crate::federation_http::RELAY_ID_HEADER;
+use crate::federation_http::{
+    BLOB_ID_HEADER, CREATED_AT_HEADER, HOP_COUNT_HEADER, INTEGRITY_HASH_HEADER,
+    OFFLOAD_CONTENT_TYPE, RELAY_ID_HEADER, ROUTING_ID_HEADER,
+};
 use crate::federation_protocol::{self, FederationEnvelope, FederationPayload};
 use crate::forwarding_hints::{ForwardingHint, ForwardingHintStore};
 use crate::integrity;
@@ -104,15 +107,37 @@ pub async fn send_payload_to_addr(
         let _ = conn.await;
     });
 
-    let body = serde_json::to_vec(envelope).map_err(|e| format!("encode envelope: {e}"))?;
-    let request = hyper::Request::builder()
+    let base = hyper::Request::builder()
         .method("POST")
         .uri("/v2/federation/message")
         .header("host", host)
-        .header("content-type", "application/json")
-        .header(RELAY_ID_HEADER, own_relay_id)
-        .body(axum::body::Body::from(body))
-        .map_err(|e| format!("build request: {e}"))?;
+        .header(RELAY_ID_HEADER, own_relay_id);
+
+    // Offload blobs ride a raw binary body (G5); control messages stay JSON.
+    let request = match &envelope.payload {
+        FederationPayload::OffloadBlob {
+            blob_id,
+            routing_id,
+            data,
+            created_at_secs,
+            integrity_hash,
+            hop_count,
+        } => base
+            .header("content-type", OFFLOAD_CONTENT_TYPE)
+            .header(BLOB_ID_HEADER, blob_id)
+            .header(ROUTING_ID_HEADER, routing_id)
+            .header(CREATED_AT_HEADER, created_at_secs.to_string())
+            .header(INTEGRITY_HASH_HEADER, integrity_hash)
+            .header(HOP_COUNT_HEADER, hop_count.to_string())
+            .body(axum::body::Body::from(data.clone()))
+            .map_err(|e| format!("build request: {e}"))?,
+        _ => {
+            let body = serde_json::to_vec(envelope).map_err(|e| format!("encode envelope: {e}"))?;
+            base.header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .map_err(|e| format!("build request: {e}"))?
+        }
+    };
 
     let response = sender
         .send_request(request)
