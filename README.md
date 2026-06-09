@@ -73,7 +73,7 @@ Environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RELAY_FEDERATION_ENABLED` | `false` | Enable federation with peer relays |
-| `RELAY_FEDERATION_PEERS` | _(empty)_ | Comma-separated peer relay URLs (e.g. `ws://relay-b:8080,ws://relay-c:8080`) |
+| `RELAY_FEDERATION_PEERS` | _(empty)_ | Comma-separated peer relay URLs (e.g. `https://relay-b:8443,https://relay-c:8443`) — mTLS-HTTP (ADR-052) |
 | `RELAY_FEDERATION_RELAY_ID` | _(auto)_ | Stable relay identifier (auto-generated and persisted to `{data_dir}/relay_id`) |
 | `RELAY_MAX_STORAGE_BYTES` | `1073741824` | Maximum storage capacity in bytes (1 GB) |
 | `RELAY_FEDERATION_OFFLOAD_THRESHOLD` | `0.80` | Start offloading when storage exceeds this ratio |
@@ -123,10 +123,10 @@ See `STRUCTURE.md` for full module listing.
 - **Storage**: SQLite-backed blob store with TTL
 - **Recovery Storage**: SQLite-backed recovery proofs
 - **Rate Limiter**: Token bucket algorithm per client ID
-- **Federation Handler**: Accepts incoming peer relay
-  WebSocket connections on `/federation`
-- **Federation Connector**: Maintains persistent
-  connections to peer relays with exponential backoff
+- **Federation (mTLS-HTTP)**: Serves `/v2/federation/*`
+  on the dedicated mTLS listener (ADR-052)
+- **Federation Connector**: POSTs blobs to peer relays
+  over mTLS-HTTP on demand
 - **OffloadManager**: Monitors storage usage and
   offloads blobs when above threshold
 
@@ -141,7 +141,7 @@ Everything listed below is **implemented and tested**
 |----------|------|---------|
 | `/v2/*` | 8080 (main) | Client HTTP v2 API |
 | `/health` | 8080 (main) | Liveness (no info leak) |
-| `/federation` | 8080 (main) | Federation WebSocket |
+| `/v2/federation/*` | mTLS listener | Federation (mTLS-HTTP) |
 | `/health` | 8081 (ops) | Health check |
 | `/metrics` | 8081 (ops) | Prometheus (optional auth) |
 | `/pubkey` | 8081 (ops) | Noise NK public key |
@@ -230,8 +230,8 @@ hints so clients can find their data.
 
 1. Configure peer relay URLs via
    `RELAY_FEDERATION_PEERS`
-2. The relay maintains persistent WebSocket connections
-   to peers (`/federation` endpoint)
+2. When over the offload threshold, the relay POSTs blobs
+   to peers over mTLS-HTTP (`/v2/federation/message`)
 3. When storage exceeds the offload threshold, the
    `OffloadManager` sends blobs to peers with
    available capacity
@@ -245,15 +245,17 @@ hints so clients can find their data.
 ### Example: Two-Relay Setup
 
 ```bash
+# Federation requires mTLS — set RELAY_FEDERATION_TLS_CERT/KEY/CA on
+# both relays (peer URLs are https:// to the mTLS listener).
 # Relay A
 RELAY_FEDERATION_ENABLED=true \
-RELAY_FEDERATION_PEERS=ws://relay-b:8080 \
+RELAY_FEDERATION_PEERS=https://relay-b:8443 \
 RELAY_LISTEN_ADDR=0.0.0.0:8080 \
 vauchi-relay
 
 # Relay B
 RELAY_FEDERATION_ENABLED=true \
-RELAY_FEDERATION_PEERS=ws://relay-a:8080 \
+RELAY_FEDERATION_PEERS=https://relay-a:8443 \
 RELAY_LISTEN_ADDR=0.0.0.0:8080 \
 vauchi-relay
 ```
