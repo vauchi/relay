@@ -20,10 +20,6 @@ flame = ["dep:tracing-flame"]
 # Async runtime (minimal features: excludes fs, process, io-std, parking_lot)
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "signal"] }
 
-# WebSocket server
-tokio-tungstenite = "0.24"
-futures-util = "0.3"
-
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
