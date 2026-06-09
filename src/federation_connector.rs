@@ -37,20 +37,14 @@ const RESPONSE_BODY_LIMIT: usize = 64 * 1024;
 /// Blobs offloaded per `check_and_offload` cycle.
 const OFFLOAD_BATCH_SIZE: usize = 10;
 
-/// POSTs a federation envelope to a peer's `/v2/federation/message`
-/// endpoint over mTLS-HTTP and returns the peer's response payload.
-///
-/// Preserves the SSRF defenses of the legacy WebSocket path: the URL is
-/// blocklist-validated and the host is resolved + IP-validated before the
-/// TCP connect (DNS-rebinding safe). Peer authenticity rests on the mTLS
-/// client certificate; `own_relay_id` is declared in the
-/// `X-Federation-Relay-Id` header (the HTTP analogue of the WS handshake).
-async fn post_federation_message(
+/// Validates a federation peer URL and resolves it to a connect-ready
+/// address, preserving the SSRF defenses of the legacy WebSocket path: the
+/// URL is scheme/blocklist-validated and the host is resolved + IP-validated
+/// (DNS-rebinding safe) before any connect. Returns the `(host, addr)` to
+/// hand to [`send_payload_to_addr`].
+async fn validate_and_resolve_peer(
     peer_url: &str,
-    own_relay_id: &str,
-    client_config: &Arc<ClientConfig>,
-    envelope: &FederationEnvelope,
-) -> Result<FederationPayload, String> {
+) -> Result<(String, std::net::SocketAddr), String> {
     crate::url_validation::validate_federation_url(peer_url)
         .map_err(|e| format!("SSRF validation failed for {peer_url}: {e}"))?;
 
@@ -67,21 +61,36 @@ async fn post_federation_message(
         (authority.to_string(), 443u16)
     };
 
-    let validated_addr = crate::url_validation::resolve_and_validate(&host, port)
+    let addr = crate::url_validation::resolve_and_validate(&host, port)
         .await
         .map_err(|e| format!("SSRF: {e}"))?;
+    Ok((host, addr))
+}
 
-    let tcp_stream = timeout(
-        TCP_CONNECT_TIMEOUT,
-        tokio::net::TcpStream::connect(validated_addr),
-    )
-    .await
-    .map_err(|_| "TCP connect timed out".to_string())?
-    .map_err(|e| format!("TCP connect failed: {e}"))?;
+/// Sends a federation envelope to an already-SSRF-validated peer address
+/// over mTLS-HTTP and returns the peer's response payload.
+///
+/// `addr` MUST be the output of [`validate_and_resolve_peer`] - this function
+/// connects to it directly, so passing an unvalidated address bypasses the
+/// SSRF guard. Peer authenticity rests on the mTLS client certificate;
+/// `own_relay_id` is declared in the `X-Federation-Relay-Id` header (the HTTP
+/// analogue of the WS handshake). The split keeps the connect/send transport
+/// independently testable against a loopback peer (SSRF blocks loopback URLs).
+pub async fn send_payload_to_addr(
+    host: &str,
+    addr: std::net::SocketAddr,
+    own_relay_id: &str,
+    client_config: &Arc<ClientConfig>,
+    envelope: &FederationEnvelope,
+) -> Result<FederationPayload, String> {
+    let tcp_stream = timeout(TCP_CONNECT_TIMEOUT, tokio::net::TcpStream::connect(addr))
+        .await
+        .map_err(|_| "TCP connect timed out".to_string())?
+        .map_err(|e| format!("TCP connect failed: {e}"))?;
 
     let connector = TlsConnector::from(client_config.clone());
     let server_name =
-        ServerName::try_from(host.clone()).map_err(|e| format!("Invalid server name: {e}"))?;
+        ServerName::try_from(host.to_string()).map_err(|e| format!("Invalid server name: {e}"))?;
     let tls_stream = connector
         .connect(server_name, tcp_stream)
         .await
@@ -122,6 +131,19 @@ async fn post_federation_message(
     let resp_envelope: FederationEnvelope =
         serde_json::from_slice(&bytes).map_err(|e| format!("decode response: {e}"))?;
     Ok(resp_envelope.payload)
+}
+
+/// POSTs a federation envelope to a peer's `/v2/federation/message` endpoint
+/// over mTLS-HTTP and returns the peer's response payload. Composes
+/// [`validate_and_resolve_peer`] (SSRF guard) with [`send_payload_to_addr`].
+async fn post_federation_message(
+    peer_url: &str,
+    own_relay_id: &str,
+    client_config: &Arc<ClientConfig>,
+    envelope: &FederationEnvelope,
+) -> Result<FederationPayload, String> {
+    let (host, addr) = validate_and_resolve_peer(peer_url).await?;
+    send_payload_to_addr(&host, addr, own_relay_id, client_config, envelope).await
 }
 
 /// Manages offloading blobs to federation peers when storage exceeds the
