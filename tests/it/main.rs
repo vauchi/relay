@@ -11,6 +11,7 @@ mod contract_protocol_tests;
 mod escrow_store_tests;
 mod exchange_adversarial_tests;
 mod exchange_broker_tests;
+mod federation_offload_core_tests;
 mod http_api_exchange_tests;
 mod http_api_guardian_tests;
 mod http_api_ohttp_tests;

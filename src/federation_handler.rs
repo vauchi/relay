@@ -20,18 +20,17 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
 use crate::config::RelayConfig;
+use crate::federation_core;
 use crate::federation_protocol::{
     self, FEDERATION_PROTOCOL_VERSION, FederationPayload, create_federation_envelope,
     encode_federation_message,
 };
 use crate::forwarding_hints::ForwardingHintStore;
-use crate::integrity;
 use crate::metrics::RelayMetrics;
-use crate::padding;
 use crate::peer_registry::gossip;
 use crate::peer_registry::{PeerInfo, PeerOrigin, PeerRegistry, PeerStatus};
 use crate::rate_limit::RateLimiter;
-use crate::storage::{BlobStore, StoredBlob};
+use crate::storage::BlobStore;
 
 /// Helper to send a federation message over WebSocket.
 /// Encodes the payload and sends as binary. Errors are silently ignored
@@ -222,80 +221,27 @@ where
                         integrity_hash,
                         hop_count,
                     } => {
-                        // Reject if hop_count >= 1 (prevent re-offloading)
-                        if hop_count >= 1 {
-                            metrics.federation_offloads_rejected.inc();
-                            send_federation_msg(
-                                &mut write,
-                                FederationPayload::OffloadAck {
-                                    blob_id,
-                                    accepted: false,
-                                    reason: Some("hop_count too high".to_string()),
-                                },
-                            )
-                            .await;
-                            continue;
-                        }
-
-                        // Verify integrity (on padded data, as sent)
-                        if !integrity::verify_integrity_hash(&blob_data, &integrity_hash) {
-                            metrics.federation_offloads_rejected.inc();
-                            send_federation_msg(
-                                &mut write,
-                                FederationPayload::OffloadAck {
-                                    blob_id,
-                                    accepted: false,
-                                    reason: Some("integrity check failed".to_string()),
-                                },
-                            )
-                            .await;
-                            continue;
-                        }
-
-                        let unpadded_data = match padding::unpad(&blob_data) {
-                            Some(data) => data,
-                            None => {
-                                // Accept unpadded blobs for backwards compatibility
-                                warn!("[fed-{}] Received unpadded blob, storing as-is", session);
-                                blob_data
-                            }
-                        };
-
-                        let current_usage = storage.storage_size_bytes();
-                        let usage_ratio =
-                            current_usage as f64 / config.storage.max_storage_bytes as f64;
-                        if usage_ratio >= config.federation.offload_refuse {
-                            metrics.federation_offloads_rejected.inc();
-                            send_federation_msg(
-                                &mut write,
-                                FederationPayload::OffloadAck {
-                                    blob_id,
-                                    accepted: false,
-                                    reason: Some("at capacity".to_string()),
-                                },
-                            )
-                            .await;
-                            continue;
-                        }
-
-                        let blob = StoredBlob::with_metadata(
-                            unpadded_data,
+                        // Transport-agnostic offload decision (ADR-052):
+                        // both this WebSocket arm and the HTTP handler route
+                        // through the same `apply_offload` core.
+                        let outcome = federation_core::apply_offload(
+                            storage.as_ref(),
+                            config.storage.max_storage_bytes,
+                            config.federation.offload_refuse,
+                            blob_id,
+                            &blob_routing_id,
+                            blob_data,
                             created_at_secs,
-                            hop_count + 1,
+                            &integrity_hash,
+                            hop_count,
                         );
-                        storage.store(&blob_routing_id, blob);
-                        offload_count += 1;
-                        metrics.federation_offloads_received.inc();
-
-                        send_federation_msg(
-                            &mut write,
-                            FederationPayload::OffloadAck {
-                                blob_id,
-                                accepted: true,
-                                reason: None,
-                            },
-                        )
-                        .await;
+                        if outcome.accepted {
+                            offload_count += 1;
+                            metrics.federation_offloads_received.inc();
+                        } else {
+                            metrics.federation_offloads_rejected.inc();
+                        }
+                        send_federation_msg(&mut write, outcome.ack).await;
                     }
                     FederationPayload::CapacityReport {
                         used_bytes,
