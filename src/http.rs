@@ -184,28 +184,25 @@ async fn metrics_handler(State(state): State<HttpState>) -> impl IntoResponse {
 /// reach an HTTP handler) under unit test — see `classify_connection`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionRoute {
-    /// A WebSocket upgrade targeting `/federation` — proceed to the
-    /// federation handshake.
-    FederationWebSocket,
-    /// A WebSocket upgrade on any other path — reject with
-    /// `426 Upgrade Required`. Client WebSocket support was removed; all
-    /// clients use the HTTP `/v2/` API.
+    /// Any WebSocket upgrade — reject with `426 Upgrade Required`. Client
+    /// WebSocket support was removed (all clients use the HTTP `/v2/` API),
+    /// and federation moved to mTLS-HTTP on its own listener (ADR-052), so
+    /// the main port no longer speaks any WebSocket protocol.
     RejectWebSocket,
     /// A plaintext `GET` to a health path (`/health`, `/up`, `/ready`) —
     /// answer `200 OK`.
     Health,
     /// A plaintext `GET` to any other path — answer `404 Not Found`.
     NotFound,
-    /// Anything else (non-HTTP bytes, an empty peek, a non-`GET` method on
-    /// a non-`/federation` target) — close the socket silently.
+    /// Anything else (non-HTTP bytes, an empty peek, or a non-`GET`
+    /// method) — close the socket silently.
     Drop,
 }
 
 /// Classify an accepted connection from the bytes peeked off its socket.
 ///
 /// HTTP header and method names are case-insensitive, so detection
-/// lowercases the peeked prefix before matching. The request-target is
-/// parsed from the first request line (`GET /path HTTP/1.1`). This
+/// lowercases the peeked prefix before matching. This
 /// mirrors, byte-for-byte, the routing the main accept loop performs in
 /// `main.rs`; the loop writes the corresponding response for each route.
 pub fn classify_connection(peek: &[u8]) -> ConnectionRoute {
@@ -222,19 +219,10 @@ pub fn classify_connection(peek: &[u8]) -> ConnectionRoute {
         && peek_lower.contains("connection:")
         && peek_lower.contains("upgrade");
 
-    // Request-target from the first line, e.g. "GET /federation HTTP/1.1".
-    let path = peek_str
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .unwrap_or("/");
-
     if is_websocket_upgrade {
-        if path == "/federation" {
-            ConnectionRoute::FederationWebSocket
-        } else {
-            ConnectionRoute::RejectWebSocket
-        }
+        // Federation moved to mTLS-HTTP on its own listener (ADR-052); the
+        // main port no longer accepts any WebSocket upgrade.
+        ConnectionRoute::RejectWebSocket
     } else if peek_lower.starts_with("get ") {
         if peek_lower.contains("get /health")
             || peek_lower.contains("get /up")
@@ -245,14 +233,9 @@ pub fn classify_connection(peek: &[u8]) -> ConnectionRoute {
             ConnectionRoute::NotFound
         }
     } else {
-        // Non-`GET`, non-WebSocket bytes fall through to the federation
-        // accept path in the loop, which proceeds only for `/federation`
-        // (and fails the handshake otherwise). Mirror that here.
-        if path == "/federation" {
-            ConnectionRoute::FederationWebSocket
-        } else {
-            ConnectionRoute::Drop
-        }
+        // Non-`GET`, non-WebSocket bytes: nothing on the main port speaks
+        // them now that federation is mTLS-HTTP on its own listener.
+        ConnectionRoute::Drop
     }
 }
 
@@ -276,20 +259,20 @@ mod tests {
 
     // @internal
     #[test]
-    fn test_classify_federation_websocket_upgrade_accepted() {
+    fn test_classify_federation_path_websocket_now_rejected() {
+        // Federation moved to mTLS-HTTP on its own listener (ADR-052), so a
+        // WS upgrade to /federation on the main port is no longer special —
+        // it is rejected like any other WS upgrade.
         let req = b"GET /federation HTTP/1.1\r\nHost: relay\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n";
-        assert_eq!(
-            classify_connection(req),
-            ConnectionRoute::FederationWebSocket
-        );
+        assert_eq!(classify_connection(req), ConnectionRoute::RejectWebSocket);
     }
 
     // @internal
     #[test]
     fn test_classify_non_federation_websocket_rejected() {
-        // Client WebSocket support was removed: a WS upgrade on any path
-        // other than /federation must be rejected (-> 426 in main.rs).
-        for path in ["/", "/v2/", "/exchange", "/federation/../v2"] {
+        // Client WebSocket support was removed and federation is mTLS-HTTP
+        // (ADR-052): a WS upgrade on ANY path must be rejected (-> 426).
+        for path in ["/", "/v2/", "/exchange", "/federation", "/federation/../v2"] {
             let req = format!(
                 "GET {path} HTTP/1.1\r\nHost: relay\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
             );
@@ -380,8 +363,7 @@ mod tests {
     // @internal
     #[test]
     fn test_classify_non_get_non_ws_methods_are_dropped() {
-        // POST/PUT/etc. without a WS upgrade and not targeting /federation
-        // fall through the accept loop and are closed.
+        // POST/PUT/etc. without a WS upgrade are closed on the main port.
         for method in ["POST", "PUT", "DELETE", "OPTIONS", "HEAD"] {
             let req = format!("{method} /v2/ HTTP/1.1\r\nHost: relay\r\n\r\n");
             assert_eq!(

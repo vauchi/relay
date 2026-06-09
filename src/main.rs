@@ -17,7 +17,6 @@ use std::time::{Duration, Instant};
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
-use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::{error, info, warn};
 
 use vauchi_relay::config::RelayConfig;
@@ -25,7 +24,7 @@ use vauchi_relay::connection_limit::ConnectionLimiter;
 use vauchi_relay::escrow::{self, EscrowStore};
 use vauchi_relay::exchange_broker::ExchangeBroker;
 use vauchi_relay::federation_connector::{self, OffloadManager};
-use vauchi_relay::federation_handler::{self, FederationDeps};
+use vauchi_relay::federation_http;
 use vauchi_relay::federation_tls;
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
 use vauchi_relay::guardian_storage::{GuardianStore, SqliteGuardianStore};
@@ -348,12 +347,14 @@ async fn main() {
                 addr
             });
             let acceptor = tokio_rustls::TlsAcceptor::from(tls_config.server_config.clone());
-            let fed_storage = storage.clone();
-            let fed_hint_store = hint_store.clone();
-            let fed_peer_registry = peer_registry.clone();
-            let fed_config = config.clone();
-            let fed_rate_limiter = federation_rate_limiter.clone();
-            let fed_metrics = metrics.clone();
+            let fed_http_state = federation_http::FederationHttpState {
+                storage: storage.clone(),
+                config: config.clone(),
+                peer_registry: peer_registry.clone(),
+                metrics: metrics.clone(),
+                rate_limiter: federation_rate_limiter.clone(),
+            };
+            let router = federation_http::create_federation_router(fed_http_state);
 
             tokio::spawn(async move {
                 let listener = match TcpListener::bind(&mtls_addr).await {
@@ -371,15 +372,10 @@ async fn main() {
 
                 while let Ok((stream, _)) = listener.accept().await {
                     let acceptor = acceptor.clone();
-                    let storage = fed_storage.clone();
-                    let hint_store = fed_hint_store.clone();
-                    let peer_registry = fed_peer_registry.clone();
-                    let config = fed_config.clone();
-                    let federation_rate_limiter = fed_rate_limiter.clone();
-                    let metrics = fed_metrics.clone();
+                    let router = router.clone();
 
                     tokio::spawn(async move {
-                        // TLS handshake — rejects peers without valid client cert
+                        // mTLS handshake — rejects peers without a CA-signed client cert.
                         let tls_stream = match acceptor.accept(stream).await {
                             Ok(s) => s,
                             Err(e) => {
@@ -387,39 +383,8 @@ async fn main() {
                                 return;
                             }
                         };
-
-                        // R-H1: Apply max_message_size at federation WS accept time
-                        let fed_ws_config = WebSocketConfig {
-                            max_message_size: Some(config.network.max_message_size + 256),
-                            max_frame_size: Some(config.network.max_message_size + 256),
-                            ..Default::default()
-                        };
-
-                        match tokio_tungstenite::accept_async_with_config(
-                            tls_stream,
-                            Some(fed_ws_config),
-                        )
-                        .await
-                        {
-                            Ok(ws_stream) => {
-                                info!("New mTLS federation connection");
-                                federation_handler::handle_federation_connection(
-                                    ws_stream,
-                                    FederationDeps {
-                                        storage,
-                                        hint_store,
-                                        peer_registry,
-                                        config,
-                                        federation_rate_limiter,
-                                        metrics,
-                                    },
-                                )
-                                .await;
-                            }
-                            Err(e) => {
-                                tracing::warn!("Federation WebSocket upgrade failed: {}", e);
-                            }
-                        }
+                        // Serve federation HTTP (ADR-052) over the mTLS stream.
+                        federation_http::serve_connection(tls_stream, router).await;
                     });
                 }
             });
@@ -722,24 +687,18 @@ async fn main() {
 
         let storage = storage.clone();
         let metrics = metrics.clone();
-        let hint_store = hint_store.clone();
-        let federation_rate_limiter = federation_rate_limiter.clone();
-        let peer_registry = peer_registry.clone();
-        let config = config.clone();
-        let max_message_size = config.network.max_message_size;
-        let idle_timeout = config.idle_timeout();
 
         tokio::spawn(async move {
             // Keep the guard alive for the duration of the connection
             let _guard = connection_guard;
 
             // Peek (do not consume) the first bytes to route the connection.
-            // Federation WS upgrades proceed to the handshake below; health
-            // probes and everything else are answered or dropped here. The
-            // routing decision lives in `classify_connection` (unit-tested in
-            // http.rs) so these rejection paths stay covered — the accept
-            // loop only writes the response that matches each route.
-            // Buffer is large enough to capture the Upgrade header (~200 bytes).
+            // The main port serves only plaintext health probes; WS upgrades
+            // are rejected (426) and federation is mTLS-HTTP on its own
+            // listener (ADR-052). The routing decision lives in
+            // `classify_connection` (unit-tested in http.rs) so these
+            // rejection paths stay covered. Buffer captures the Upgrade
+            // header (~200 bytes).
             let mut peek_buf = [0u8; 512];
             let n = stream.peek(&mut peek_buf).await.unwrap_or(0);
             match classify_connection(&peek_buf[..n]) {
@@ -755,7 +714,6 @@ async fn main() {
                     let _ = stream.write_all(response.as_bytes()).await;
                     let _ = stream.shutdown().await;
                     tracing::debug!("Rejected non-federation WebSocket upgrade");
-                    return;
                 }
                 ConnectionRoute::Health => {
                     // R-SA1: Main port health response omits version, uptime,
@@ -773,7 +731,6 @@ async fn main() {
                     let _ = stream.write_all(response.as_bytes()).await;
                     let _ = stream.shutdown().await;
                     tracing::debug!("Handled HTTP health probe");
-                    return;
                 }
                 ConnectionRoute::NotFound => {
                     // Update storage metrics before encoding (parity with the
@@ -790,63 +747,9 @@ async fn main() {
                     let _ = stream.write_all(response.as_bytes()).await;
                     let _ = stream.shutdown().await;
                     tracing::debug!("Handled HTTP root/other (404)");
-                    return;
                 }
                 ConnectionRoute::Drop => {
                     // Non-HTTP, non-federation bytes — close silently.
-                    return;
-                }
-                ConnectionRoute::FederationWebSocket => {
-                    // Fall through to the federation handshake below.
-                }
-            }
-
-            // R-H1: Apply max_message_size at WebSocket accept time
-            let ws_config = WebSocketConfig {
-                max_message_size: Some(max_message_size + 256),
-                max_frame_size: Some(max_message_size + 256),
-                ..Default::default()
-            };
-
-            // WebSocket handshake with timeout (slowloris protection)
-            match tokio::time::timeout(
-                idle_timeout,
-                tokio_tungstenite::accept_async_with_config(stream, Some(ws_config)),
-            )
-            .await
-            {
-                Ok(Ok(ws_stream)) => {
-                    metrics.connections_total.inc();
-                    metrics.connections_active.inc();
-
-                    if config.federation.enabled {
-                        info!("New federation connection");
-                        federation_handler::handle_federation_connection(
-                            ws_stream,
-                            FederationDeps {
-                                storage,
-                                hint_store,
-                                peer_registry,
-                                config,
-                                federation_rate_limiter,
-                                metrics: metrics.clone(),
-                            },
-                        )
-                        .await;
-                    } else {
-                        info!("Federation connection rejected (not enabled)");
-                    }
-
-                    metrics.connections_active.dec();
-                    info!("Federation connection closed");
-                }
-                Ok(Err(e)) => {
-                    error!("Federation WebSocket handshake failed: {}", e);
-                    metrics.connection_errors.inc();
-                }
-                Err(_) => {
-                    tracing::warn!("Federation WebSocket handshake timeout");
-                    metrics.connection_errors.inc();
                 }
             }
             // _guard dropped here, releasing the connection slot
