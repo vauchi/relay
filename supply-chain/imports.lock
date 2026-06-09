@@ -486,8 +486,8 @@ user-login = "Manishearth"
 user-name = "Manish Goregaokar"
 
 [[publisher.uuid]]
-version = "1.23.2"
-when = "2026-05-29"
+version = "1.23.3"
+when = "2026-06-09"
 user-id = 3204
 user-login = "KodrAus"
 user-name = "Ashley Mannix"
