@@ -5,6 +5,7 @@
 //! Common test utilities for relay integration tests.
 
 pub mod http_helpers;
+pub mod mtls;
 
 use std::sync::Arc;
 use vauchi_relay::rate_limit::RateLimiter;
