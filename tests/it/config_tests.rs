@@ -179,7 +179,7 @@ fn test_nested_config_construction_with_overrides() {
         },
         federation: FederationConfig {
             enabled: true,
-            peers: vec!["ws://peer-1:8080".to_string()],
+            peers: vec!["https://peer-1:8080".to_string()],
             offload_threshold: 0.70,
             ..Default::default()
         },
@@ -399,16 +399,16 @@ fn test_validate_partial_mtls(
 // @internal
 #[test]
 fn test_federation_peer_list_parsing() {
-    let peer_str = "ws://relay-a:8080, ws://relay-b:8080 , ws://relay-c:8080";
+    let peer_str = "https://relay-a:8080, https://relay-b:8080 , https://relay-c:8080";
     let peers: Vec<String> = peer_str
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
     assert_eq!(peers.len(), 3);
-    assert_eq!(peers[0], "ws://relay-a:8080");
-    assert_eq!(peers[1], "ws://relay-b:8080");
-    assert_eq!(peers[2], "ws://relay-c:8080");
+    assert_eq!(peers[0], "https://relay-a:8080");
+    assert_eq!(peers[1], "https://relay-b:8080");
+    assert_eq!(peers[2], "https://relay-c:8080");
 }
 
 // @internal
@@ -426,14 +426,14 @@ fn test_federation_peer_list_empty() {
 // @internal
 #[test]
 fn test_federation_peer_whitespace_trimming() {
-    let peer_str = "  ws://relay-a:8080  ,  ws://relay-b:8080  ";
+    let peer_str = "  https://relay-a:8080  ,  https://relay-b:8080  ";
     let peers: Vec<String> = peer_str
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    assert_eq!(peers[0], "ws://relay-a:8080");
-    assert_eq!(peers[1], "ws://relay-b:8080");
+    assert_eq!(peers[0], "https://relay-a:8080");
+    assert_eq!(peers[1], "https://relay-b:8080");
 }
 
 // ── load_relay_id ────────────────────────────────────────────────────────────

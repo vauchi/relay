@@ -210,7 +210,7 @@ mod tests {
         let hint = ForwardingHint {
             routing_id: "route-1".to_string(),
             blob_id: "blob-1".to_string(),
-            target_relay: "ws://peer-a:8080".to_string(),
+            target_relay: "https://peer-a:8080".to_string(),
             created_at_secs: 1000,
             expires_at_secs: 9999999999,
         };
@@ -219,7 +219,7 @@ mod tests {
         let hints = store.get_hints("route-1");
         assert_eq!(hints.len(), 1);
         assert_eq!(hints[0].blob_id, "blob-1");
-        assert_eq!(hints[0].target_relay, "ws://peer-a:8080");
+        assert_eq!(hints[0].target_relay, "https://peer-a:8080");
     }
 
     fn test_empty_result_for_unknown(store: &dyn ForwardingHintStore) {
@@ -232,7 +232,7 @@ mod tests {
         store.store_hint(ForwardingHint {
             routing_id: "route-1".to_string(),
             blob_id: "blob-expired".to_string(),
-            target_relay: "ws://peer:8080".to_string(),
+            target_relay: "https://peer:8080".to_string(),
             created_at_secs: 100,
             expires_at_secs: 1, // expired long ago
         });
@@ -240,7 +240,7 @@ mod tests {
         store.store_hint(ForwardingHint {
             routing_id: "route-1".to_string(),
             blob_id: "blob-valid".to_string(),
-            target_relay: "ws://peer:8080".to_string(),
+            target_relay: "https://peer:8080".to_string(),
             created_at_secs: 100,
             expires_at_secs: 9999999999,
         });
@@ -256,14 +256,14 @@ mod tests {
         store.store_hint(ForwardingHint {
             routing_id: "route-1".to_string(),
             blob_id: "blob-a".to_string(),
-            target_relay: "ws://peer:8080".to_string(),
+            target_relay: "https://peer:8080".to_string(),
             created_at_secs: 100,
             expires_at_secs: 9999999999,
         });
         store.store_hint(ForwardingHint {
             routing_id: "route-1".to_string(),
             blob_id: "blob-b".to_string(),
-            target_relay: "ws://peer:8080".to_string(),
+            target_relay: "https://peer:8080".to_string(),
             created_at_secs: 100,
             expires_at_secs: 9999999999,
         });
@@ -277,21 +277,21 @@ mod tests {
         store.store_hint(ForwardingHint {
             routing_id: "route-1".to_string(),
             blob_id: "blob-1".to_string(),
-            target_relay: "ws://peer:8080".to_string(),
+            target_relay: "https://peer:8080".to_string(),
             created_at_secs: 100,
             expires_at_secs: 9999999999,
         });
         store.store_hint(ForwardingHint {
             routing_id: "route-1".to_string(),
             blob_id: "blob-2".to_string(),
-            target_relay: "ws://peer:8080".to_string(),
+            target_relay: "https://peer:8080".to_string(),
             created_at_secs: 100,
             expires_at_secs: 9999999999,
         });
         store.store_hint(ForwardingHint {
             routing_id: "route-2".to_string(),
             blob_id: "blob-3".to_string(),
-            target_relay: "ws://peer:8080".to_string(),
+            target_relay: "https://peer:8080".to_string(),
             created_at_secs: 100,
             expires_at_secs: 9999999999,
         });
@@ -308,14 +308,14 @@ mod tests {
         store.store_hint(ForwardingHint {
             routing_id: "r1".to_string(),
             blob_id: "b1".to_string(),
-            target_relay: "ws://p:8080".to_string(),
+            target_relay: "https://p:8080".to_string(),
             created_at_secs: 100,
             expires_at_secs: 9999999999,
         });
         store.store_hint(ForwardingHint {
             routing_id: "r2".to_string(),
             blob_id: "b2".to_string(),
-            target_relay: "ws://p:8080".to_string(),
+            target_relay: "https://p:8080".to_string(),
             created_at_secs: 100,
             expires_at_secs: 9999999999,
         });

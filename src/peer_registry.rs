@@ -264,7 +264,7 @@ mod tests {
     fn make_peer(relay_id: &str, used: usize, max: usize) -> PeerInfo {
         PeerInfo {
             relay_id: relay_id.to_string(),
-            url: format!("ws://{}:8080", relay_id),
+            url: format!("https://{}:8080", relay_id),
             capacity_used_bytes: used,
             capacity_max_bytes: max,
             status: PeerStatus::Connected,
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn test_add_discovered_peer_new() {
         let registry = PeerRegistry::new(0.95);
-        let added = registry.add_discovered_peer("peer-d", "ws://peer-d:8080", 50, 2000);
+        let added = registry.add_discovered_peer("peer-d", "https://peer-d:8080", 50, 2000);
         assert!(added);
         assert_eq!(registry.peer_count(), 1);
 
@@ -376,7 +376,7 @@ mod tests {
         registry.register_peer(make_peer("peer-a", 100, 1000));
 
         // Try adding same peer via gossip — should not add
-        let added = registry.add_discovered_peer("peer-a", "ws://peer-a:8080", 50, 3000);
+        let added = registry.add_discovered_peer("peer-a", "https://peer-a:8080", 50, 3000);
         assert!(!added);
         assert_eq!(registry.peer_count(), 1);
 
@@ -390,10 +390,10 @@ mod tests {
     #[test]
     fn test_add_discovered_peer_stale_timestamp() {
         let registry = PeerRegistry::new(0.95);
-        registry.add_discovered_peer("peer-d", "ws://peer-d:8080", 50, 2000);
+        registry.add_discovered_peer("peer-d", "https://peer-d:8080", 50, 2000);
 
         // Older timestamp should not update last_seen
-        registry.add_discovered_peer("peer-d", "ws://peer-d:8080", 60, 1500);
+        registry.add_discovered_peer("peer-d", "https://peer-d:8080", 60, 1500);
 
         let peers = registry.all_peers();
         assert_eq!(peers[0].last_seen_secs, 2000); // unchanged
@@ -405,9 +405,9 @@ mod tests {
         // Configured peer — should never be removed
         registry.register_peer(make_peer("configured", 100, 1000));
         // Discovered peer — last seen at t=1000
-        registry.add_discovered_peer("discovered-old", "ws://old:8080", 50, 1000);
+        registry.add_discovered_peer("discovered-old", "https://old:8080", 50, 1000);
         // Discovered peer — last seen at t=3500
-        registry.add_discovered_peer("discovered-new", "ws://new:8080", 50, 3500);
+        registry.add_discovered_peer("discovered-new", "https://new:8080", 50, 3500);
 
         assert_eq!(registry.peer_count(), 3);
 
@@ -435,7 +435,7 @@ mod tests {
     #[test]
     fn test_touch_peer() {
         let registry = PeerRegistry::new(0.95);
-        registry.add_discovered_peer("peer-d", "ws://peer-d:8080", 50, 1000);
+        registry.add_discovered_peer("peer-d", "https://peer-d:8080", 50, 1000);
 
         registry.touch_peer("peer-d", 5000);
 
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn test_add_discovered_peer_rejects_private_ip() {
         let registry = PeerRegistry::new(0.95);
-        let added = registry.add_discovered_peer("evil", "ws://192.168.1.1:8080", 50, 2000);
+        let added = registry.add_discovered_peer("evil", "https://192.168.1.1:8080", 50, 2000);
         assert!(!added, "Private IP URLs should be rejected");
         assert_eq!(registry.peer_count(), 0);
     }
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn test_add_discovered_peer_rejects_loopback() {
         let registry = PeerRegistry::new(0.95);
-        let added = registry.add_discovered_peer("evil", "ws://127.0.0.1:8080", 50, 2000);
+        let added = registry.add_discovered_peer("evil", "https://127.0.0.1:8080", 50, 2000);
         assert!(!added, "Loopback URLs should be rejected");
         assert_eq!(registry.peer_count(), 0);
     }
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn test_add_discovered_peer_accepts_public_ip() {
         let registry = PeerRegistry::new(0.95);
-        let added = registry.add_discovered_peer("legit", "wss://203.0.113.1:443", 50, 2000);
+        let added = registry.add_discovered_peer("legit", "https://203.0.113.1:443", 50, 2000);
         assert!(added, "Public IP URLs should be accepted");
         assert_eq!(registry.peer_count(), 1);
     }
@@ -474,7 +474,7 @@ mod tests {
     fn test_all_peers() {
         let registry = PeerRegistry::new(0.95);
         registry.register_peer(make_peer("peer-a", 100, 1000));
-        registry.add_discovered_peer("peer-d", "ws://peer-d:8080", 50, 2000);
+        registry.add_discovered_peer("peer-d", "https://peer-d:8080", 50, 2000);
         registry.set_status("peer-a", PeerStatus::Disconnected);
 
         let all = registry.all_peers();
@@ -639,7 +639,7 @@ pub mod gossip {
         fn make_configured_peer(relay_id: &str) -> PeerInfo {
             PeerInfo {
                 relay_id: relay_id.to_string(),
-                url: format!("ws://{}:8080", relay_id),
+                url: format!("https://{}:8080", relay_id),
                 capacity_used_bytes: 100,
                 capacity_max_bytes: 1000,
                 status: PeerStatus::Connected,
@@ -657,13 +657,13 @@ pub mod gossip {
             let advertised = vec![
                 AdvertisedPeer {
                     relay_id: "new-peer-1".to_string(),
-                    url: "ws://new-1:8080".to_string(),
+                    url: "https://new-1:8080".to_string(),
                     capacity_pct: 30,
                     last_seen_secs: 2000,
                 },
                 AdvertisedPeer {
                     relay_id: "new-peer-2".to_string(),
-                    url: "ws://new-2:8080".to_string(),
+                    url: "https://new-2:8080".to_string(),
                     capacity_pct: 60,
                     last_seen_secs: 2500,
                 },
@@ -680,7 +680,7 @@ pub mod gossip {
 
             let advertised = vec![AdvertisedPeer {
                 relay_id: "my-relay".to_string(),
-                url: "ws://my-relay:8080".to_string(),
+                url: "https://my-relay:8080".to_string(),
                 capacity_pct: 50,
                 last_seen_secs: 2000,
             }];
@@ -697,7 +697,7 @@ pub mod gossip {
 
             let advertised = vec![AdvertisedPeer {
                 relay_id: "existing".to_string(),
-                url: "ws://existing:8080".to_string(),
+                url: "https://existing:8080".to_string(),
                 capacity_pct: 80,
                 last_seen_secs: 5000,
             }];
@@ -718,14 +718,14 @@ pub mod gossip {
             let advertised = vec![
                 AdvertisedPeer {
                     relay_id: "peer-a".to_string(),
-                    url: "ws://peer-a:8080".to_string(),
+                    url: "https://peer-a:8080".to_string(),
                     capacity_pct: 30,
                     last_seen_secs: 2000,
                 },
                 // Same peer advertised again (duplicate)
                 AdvertisedPeer {
                     relay_id: "peer-a".to_string(),
-                    url: "ws://peer-a:8080".to_string(),
+                    url: "https://peer-a:8080".to_string(),
                     capacity_pct: 40,
                     last_seen_secs: 2500,
                 },
@@ -745,13 +745,13 @@ pub mod gossip {
             let advertised = vec![
                 AdvertisedPeer {
                     relay_id: "ssrf-peer".to_string(),
-                    url: "ws://10.0.0.1:8080".to_string(),
+                    url: "https://10.0.0.1:8080".to_string(),
                     capacity_pct: 30,
                     last_seen_secs: 2000,
                 },
                 AdvertisedPeer {
                     relay_id: "good-peer".to_string(),
-                    url: "wss://203.0.113.50:443".to_string(),
+                    url: "https://203.0.113.50:443".to_string(),
                     capacity_pct: 20,
                     last_seen_secs: 2000,
                 },
@@ -780,9 +780,9 @@ pub mod gossip {
             registry.register_peer(configured);
 
             // Discovered peer at t=100
-            registry.add_discovered_peer("old-discovered", "ws://old:8080", 50, 100);
+            registry.add_discovered_peer("old-discovered", "https://old:8080", 50, 100);
             // Discovered peer at t=9500
-            registry.add_discovered_peer("new-discovered", "ws://new:8080", 50, 9500);
+            registry.add_discovered_peer("new-discovered", "https://new:8080", 50, 9500);
 
             // Now is t=10000, TTL is 3600
             let removed = registry.remove_stale_peers(10000, 3600);
