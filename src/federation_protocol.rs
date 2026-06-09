@@ -97,7 +97,7 @@ pub enum FederationPayload {
 pub struct AdvertisedPeer {
     /// The peer's relay ID.
     pub relay_id: String,
-    /// The peer's WebSocket URL.
+    /// The peer's federation base URL (`https://`, mTLS-HTTP — ADR-052).
     pub url: String,
     /// Current capacity usage as a percentage (0-100).
     pub capacity_pct: u8,
@@ -365,13 +365,13 @@ mod tests {
                 peers: vec![
                     AdvertisedPeer {
                         relay_id: "peer-a".to_string(),
-                        url: "ws://peer-a:8080".to_string(),
+                        url: "https://peer-a:8080".to_string(),
                         capacity_pct: 42,
                         last_seen_secs: 9000,
                     },
                     AdvertisedPeer {
                         relay_id: "peer-b".to_string(),
-                        url: "ws://peer-b:8080".to_string(),
+                        url: "https://peer-b:8080".to_string(),
                         capacity_pct: 75,
                         last_seen_secs: 9500,
                     },

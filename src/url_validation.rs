@@ -35,7 +35,7 @@ impl fmt::Display for SsrfError {
         match self {
             SsrfError::InvalidUrl(msg) => write!(f, "invalid federation URL: {}", msg),
             SsrfError::InvalidScheme(s) => {
-                write!(f, "invalid scheme: {} (expected ws:// or wss://)", s)
+                write!(f, "invalid scheme: {} (expected https://)", s)
             }
             SsrfError::PrivateIp(ip) => write!(f, "blocked private IP: {}", ip),
             SsrfError::LoopbackIp(ip) => write!(f, "blocked loopback IP: {}", ip),
@@ -46,15 +46,12 @@ impl fmt::Display for SsrfError {
     }
 }
 
-/// Extracts the host (without port) from a WebSocket URL.
+/// Extracts the host (without port) from an `https://` federation URL.
 fn extract_host(url: &str) -> Result<&str, SsrfError> {
-    let stripped = url
-        .strip_prefix("wss://")
-        .or_else(|| url.strip_prefix("ws://"))
-        .ok_or_else(|| {
-            let scheme = url.split("://").next().unwrap_or("(none)");
-            SsrfError::InvalidScheme(scheme.to_string())
-        })?;
+    let stripped = url.strip_prefix("https://").ok_or_else(|| {
+        let scheme = url.split("://").next().unwrap_or("(none)");
+        SsrfError::InvalidScheme(scheme.to_string())
+    })?;
 
     if stripped.is_empty() {
         return Err(SsrfError::InvalidUrl("empty host".to_string()));
@@ -123,7 +120,7 @@ fn check_blocked_ip(ip: IpAddr) -> Result<(), SsrfError> {
 /// Validates a federation peer URL against SSRF blocklists.
 ///
 /// Checks:
-/// 1. URL scheme is `ws://` or `wss://`
+/// 1. URL scheme is `https://` (federation is mTLS-HTTP-only, ADR-052)
 /// 2. Host is not empty
 /// 3. If host is an IP literal, it is not in a blocked range
 ///
@@ -196,9 +193,8 @@ mod tests {
     }
 
     #[test]
-    fn test_rejects_https_scheme() {
-        let result = validate_federation_url("https://example.com");
-        assert!(matches!(result, Err(SsrfError::InvalidScheme(_))));
+    fn test_accepts_https_scheme() {
+        assert!(validate_federation_url("https://example.com").is_ok());
     }
 
     #[test]
@@ -213,55 +209,59 @@ mod tests {
         assert!(matches!(result, Err(SsrfError::InvalidScheme(_))));
     }
 
+    // Federation is mTLS-HTTP-only (ADR-052): the WebSocket transport is gone,
+    // so ws:// / wss:// peer URLs must be rejected, not accepted.
     #[test]
-    fn test_accepts_ws_scheme() {
-        assert!(validate_federation_url("ws://example.com:8080").is_ok());
+    fn test_rejects_ws_scheme() {
+        let result = validate_federation_url("ws://example.com:8080");
+        assert!(matches!(result, Err(SsrfError::InvalidScheme(_))));
     }
 
     #[test]
-    fn test_accepts_wss_scheme() {
-        assert!(validate_federation_url("wss://example.com").is_ok());
+    fn test_rejects_wss_scheme() {
+        let result = validate_federation_url("wss://example.com");
+        assert!(matches!(result, Err(SsrfError::InvalidScheme(_))));
     }
 
     // === Public IPs (should pass) ===
 
     #[test]
     fn test_accepts_public_ipv4() {
-        assert!(validate_federation_url("wss://8.8.8.8:443").is_ok());
+        assert!(validate_federation_url("https://8.8.8.8:443").is_ok());
     }
 
     #[test]
     fn test_accepts_public_ipv4_no_port() {
-        assert!(validate_federation_url("wss://203.0.113.1").is_ok());
+        assert!(validate_federation_url("https://203.0.113.1").is_ok());
     }
 
     #[test]
     fn test_accepts_hostname() {
-        assert!(validate_federation_url("wss://relay.example.com:443").is_ok());
+        assert!(validate_federation_url("https://relay.example.com:443").is_ok());
     }
 
     #[test]
     fn test_accepts_hostname_with_path() {
-        assert!(validate_federation_url("wss://relay.example.com/federation").is_ok());
+        assert!(validate_federation_url("https://relay.example.com/federation").is_ok());
     }
 
     // === Loopback (blocked) ===
 
     #[test]
     fn test_blocks_loopback_127_0_0_1() {
-        let result = validate_federation_url("ws://127.0.0.1:8080");
+        let result = validate_federation_url("https://127.0.0.1:8080");
         assert!(matches!(result, Err(SsrfError::LoopbackIp(_))));
     }
 
     #[test]
     fn test_blocks_loopback_127_x() {
-        let result = validate_federation_url("ws://127.255.0.1:8080");
+        let result = validate_federation_url("https://127.255.0.1:8080");
         assert!(matches!(result, Err(SsrfError::LoopbackIp(_))));
     }
 
     #[test]
     fn test_blocks_ipv6_loopback() {
-        let result = validate_federation_url("ws://[::1]:8080");
+        let result = validate_federation_url("https://[::1]:8080");
         assert!(matches!(result, Err(SsrfError::LoopbackIp(_))));
     }
 
@@ -269,31 +269,31 @@ mod tests {
 
     #[test]
     fn test_blocks_10_network() {
-        let result = validate_federation_url("ws://10.0.0.1:8080");
+        let result = validate_federation_url("https://10.0.0.1:8080");
         assert!(matches!(result, Err(SsrfError::PrivateIp(_))));
     }
 
     #[test]
     fn test_blocks_172_16_network() {
-        let result = validate_federation_url("ws://172.16.0.1:8080");
+        let result = validate_federation_url("https://172.16.0.1:8080");
         assert!(matches!(result, Err(SsrfError::PrivateIp(_))));
     }
 
     #[test]
     fn test_blocks_172_31_network() {
-        let result = validate_federation_url("ws://172.31.255.255:8080");
+        let result = validate_federation_url("https://172.31.255.255:8080");
         assert!(matches!(result, Err(SsrfError::PrivateIp(_))));
     }
 
     #[test]
     fn test_allows_172_32_network() {
         // 172.32.0.0 is NOT in the 172.16.0.0/12 private range
-        assert!(validate_federation_url("ws://172.32.0.1:8080").is_ok());
+        assert!(validate_federation_url("https://172.32.0.1:8080").is_ok());
     }
 
     #[test]
     fn test_blocks_192_168_network() {
-        let result = validate_federation_url("ws://192.168.1.1:8080");
+        let result = validate_federation_url("https://192.168.1.1:8080");
         assert!(matches!(result, Err(SsrfError::PrivateIp(_))));
     }
 
@@ -301,13 +301,13 @@ mod tests {
 
     #[test]
     fn test_blocks_ipv4_link_local() {
-        let result = validate_federation_url("ws://169.254.1.1:8080");
+        let result = validate_federation_url("https://169.254.1.1:8080");
         assert!(matches!(result, Err(SsrfError::LinkLocalIp(_))));
     }
 
     #[test]
     fn test_blocks_ipv6_link_local() {
-        let result = validate_federation_url("ws://[fe80::1]:8080");
+        let result = validate_federation_url("https://[fe80::1]:8080");
         assert!(matches!(result, Err(SsrfError::LinkLocalIp(_))));
     }
 
@@ -315,13 +315,13 @@ mod tests {
 
     #[test]
     fn test_blocks_multicast() {
-        let result = validate_federation_url("ws://224.0.0.1:8080");
+        let result = validate_federation_url("https://224.0.0.1:8080");
         assert!(matches!(result, Err(SsrfError::MulticastIp(_))));
     }
 
     #[test]
     fn test_blocks_ipv6_multicast() {
-        let result = validate_federation_url("ws://[ff02::1]:8080");
+        let result = validate_federation_url("https://[ff02::1]:8080");
         assert!(matches!(result, Err(SsrfError::MulticastIp(_))));
     }
 
@@ -329,13 +329,13 @@ mod tests {
 
     #[test]
     fn test_blocks_unspecified_ipv4() {
-        let result = validate_federation_url("ws://0.0.0.0:8080");
+        let result = validate_federation_url("https://0.0.0.0:8080");
         assert!(matches!(result, Err(SsrfError::UnspecifiedIp(_))));
     }
 
     #[test]
     fn test_blocks_unspecified_ipv6() {
-        let result = validate_federation_url("ws://[::]:8080");
+        let result = validate_federation_url("https://[::]:8080");
         assert!(matches!(result, Err(SsrfError::UnspecifiedIp(_))));
     }
 
@@ -343,19 +343,19 @@ mod tests {
 
     #[test]
     fn test_blocks_ipv4_mapped_loopback() {
-        let result = validate_federation_url("ws://[::ffff:127.0.0.1]:8080");
+        let result = validate_federation_url("https://[::ffff:127.0.0.1]:8080");
         assert!(matches!(result, Err(SsrfError::LoopbackIp(_))));
     }
 
     #[test]
     fn test_blocks_ipv4_mapped_private() {
-        let result = validate_federation_url("ws://[::ffff:10.0.0.1]:8080");
+        let result = validate_federation_url("https://[::ffff:10.0.0.1]:8080");
         assert!(matches!(result, Err(SsrfError::PrivateIp(_))));
     }
 
     #[test]
     fn test_accepts_ipv4_mapped_public() {
-        assert!(validate_federation_url("ws://[::ffff:8.8.8.8]:8080").is_ok());
+        assert!(validate_federation_url("https://[::ffff:8.8.8.8]:8080").is_ok());
     }
 
     // === validate_resolved_ip ===
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn test_empty_host_rejected() {
-        let result = validate_federation_url("ws://");
+        let result = validate_federation_url("https://");
         assert!(matches!(result, Err(SsrfError::InvalidUrl(_))));
     }
 
