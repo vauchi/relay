@@ -45,11 +45,18 @@ const OFFLOAD_BATCH_SIZE: usize = 10;
 /// URL is scheme/blocklist-validated and the host is resolved + IP-validated
 /// (DNS-rebinding safe) before any connect. Returns the `(host, addr)` to
 /// hand to [`send_payload_to_addr`].
+///
+/// `allow_loopback` bypasses the SSRF IP blocklist (the `https://` scheme is
+/// still required). It is a DEV/TEST-only escape for exercising two relays on
+/// loopback — `main.rs` only ever sets it in debug builds, never release.
 async fn validate_and_resolve_peer(
     peer_url: &str,
+    allow_loopback: bool,
 ) -> Result<(String, std::net::SocketAddr), String> {
-    crate::url_validation::validate_federation_url(peer_url)
-        .map_err(|e| format!("SSRF validation failed for {peer_url}: {e}"))?;
+    if !allow_loopback {
+        crate::url_validation::validate_federation_url(peer_url)
+            .map_err(|e| format!("SSRF validation failed for {peer_url}: {e}"))?;
+    }
 
     let stripped = peer_url
         .strip_prefix("https://")
@@ -64,9 +71,17 @@ async fn validate_and_resolve_peer(
         (authority.to_string(), 443u16)
     };
 
-    let addr = crate::url_validation::resolve_and_validate(&host, port)
-        .await
-        .map_err(|e| format!("SSRF: {e}"))?;
+    let addr = if allow_loopback {
+        tokio::net::lookup_host(format!("{host}:{port}"))
+            .await
+            .map_err(|e| format!("resolve {host}: {e}"))?
+            .next()
+            .ok_or_else(|| format!("no addresses for {host}"))?
+    } else {
+        crate::url_validation::resolve_and_validate(&host, port)
+            .await
+            .map_err(|e| format!("SSRF: {e}"))?
+    };
     Ok((host, addr))
 }
 
@@ -166,8 +181,9 @@ async fn post_federation_message(
     own_relay_id: &str,
     client_config: &Arc<ClientConfig>,
     envelope: &FederationEnvelope,
+    allow_loopback: bool,
 ) -> Result<FederationPayload, String> {
-    let (host, addr) = validate_and_resolve_peer(peer_url).await?;
+    let (host, addr) = validate_and_resolve_peer(peer_url, allow_loopback).await?;
     send_payload_to_addr(&host, addr, own_relay_id, client_config, envelope).await
 }
 
@@ -186,6 +202,10 @@ pub struct OffloadManager {
     /// mTLS client config for connecting to peers. `None` disables
     /// offloading (federation is mTLS-only, ADR-052).
     pub tls_client_config: Option<Arc<ClientConfig>>,
+    /// DEV/TEST-only: allow offloading to loopback/private peers (skips the
+    /// SSRF IP blocklist). Set only in debug builds via main.rs; always
+    /// `false` in release.
+    pub allow_loopback_peers: bool,
 }
 
 impl OffloadManager {
@@ -233,7 +253,15 @@ impl OffloadManager {
                     hop_count: blob.hop_count,
                 });
 
-            match post_federation_message(peer_url, own_relay_id, client_config, &envelope).await {
+            match post_federation_message(
+                peer_url,
+                own_relay_id,
+                client_config,
+                &envelope,
+                self.allow_loopback_peers,
+            )
+            .await
+            {
                 Ok(FederationPayload::OffloadAck { accepted: true, .. }) => {
                     if self.storage.remove_blob(&blob.id) {
                         self.hint_store.store_hint(ForwardingHint {
@@ -311,6 +339,7 @@ mod tests {
             config,
             metrics: RelayMetrics::new(),
             tls_client_config: tls,
+            allow_loopback_peers: false,
         }
     }
 
@@ -373,6 +402,32 @@ mod tests {
             mgr.storage.get_oldest_blobs(10).len(),
             1,
             "blob must be kept when offload fails"
+        );
+    }
+
+    // @internal
+    #[tokio::test]
+    async fn loopback_peer_resolves_only_when_allow_loopback() {
+        // Default: the SSRF guard blocks a loopback peer.
+        assert!(
+            validate_and_resolve_peer("https://127.0.0.1:9", false)
+                .await
+                .is_err(),
+            "loopback must be blocked without the escape"
+        );
+
+        // Escape on (debug/test only): loopback resolves; https still required.
+        let (host, addr) = validate_and_resolve_peer("https://127.0.0.1:9", true)
+            .await
+            .expect("loopback allowed when flag set");
+        assert_eq!(host, "127.0.0.1");
+        assert_eq!(addr.port(), 9);
+        assert!(addr.ip().is_loopback());
+        assert!(
+            validate_and_resolve_peer("http://127.0.0.1:9", true)
+                .await
+                .is_err(),
+            "https scheme is still required even with the escape"
         );
     }
 }

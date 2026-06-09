@@ -316,6 +316,7 @@ async fn main() {
             config: config.clone(),
             metrics: metrics.clone(),
             tls_client_config: tls_client_config.clone(),
+            allow_loopback_peers: federation_allow_loopback_peers(),
         });
 
         if let Some(ref tls_config) = federation_tls_config {
@@ -764,4 +765,19 @@ async fn main() {
     info!("Running WAL checkpoint on databases...");
     storage.shutdown();
     info!("Shutdown complete");
+}
+
+/// DEV/TEST-only: whether federation offload may target loopback/private peers
+/// (bypassing the SSRF IP blocklist). Honored only in debug builds via
+/// `RELAY_FEDERATION_DANGEROUSLY_ALLOW_LOOPBACK`; compiled out of release, so
+/// production never reads it and the SSRF guard always applies. Exists solely
+/// to make local two-relay federation testable (ADR-052).
+#[cfg(debug_assertions)]
+fn federation_allow_loopback_peers() -> bool {
+    std::env::var("RELAY_FEDERATION_DANGEROUSLY_ALLOW_LOOPBACK").is_ok()
+}
+
+#[cfg(not(debug_assertions))]
+fn federation_allow_loopback_peers() -> bool {
+    false
 }
