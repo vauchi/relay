@@ -32,16 +32,6 @@ path = "fuzz_targets/fuzz_federation_padding.rs"
 doc = false
 
 [[bin]]
-name = "fuzz_noise_handshake"
-path = "fuzz_targets/fuzz_noise_handshake.rs"
-doc = false
-
-[[bin]]
-name = "fuzz_noise_v2_detect"
-path = "fuzz_targets/fuzz_noise_v2_detect.rs"
-doc = false
-
-[[bin]]
 name = "fuzz_federation_url"
 path = "fuzz_targets/fuzz_federation_url.rs"
 doc = false

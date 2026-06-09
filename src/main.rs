@@ -144,14 +144,13 @@ async fn main() {
 
     let noise_keypair = noise_key::load_or_generate_keypair(&config.storage.data_dir);
     let noise_pubkey_b64 = noise_key::public_key_base64url(&noise_keypair.public);
-    info!("Noise public key: {}", noise_pubkey_b64);
+    info!("Relay identity public key: {}", noise_pubkey_b64);
 
-    // R-M4: Log relay signing identity (derived from Noise keypair)
+    // R-M4: Log relay signing identity (derived from the relay identity key)
     {
         let signing_key = noise_key::RelaySigningKey::from_noise_key(&noise_keypair.private);
         info!("Relay signing key: {}", signing_key.public_key_hex());
     }
-    info!("Noise encryption: REQUIRED (Noise NK mandatory since v0.1)");
 
     let metrics = RelayMetrics::new();
 

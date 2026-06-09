@@ -22,7 +22,6 @@ pub mod integrity;
 pub mod jitter;
 pub mod metrics;
 pub mod noise_key;
-pub mod noise_transport;
 pub mod ohttp_gateway;
 pub mod padding;
 pub mod peer_registry;

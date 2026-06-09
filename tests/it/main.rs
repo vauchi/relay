@@ -20,7 +20,6 @@ mod http_api_guardian_tests;
 mod http_api_ohttp_tests;
 mod http_api_recovery_tests;
 mod http_api_tests;
-mod noise_integration_test;
 mod rate_limit_ux;
 mod relay_integration_test;
 mod relay_load_test;

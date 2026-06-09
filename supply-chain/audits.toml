@@ -561,12 +561,6 @@ user-id = 6741 # Alice Ryhl (Darksonn)
 start = "2021-10-13"
 end = "2027-03-10"
 
-[[trusted.snow]]
-criteria = "safe-to-deploy"
-user-id = 4610 # Jake McGinty (mcginty)
-start = "2019-02-26"
-end = "2027-03-10"
-
 [[trusted.socket2]]
 criteria = "safe-to-deploy"
 user-id = 6025 # Thomas de Zeeuw (Thomasdezeeuw)

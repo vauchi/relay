@@ -61,7 +61,6 @@ aws-lc-rs = "1.16"
 subtle = "2.6"
 
 # Noise protocol for inner transport encryption (defense-in-depth inside TLS)
-snow = "0.9"
 
 # Base64url encoding for relay public key distribution
 base64 = "0.22"

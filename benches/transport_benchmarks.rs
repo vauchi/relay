@@ -4,114 +4,9 @@
 
 //! Criterion benchmarks for relay transport, integrity, and padding hot paths.
 
-use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use vauchi_relay::integrity::{compute_integrity_hash, verify_integrity_hash};
-use vauchi_relay::noise_key::generate_relay_keypair;
-use vauchi_relay::noise_transport::{NOISE_PATTERN, NoiseResponder, NoiseTransport};
 use vauchi_relay::padding::{pad, unpad};
-
-/// Performs a full NK handshake (initiator built manually since test_handshake
-/// is #[cfg(test)] only). Returns (client_transport, relay_transport).
-fn do_handshake(private: &[u8; 32], public: &[u8; 32]) -> (snow::TransportState, NoiseTransport) {
-    let builder = snow::Builder::new(NOISE_PATTERN.parse().unwrap());
-    let mut initiator = builder.remote_public_key(public).build_initiator().unwrap();
-
-    let mut msg1 = vec![0u8; 65535];
-    let len1 = initiator.write_message(&[], &mut msg1).unwrap();
-    msg1.truncate(len1);
-
-    let responder = NoiseResponder::new(private).unwrap();
-    let (relay_transport, response) = responder.process_handshake(&msg1).unwrap();
-
-    let mut read_buf = vec![0u8; 65535];
-    initiator.read_message(&response, &mut read_buf).unwrap();
-    let client_transport = initiator.into_transport_mode().unwrap();
-
-    (client_transport, relay_transport)
-}
-
-fn bench_noise_nk(c: &mut Criterion) {
-    let mut group = c.benchmark_group("noise_nk");
-
-    // NoiseResponder creation (1x per connection)
-    group.bench_function("responder_new", |b| {
-        let kp = generate_relay_keypair();
-        b.iter(|| {
-            NoiseResponder::new(&kp.private).unwrap();
-        });
-    });
-
-    // Full NK handshake (initiator -> responder -> transport)
-    group.bench_function("full_handshake", |b| {
-        let kp = generate_relay_keypair();
-        b.iter(|| {
-            do_handshake(&kp.private, &kp.public);
-        });
-    });
-
-    // X25519 keypair generation
-    group.bench_function("generate_relay_keypair", |b| {
-        b.iter(|| {
-            generate_relay_keypair();
-        });
-    });
-
-    group.finish();
-}
-
-fn bench_noise_transport(c: &mut Criterion) {
-    let mut group = c.benchmark_group("noise_transport");
-
-    // Per-message encrypt/decrypt (ChaChaPoly hot path)
-    group.bench_function("encrypt_100B", |b| {
-        let kp = generate_relay_keypair();
-        let (_client, mut relay) = do_handshake(&kp.private, &kp.public);
-        let plaintext = vec![0x42; 100];
-        b.iter(|| {
-            relay.encrypt(&plaintext).unwrap();
-        });
-    });
-
-    // Noise nonces are monotonic — each decrypt advances state, so we need
-    // a fresh transport pair per iteration via iter_batched.
-    group.bench_function("decrypt_100B", |b| {
-        let kp = generate_relay_keypair();
-        let plaintext = vec![0x42; 100];
-        b.iter_batched(
-            || {
-                let (mut client, relay) = do_handshake(&kp.private, &kp.public);
-                let mut ct = vec![0u8; plaintext.len() + 16];
-                let len = client.write_message(&plaintext, &mut ct).unwrap();
-                ct.truncate(len);
-                (relay, ct)
-            },
-            |(mut relay, ct)| {
-                relay.decrypt(&ct).unwrap();
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("decrypt_4KB", |b| {
-        let kp = generate_relay_keypair();
-        let plaintext = vec![0x42; 4096];
-        b.iter_batched(
-            || {
-                let (mut client, relay) = do_handshake(&kp.private, &kp.public);
-                let mut ct = vec![0u8; plaintext.len() + 16];
-                let len = client.write_message(&plaintext, &mut ct).unwrap();
-                ct.truncate(len);
-                (relay, ct)
-            },
-            |(mut relay, ct)| {
-                relay.decrypt(&ct).unwrap();
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.finish();
-}
 
 fn bench_integrity(c: &mut Criterion) {
     let mut group = c.benchmark_group("integrity");
@@ -168,11 +63,5 @@ fn bench_padding(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_noise_nk,
-    bench_noise_transport,
-    bench_integrity,
-    bench_padding
-);
+criterion_group!(benches, bench_integrity, bench_padding);
 criterion_main!(benches);
