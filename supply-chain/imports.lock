@@ -677,15 +677,15 @@ user-login = "rozbb"
 user-name = "Michael Rosenberg"
 
 [[publisher.zerocopy]]
-version = "0.8.50"
-when = "2026-05-29"
+version = "0.8.51"
+when = "2026-06-09"
 user-id = 7178
 user-login = "joshlf"
 user-name = "Joshua Liebow-Feeser"
 
 [[publisher.zerocopy-derive]]
-version = "0.8.50"
-when = "2026-05-29"
+version = "0.8.51"
+when = "2026-06-09"
 user-id = 7178
 user-login = "joshlf"
 user-name = "Joshua Liebow-Feeser"
