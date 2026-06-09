@@ -11,9 +11,12 @@
 //! transport framing stay with the caller; this layer is pure decision +
 //! the store side-effect.
 
+use crate::config::RelayConfig;
 use crate::federation_protocol::FederationPayload;
 use crate::integrity;
+use crate::metrics::RelayMetrics;
 use crate::padding;
+use crate::peer_registry::{PeerRegistry, PeerStatus, gossip};
 use crate::storage::{BlobStore, StoredBlob};
 
 /// Outcome of applying an inbound offload blob.
@@ -77,5 +80,110 @@ pub fn apply_offload(
             reason: None,
         },
         accepted: true,
+    }
+}
+
+/// Result of applying an inbound federation message.
+pub struct MessageResult {
+    /// Response payload to send back to the peer, if any.
+    pub response: Option<FederationPayload>,
+    /// True when the message was an offload blob that was accepted and
+    /// stored — the transport increments its aggregate counter off this.
+    pub offload_stored: bool,
+}
+
+/// Applies an inbound federation message: dispatches on the payload
+/// variant, performs the registry/storage side-effects and metric
+/// increments, and returns the optional response payload.
+///
+/// Transport-agnostic (ADR-052): `peer_relay_id` is supplied by the
+/// caller — the WebSocket handshake today, the mTLS client identity once
+/// federation is HTTP. Rate limiting stays at the transport layer.
+pub fn apply_message(
+    payload: FederationPayload,
+    storage: &dyn BlobStore,
+    config: &RelayConfig,
+    peer_registry: &PeerRegistry,
+    metrics: &RelayMetrics,
+    peer_relay_id: &str,
+) -> MessageResult {
+    match payload {
+        FederationPayload::OffloadBlob {
+            blob_id,
+            routing_id,
+            data,
+            created_at_secs,
+            integrity_hash,
+            hop_count,
+        } => {
+            let outcome = apply_offload(
+                storage,
+                config.storage.max_storage_bytes,
+                config.federation.offload_refuse,
+                blob_id,
+                &routing_id,
+                data,
+                created_at_secs,
+                &integrity_hash,
+                hop_count,
+            );
+            if outcome.accepted {
+                metrics.federation_offloads_received.inc();
+            } else {
+                metrics.federation_offloads_rejected.inc();
+            }
+            MessageResult {
+                response: Some(outcome.ack),
+                offload_stored: outcome.accepted,
+            }
+        }
+        FederationPayload::CapacityReport {
+            used_bytes,
+            max_bytes,
+            blob_count: _,
+        } => {
+            peer_registry.update_capacity(peer_relay_id, used_bytes, max_bytes);
+            MessageResult {
+                response: None,
+                offload_stored: false,
+            }
+        }
+        FederationPayload::DrainNotice {
+            drain_timeout_secs: _,
+        } => {
+            peer_registry.set_status(peer_relay_id, PeerStatus::Draining);
+            metrics.federation_drain_notices.inc();
+            MessageResult {
+                response: Some(FederationPayload::DrainAck),
+                offload_stored: false,
+            }
+        }
+        FederationPayload::PeerAdvertisement { peers } => {
+            if config.federation.gossip_enabled {
+                let new_peers_count = gossip::process_peer_advertisement(
+                    &config.federation.relay_id,
+                    peer_registry,
+                    &peers,
+                );
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                peer_registry.touch_peer(peer_relay_id, now_secs);
+                MessageResult {
+                    response: Some(FederationPayload::PeerAdvertisementAck { new_peers_count }),
+                    offload_stored: false,
+                }
+            } else {
+                MessageResult {
+                    response: None,
+                    offload_stored: false,
+                }
+            }
+        }
+        _ => MessageResult {
+            response: None,
+            offload_stored: false,
+        },
     }
 }

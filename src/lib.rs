@@ -9,6 +9,7 @@ pub mod exchange_broker;
 pub mod federation_connector;
 pub mod federation_core;
 pub mod federation_handler;
+pub mod federation_http;
 pub mod federation_protocol;
 pub mod federation_tls;
 #[cfg(feature = "flame")]
