@@ -23,7 +23,7 @@ use vauchi_relay::config::RelayConfig;
 use vauchi_relay::connection_limit::ConnectionLimiter;
 use vauchi_relay::escrow::{self, EscrowStore};
 use vauchi_relay::exchange_broker::ExchangeBroker;
-use vauchi_relay::federation_connector::{self, OffloadManager};
+use vauchi_relay::federation_connector::OffloadManager;
 use vauchi_relay::federation_http;
 use vauchi_relay::federation_tls;
 use vauchi_relay::forwarding_hints::{ForwardingHintStore, SqliteForwardingHintStore};
@@ -308,37 +308,15 @@ async fn main() {
             .as_ref()
             .map(|c| c.client_config.clone());
 
-        // Create offload manager (shared with peer connectors and capacity monitor)
+        // Offload manager: POSTs blobs to peers over mTLS-HTTP on demand
+        // (ADR-052), driven by the periodic capacity monitor below.
         let offload_manager = Arc::new(OffloadManager {
             storage: storage.clone(),
             hint_store: hint_store.clone(),
-            peer_registry: peer_registry.clone(),
             config: config.clone(),
             metrics: metrics.clone(),
-            pending_offloads: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
+            tls_client_config: tls_client_config.clone(),
         });
-
-        for peer_url in &config.federation.peers {
-            let peer_url = peer_url.clone();
-            let own_relay_id = config.federation.relay_id.clone();
-            let peer_registry = peer_registry.clone();
-            let config = config.clone();
-            let tls_config = tls_client_config.clone();
-            let offload_mgr = offload_manager.clone();
-            let conn_metrics = metrics.clone();
-            tokio::spawn(async move {
-                federation_connector::maintain_peer_connection(
-                    peer_url,
-                    own_relay_id,
-                    peer_registry,
-                    config,
-                    tls_config,
-                    Some(offload_mgr),
-                    conn_metrics,
-                )
-                .await;
-            });
-        }
 
         if let Some(ref tls_config) = federation_tls_config {
             let mtls_addr = config.federation.mtls_addr.unwrap_or_else(|| {
