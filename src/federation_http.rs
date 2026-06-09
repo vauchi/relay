@@ -124,7 +124,7 @@ async fn message_handler(
 
     let payload = match decode_payload(&headers, body) {
         Ok(payload) => payload,
-        Err(resp) => return resp,
+        Err((status, msg)) => return (status, msg).into_response(),
     };
 
     let result = federation_core::apply_message(
@@ -148,7 +148,10 @@ async fn message_handler(
 /// on the `Content-Type` (ADR-052 Amendment 2): an `application/octet-stream`
 /// body is a raw offload blob whose metadata rides the `X-Federation-*`
 /// headers; anything else is parsed as a JSON `FederationEnvelope`.
-fn decode_payload(headers: &HeaderMap, body: Bytes) -> Result<FederationPayload, Response> {
+fn decode_payload(
+    headers: &HeaderMap,
+    body: Bytes,
+) -> Result<FederationPayload, (StatusCode, String)> {
     let is_offload = headers
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -157,11 +160,16 @@ fn decode_payload(headers: &HeaderMap, body: Bytes) -> Result<FederationPayload,
     if !is_offload {
         return serde_json::from_slice::<FederationEnvelope>(&body)
             .map(|envelope| envelope.payload)
-            .map_err(|_| (StatusCode::BAD_REQUEST, "invalid federation envelope").into_response());
+            .map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "invalid federation envelope".to_string(),
+                )
+            });
     }
 
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
-    let bad = |what: &str| (StatusCode::BAD_REQUEST, format!("offload: {what}")).into_response();
+    let bad = |what: &str| (StatusCode::BAD_REQUEST, format!("offload: {what}"));
 
     let blob_id = header(BLOB_ID_HEADER).ok_or_else(|| bad("missing blob id"))?;
     let routing_id = header(ROUTING_ID_HEADER).ok_or_else(|| bad("missing routing id"))?;
