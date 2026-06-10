@@ -424,7 +424,6 @@ async fn main() {
     let http_state = HttpState {
         metrics: metrics.clone(),
         metrics_token,
-        noise_pubkey: Some(noise_pubkey_b64),
     };
     let mut http_router = create_router(http_state);
 

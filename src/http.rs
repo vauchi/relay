@@ -46,8 +46,6 @@ fn load_build_info() -> serde_json::Value {
 pub struct HttpState {
     pub metrics: RelayMetrics,
     pub metrics_token: Option<String>,
-    /// Relay's Noise NK public key (base64url-encoded).
-    pub noise_pubkey: Option<String>,
 }
 
 /// Middleware to check bearer token for metrics endpoint.
@@ -119,7 +117,6 @@ pub fn create_router(state: HttpState) -> Router {
     Router::new()
         .route("/metrics", get(metrics_handler))
         .route("/health", get(health_handler))
-        .route("/pubkey", get(pubkey_handler))
         .route("/build-info", get(build_info_handler))
         .route("/", get(root_handler))
         .layer(middleware::from_fn_with_state(
@@ -135,7 +132,7 @@ pub fn create_router(state: HttpState) -> Router {
 async fn root_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "service": "vauchi-relay",
-        "endpoints": ["/health", "/metrics", "/pubkey", "/build-info"]
+        "endpoints": ["/health", "/metrics", "/build-info"]
     }))
 }
 
@@ -153,14 +150,6 @@ async fn health_handler() -> impl IntoResponse {
 async fn build_info_handler() -> impl IntoResponse {
     let info = BUILD_INFO.get_or_init(load_build_info);
     Json(info.clone())
-}
-
-/// Returns the relay's Noise NK public key (base64url-encoded).
-async fn pubkey_handler(State(state): State<HttpState>) -> impl IntoResponse {
-    match state.noise_pubkey {
-        Some(ref key) => (StatusCode::OK, key.clone()).into_response(),
-        None => (StatusCode::NOT_FOUND, "Noise not configured").into_response(),
-    }
 }
 
 /// Health check endpoint - always returns 200 if server is running.
@@ -378,7 +367,6 @@ mod tests {
         HttpState {
             metrics: RelayMetrics::new(),
             metrics_token: None,
-            noise_pubkey: None,
         }
     }
 
@@ -484,7 +472,6 @@ mod tests {
         let state = HttpState {
             metrics: RelayMetrics::new(),
             metrics_token: Some("secret-token-123".to_string()),
-            noise_pubkey: None,
         };
         let app = create_router(state);
 
@@ -508,7 +495,6 @@ mod tests {
         let state = HttpState {
             metrics: RelayMetrics::new(),
             metrics_token: Some("secret-token-123".to_string()),
-            noise_pubkey: None,
         };
         let app = create_router(state);
 
@@ -533,7 +519,6 @@ mod tests {
         let state = HttpState {
             metrics: RelayMetrics::new(),
             metrics_token: Some("secret-token-123".to_string()),
-            noise_pubkey: None,
         };
         let app = create_router(state);
 
@@ -549,57 +534,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    // @scenario: relay_network.feature:Relay node monitoring
-    #[tokio::test]
-    async fn test_pubkey_handler_none() {
-        let state = HttpState {
-            metrics: RelayMetrics::new(),
-            metrics_token: None,
-            noise_pubkey: None,
-        };
-        let app = create_router(state);
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/pubkey")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    // @scenario: relay_network.feature:Relay node monitoring
-    #[tokio::test]
-    async fn test_pubkey_handler_some() {
-        let state = HttpState {
-            metrics: RelayMetrics::new(),
-            metrics_token: None,
-            noise_pubkey: Some("dGVzdC1wdWJrZXk".to_string()),
-        };
-        let app = create_router(state);
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/pubkey")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body_bytes = axum::body::to_bytes(response.into_body(), 1024)
-            .await
-            .unwrap();
-        assert_eq!(body_bytes, "dGVzdC1wdWJrZXk");
     }
 
     #[tokio::test]

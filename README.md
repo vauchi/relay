@@ -144,7 +144,6 @@ Everything listed below is **implemented and tested**
 | `/v2/federation/*` | mTLS listener | Federation (mTLS-HTTP) |
 | `/health` | 8081 (ops) | Health check |
 | `/metrics` | 8081 (ops) | Prometheus (optional auth) |
-| `/pubkey` | 8081 (ops) | Noise NK public key |
 | `/build-info` | 8081 (ops) | Git SHA, ref, build time |
 
 ### Graceful Shutdown
