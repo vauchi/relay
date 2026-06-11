@@ -20,7 +20,7 @@ src/storage.rs 1061
 src/http_api.rs 1274
 
 # SPLIT — Phase 3: split http_api_tests.rs per service area
-tests/http_api_tests.rs 544
-tests/http_api_exchange_tests.rs 171
-tests/http_api_ohttp_tests.rs 440
-tests/common/http_helpers.rs 155
+tests/it/http_api_tests.rs 544
+tests/it/http_api_exchange_tests.rs 171
+tests/it/http_api_ohttp_tests.rs 440
+tests/it/common/http_helpers.rs 155
