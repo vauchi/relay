@@ -113,8 +113,6 @@ All endpoints above are also routable via OHTTP for IP privacy.
 
 ## Architecture
 
-See `STRUCTURE.md` for full module listing.
-
 ### Components
 
 - **HTTP v2 API**: REST endpoints for all client
