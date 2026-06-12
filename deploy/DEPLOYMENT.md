@@ -8,7 +8,8 @@ This guide covers deploying the Vauchi Relay server in production.
 ## Overview
 
 The relay server provides:
-- **WebSocket endpoint** (port 8080) - Encrypted blob storage and delivery
+
+- **HTTP API** (port 8080) - Encrypted blob storage and delivery + OHTTP gateway
 - **HTTP endpoint** (port 8081) - Health checks and Prometheus metrics
 
 ## Quick Start
@@ -41,7 +42,7 @@ The OHTTP deployment uses three containers: Caddy for TLS termination,
 an OHTTP relay that strips client IPs, and a Vauchi relay on an internal-only
 Docker network.
 
-```
+```text
 Client → Caddy (443, auto-TLS) → OHTTP Relay (8082) → Vauchi Relay (8080, internal only)
 ```
 
@@ -77,6 +78,7 @@ configuration.
 The relay doesn't handle TLS directly. Use a reverse proxy:
 
 **nginx:**
+
 ```bash
 # Copy and customize the config
 sudo cp deploy/nginx/vauchi-relay.conf /etc/nginx/sites-available/
@@ -90,6 +92,7 @@ sudo systemctl reload nginx
 ```
 
 **Caddy:**
+
 ```bash
 # Copy Caddyfile
 sudo cp deploy/caddy/Caddyfile /etc/caddy/
@@ -132,8 +135,9 @@ helm install vauchi-relay deploy/helm/vauchi-relay \
 
 ## Static Binary (musl)
 
-Phase 2 of the distroless migration produces a fully static binary linked against musl libc,
-shrinking the image from ~32.7 MB (`distroless/cc`) to ~11.2 MB (`distroless/static`).
+Phase 2 of the distroless migration produces a fully static binary linked
+against musl libc, shrinking the image from ~32.7 MB (`distroless/cc`) to
+~11.2 MB (`distroless/static`).
 
 ### Binary characteristics
 
@@ -144,10 +148,10 @@ shrinking the image from ~32.7 MB (`distroless/cc`) to ~11.2 MB (`distroless/sta
 
 ### Build requirements (build-time only)
 
-The following packages are needed in the build environment and are **not** present in the
-runtime image:
+The following packages are needed in the build environment and are **not**
+present in the runtime image:
 
-```
+```text
 musl-tools   # provides musl-gcc wrapper and CRT objects
 cmake        # required by aws-lc-rs
 clang        # alternative C compiler used by aws-lc-rs
@@ -166,7 +170,8 @@ musl's default `malloc` uses a global lock. Under concurrent load this causes a 
 throughput regression compared to glibc. The relay links [mimalloc](https://github.com/microsoft/mimalloc)
 as a replacement allocator, reducing the delta to ~13%.
 
-The allocator is enabled via the `mimalloc` Cargo feature and requires no runtime configuration.
+The allocator is enabled via the `mimalloc` Cargo feature and requires no
+runtime configuration.
 
 ### Build command
 
@@ -174,17 +179,18 @@ The allocator is enabled via the `mimalloc` Cargo feature and requires no runtim
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-No `CC` or `LINKER` environment variable overrides are needed. Rust uses the bundled musl CRT
-objects automatically.
+No `CC` or `LINKER` environment variable overrides are needed. Rust uses the
+bundled musl CRT objects automatically.
 
 ### Runtime image
 
-```
+```text
 gcr.io/distroless/static-debian12
 ```
 
 This image contains only four Debian packages: `base-files`, `media-types`, `netbase`, `tzdata`.
-There is no shell, no package manager, and no C runtime — the musl binary is fully self-contained.
+There is no shell, no package manager, and no C runtime — the musl binary is
+fully self-contained.
 
 ### Known issues
 
@@ -192,14 +198,15 @@ There is no shell, no package manager, and no C runtime — the musl binary is f
 
 On Arch Linux, `musl-gcc` has a spec-file bug that misconfigures `scrt1.o`, causing a SIGSEGV at
 startup. Fix: do not set `CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc`. Let Rust
-resolve the linker automatically — it will use the bundled musl CRT, which is correct.
+resolve the linker automatically — it will use the bundled musl CRT, which is
+correct.
 
 **Intermittent test failure: `test_relay_id_file_persistence`**
 
-This test fails intermittently when run in parallel due to environment variable pollution.
-The failure is pre-existing and also reproduces on glibc builds. It is not a musl regression.
-Workaround: run the test serially (`cargo nextest run --test-threads=1`) or skip it in CI
-parallel runs.
+This test fails intermittently when run in parallel due to environment variable
+pollution. The failure is pre-existing and also reproduces on glibc builds. It
+is not a musl regression. Workaround: run the test serially
+(`cargo nextest run --test-threads=1`) or skip it in CI parallel runs.
 
 ---
 
@@ -209,7 +216,7 @@ All configuration via environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RELAY_LISTEN_ADDR` | `0.0.0.0:8080` | WebSocket listen address |
+| `RELAY_LISTEN_ADDR` | `0.0.0.0:8080` | HTTP API listen address |
 | `RELAY_MAX_CONNECTIONS` | `1000` | Max concurrent connections |
 | `RELAY_MAX_MESSAGE_SIZE` | `1048576` | Max message size (1MB) |
 | `RELAY_BLOB_TTL_DAYS` | `90` | Blob expiration in days |
@@ -229,7 +236,7 @@ All configuration via environment variables:
 
 Available at `GET /metrics` on port 8081:
 
-```
+```text
 # Connection metrics
 relay_connections_total
 relay_connections_active
@@ -273,9 +280,11 @@ relay_federation_rate_limited_total
 
 ### Grafana Dashboard
 
-Import `deploy/grafana/relay-dashboard.json` into Grafana. It includes panels for connections, messages, storage, and federation.
+Import `deploy/grafana/relay-dashboard.json` into Grafana. It includes panels
+for connections, messages, storage, and federation.
 
-For operational runbooks (incident response, maintenance, troubleshooting), see `RUNBOOKS.md`.
+For operational runbooks (incident response, maintenance, troubleshooting),
+see `RUNBOOKS.md`.
 
 ## Security
 
@@ -283,7 +292,7 @@ For operational runbooks (incident response, maintenance, troubleshooting), see 
 
 - Deploy behind a reverse proxy for TLS
 - Use firewall to restrict direct access to ports 8080/8081
-- Only expose port 443 (HTTPS/WSS) publicly
+- Only expose port 443 (HTTPS) publicly
 
 ### Container
 
@@ -292,6 +301,7 @@ The Docker image runs as non-root user `vauchi` (UID 1000).
 ### Systemd
 
 The systemd service includes security hardening:
+
 - `NoNewPrivileges=yes`
 - `ProtectSystem=strict`
 - `PrivateTmp=yes`
@@ -304,14 +314,17 @@ The systemd service includes security hardening:
 For high availability:
 
 1. Deploy multiple relay instances
-2. Use a load balancer with WebSocket support (sticky sessions recommended)
+2. Use an HTTP(S) load balancer; route each client to the same instance
+   (blob storage is per-instance — see note below)
 3. Each instance uses its own SQLite database
 
-Note: Blob distribution between relays is not implemented yet. Each client should connect to the same relay for message delivery.
+Note: Blob distribution between relays is not implemented yet. Each client
+should connect to the same relay for message delivery.
 
 ### Vertical Scaling
 
 Tune these for your workload:
+
 - `RELAY_MAX_CONNECTIONS` - Increase for more clients
 - `RELAY_RATE_LIMIT_PER_MIN` - Adjust for expected message rate
 - Allocate more memory for in-memory storage mode
@@ -334,14 +347,17 @@ kubectl logs -l app=vauchi-relay -f
 ### Common issues
 
 **"Address already in use"**
+
 - Another process using port 8080/8081
 - Check with `lsof -i :8080`
 
 **"Permission denied" for data directory**
+
 - Ensure the vauchi user owns the data directory
 - `chown -R vauchi:vauchi /var/lib/vauchi-relay`
 
 **High memory usage**
+
 - Switch from `memory` to `sqlite` storage backend
 - Reduce `RELAY_BLOB_TTL_DAYS`
 - Check for connection leaks

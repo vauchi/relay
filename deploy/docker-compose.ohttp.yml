@@ -23,7 +23,7 @@
 # - Same-VPS root can inspect Docker bridge traffic (plain HTTP between containers).
 #   Mitigate: deploy on separate hosts or add inter-container TLS.
 # - HTTP auth model: mailbox tokens as implicit bearer auth for send/fetch.
-#   Purge requires Ed25519 signature (same as WebSocket path).
+#   Purge requires Ed25519 signature (same as the HTTP send/fetch path).
 # - Replay mitigation: OHTTP layer prevents raw transport replay (fresh HPKE
 #   context per request). Application-layer replay produces duplicate blobs
 #   which clients deduplicate by blob_id.

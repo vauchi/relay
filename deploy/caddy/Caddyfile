@@ -59,7 +59,7 @@ relay.vauchi.example.com {
         respond "Forbidden" 403
     }
 
-    # WebSocket relay endpoint
+    # Relay HTTP API (blob storage/delivery + OHTTP gateway)
     handle {
         reverse_proxy localhost:8080 {
             header_up Host {host}
@@ -67,11 +67,11 @@ relay.vauchi.example.com {
             header_up X-Forwarded-For {remote_host}
             header_up X-Forwarded-Proto {scheme}
 
-            # WebSocket support (automatic in Caddy 2)
-            # Long timeouts for persistent connections
+            # HTTP request/response; the relay rejects WebSocket upgrades
+            # since ADR-052, so no long-lived-connection timeouts needed
             transport http {
-                read_timeout 3600s
-                write_timeout 3600s
+                read_timeout 60s
+                write_timeout 60s
             }
         }
     }

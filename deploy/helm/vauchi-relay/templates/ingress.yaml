@@ -39,7 +39,7 @@ spec:
               service:
                 name: {{ include "vauchi-relay.fullname" $ }}
                 port:
-                  name: websocket
+                  name: http
           {{- end }}
     {{- end }}
 {{- end }}

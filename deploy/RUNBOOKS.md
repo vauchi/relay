@@ -265,7 +265,7 @@ Operators have access to **metadata and metrics only**. Message content is end-t
 
 | Category | Operators CAN see | Operators CANNOT see |
 |----------|-------------------|----------------------|
-| **Traffic** | Connection count, connection rate, WebSocket close codes | Which clients are communicating with each other |
+| **Traffic** | Request count, request rate, HTTP status codes | Which clients are communicating with each other |
 | **Blobs** | Blob count (`relay_blobs_stored`), blob sizes in aggregate, TTL expiry count | Blob contents (encrypted), what data the blob contains |
 | **Routing** | `routing_id` (opaque random identifier), blob retrieval timing | Sender identity, receiver identity, contact card data |
 | **Federation** | Peer relay URL, peer connection status, offload counts, hop counts | Which users are federated, cross-relay message routing graph |
@@ -597,9 +597,9 @@ Open a bug report with these artifacts. **Do not include unscrubbed logs.**
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
-| 8080 | WebSocket | Client connections |
+| 8080 | HTTP | Client connections (blob API + OHTTP gateway) |
 | 8081 | HTTP | Health + metrics |
-| 8082* | WebSocket+mTLS | Federation (when configured) |
+| 8082* | HTTP over mTLS | Federation (when configured; mTLS-HTTP per ADR-052) |
 
 *mTLS port defaults to listen_addr + 1, configurable via `RELAY_MTLS_ADDR`.
 
@@ -624,7 +624,7 @@ The systemd service sets `LimitNOFILE=65536`. Budget:
 
 | Consumer | FDs |
 |----------|-----|
-| WebSocket connections | 1 per client (max 1000) |
+| Client HTTP connections | 1 per client (max 1000) |
 | SQLite databases | ~10 (blobs, recovery, sync, hints) |
 | Federation peers | 1 per peer |
 | TCP listener | 1 per port (2-3) |

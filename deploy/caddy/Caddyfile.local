@@ -4,7 +4,7 @@
 
 # Vauchi Relay - Local TLS Testing with Caddy
 #
-# For testing iOS/Android apps that require wss:// connections.
+# For testing iOS/Android apps that require TLS (https://) connections.
 # Caddy generates local TLS certificates automatically.
 #
 # Prerequisites:
@@ -15,11 +15,11 @@
 # Usage:
 #   1. Start the relay: RELAY_LISTEN_ADDR=127.0.0.1:8080 cargo run -p vauchi-relay
 #   2. Start Caddy: caddy run --config relay/deploy/caddy/Caddyfile.local
-#   3. Configure apps to use wss://localhost:8443
+#   3. Configure apps to use https://localhost:8443
 #
 # Mobile simulator/emulator access:
-#   - iOS Simulator: wss://localhost:8443 (shares host network)
-#   - Android Emulator: wss://10.0.2.2:8443 (10.0.2.2 = host localhost)
+#   - iOS Simulator: https://localhost:8443 (shares host network)
+#   - Android Emulator: https://10.0.2.2:8443 (10.0.2.2 = host localhost)
 #
 # To trust local certs on devices:
 #   - iOS Simulator: Shares macOS keychain (mkcert -install should work)
@@ -44,10 +44,10 @@ localhost:8443 {
 
     # Proxy to local relay
     reverse_proxy localhost:8080 {
-        # WebSocket support (automatic in Caddy 2)
+        # Relay HTTP API (no WebSocket upgrades since ADR-052)
         transport http {
-            read_timeout 3600s
-            write_timeout 3600s
+            read_timeout 60s
+            write_timeout 60s
         }
     }
 }

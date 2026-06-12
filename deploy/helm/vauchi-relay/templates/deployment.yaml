@@ -57,17 +57,17 @@ spec:
             - name: RUST_LOG
               value: {{ .Values.relay.logLevel | quote }}
           ports:
-            - name: websocket
+            - name: http
               containerPort: 8080
               protocol: TCP
           livenessProbe:
             tcpSocket:
-              port: websocket
+              port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
             tcpSocket:
-              port: websocket
+              port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:

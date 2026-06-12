@@ -11,7 +11,6 @@ appVersion: "0.1.0"
 keywords:
   - vauchi
   - relay
-  - websocket
   - privacy
   - contacts
 home: https://github.com/megloff1/Vauchi
