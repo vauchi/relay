@@ -617,7 +617,7 @@ end = "2027-03-10"
 
 [[trusted.tinystr]]
 criteria = "safe-to-deploy"
-user-id = 1139 # Manish Goregaokar (Manishearth)
+user-id = 1139
 start = "2021-01-14"
 end = "2027-03-10"
 
@@ -713,7 +713,7 @@ end = "2027-03-10"
 
 [[trusted.url]]
 criteria = "safe-to-deploy"
-user-id = 1139 # Manish Goregaokar (Manishearth)
+user-id = 1139
 start = "2021-02-18"
 end = "2027-03-10"
 
@@ -857,7 +857,7 @@ end = "2027-03-10"
 
 [[trusted.yoke]]
 criteria = "safe-to-deploy"
-user-id = 1139 # Manish Goregaokar (Manishearth)
+user-id = 1139
 start = "2021-05-01"
 end = "2027-03-10"
 
@@ -881,13 +881,13 @@ end = "2027-03-10"
 
 [[trusted.zerotrie]]
 criteria = "safe-to-deploy"
-user-id = 1139 # Manish Goregaokar (Manishearth)
+user-id = 1139
 start = "2023-10-03"
 end = "2027-03-10"
 
 [[trusted.zerovec]]
 criteria = "safe-to-deploy"
-user-id = 1139 # Manish Goregaokar (Manishearth)
+user-id = 1139
 start = "2021-04-19"
 end = "2027-03-10"
 
