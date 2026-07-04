@@ -72,10 +72,20 @@ async fn validate_and_resolve_peer(
     };
 
     let addr = if allow_loopback {
-        tokio::net::lookup_host(format!("{host}:{port}"))
+        let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(format!("{host}:{port}"))
             .await
             .map_err(|e| format!("resolve {host}: {e}"))?
-            .next()
+            .collect();
+        // Prefer IPv4: this dev/test-only path is used to talk to loopback
+        // relays that bind 127.0.0.1 explicitly (not dual-stack), but
+        // "localhost" can resolve to ::1 before 127.0.0.1 depending on the
+        // host's DNS/hosts-file order — falling back to .next() alone would
+        // then permanently target a dead address.
+        addrs
+            .iter()
+            .find(|a| a.is_ipv4())
+            .or_else(|| addrs.first())
+            .copied()
             .ok_or_else(|| format!("no addresses for {host}"))?
     } else {
         crate::url_validation::resolve_and_validate(&host, port)
