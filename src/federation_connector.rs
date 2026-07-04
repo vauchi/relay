@@ -76,23 +76,28 @@ async fn validate_and_resolve_peer(
             .await
             .map_err(|e| format!("resolve {host}: {e}"))?
             .collect();
-        // Prefer IPv4: this dev/test-only path is used to talk to loopback
-        // relays that bind 127.0.0.1 explicitly (not dual-stack), but
-        // "localhost" can resolve to ::1 before 127.0.0.1 depending on the
-        // host's DNS/hosts-file order — falling back to .next() alone would
-        // then permanently target a dead address.
-        addrs
-            .iter()
-            .find(|a| a.is_ipv4())
-            .or_else(|| addrs.first())
-            .copied()
-            .ok_or_else(|| format!("no addresses for {host}"))?
+        prefer_ipv4(&addrs).ok_or_else(|| format!("no addresses for {host}"))?
     } else {
         crate::url_validation::resolve_and_validate(&host, port)
             .await
             .map_err(|e| format!("SSRF: {e}"))?
     };
     Ok((host, addr))
+}
+
+/// Picks a connect address from resolved candidates, preferring IPv4.
+///
+/// Only the dev/test-only loopback path uses this: loopback relays bind
+/// 127.0.0.1 explicitly (not dual-stack), yet "localhost" can resolve to
+/// ::1 before 127.0.0.1 depending on the host's DNS/hosts-file order —
+/// blindly taking the first result would then permanently target a dead
+/// address. Falls back to the first candidate when no IPv4 is present.
+fn prefer_ipv4(addrs: &[std::net::SocketAddr]) -> Option<std::net::SocketAddr> {
+    addrs
+        .iter()
+        .find(|a| a.is_ipv4())
+        .or_else(|| addrs.first())
+        .copied()
 }
 
 /// Sends a federation envelope to an already-SSRF-validated peer address
@@ -439,5 +444,26 @@ mod tests {
                 .is_err(),
             "https scheme is still required even with the escape"
         );
+    }
+
+    // @internal
+    #[test]
+    fn prefer_ipv4_picks_v4_even_when_v6_is_first() {
+        let v6: std::net::SocketAddr = "[::1]:9".parse().unwrap();
+        let v4: std::net::SocketAddr = "127.0.0.1:9".parse().unwrap();
+        assert_eq!(prefer_ipv4(&[v6, v4]), Some(v4));
+    }
+
+    // @internal
+    #[test]
+    fn prefer_ipv4_falls_back_to_v6_when_no_v4() {
+        let v6: std::net::SocketAddr = "[::1]:9".parse().unwrap();
+        assert_eq!(prefer_ipv4(&[v6]), Some(v6));
+    }
+
+    // @internal
+    #[test]
+    fn prefer_ipv4_none_on_empty() {
+        assert_eq!(prefer_ipv4(&[]), None);
     }
 }
