@@ -320,7 +320,6 @@ mod tests {
         registry.set_sender("peer-a", tx);
 
         let peer = registry.get_peer_with_capacity();
-        assert!(peer.is_some());
         assert_eq!(peer.unwrap().relay_id, "peer-a");
     }
 

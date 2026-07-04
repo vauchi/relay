@@ -183,7 +183,6 @@ mod tests {
     fn test_load_federation_tls_not_configured() {
         let config = RelayConfig::default();
         let result = load_federation_tls(&config);
-        assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
@@ -199,27 +198,30 @@ mod tests {
             ..Default::default()
         };
         let result = load_federation_tls(&config);
-        assert!(result.is_err());
+        match result {
+            Err(err) => assert!(
+                err.contains("Failed to open"),
+                "expected a 'Failed to open' error, got: {err}"
+            ),
+            Ok(_) => panic!("missing cert/key/ca files must fail to load"),
+        }
     }
 
     #[test]
     fn test_load_certs_missing_file() {
         let result = load_certs("/nonexistent/cert.pem");
-        assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to open"));
     }
 
     #[test]
     fn test_load_private_key_missing_file() {
         let result = load_private_key("/nonexistent/key.pem");
-        assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to open"));
     }
 
     #[test]
     fn test_load_ca_certs_missing_file() {
         let result = load_ca_certs("/nonexistent/ca.pem");
-        assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to open"));
     }
 

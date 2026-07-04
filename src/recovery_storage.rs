@@ -222,7 +222,6 @@ mod tests {
         store.store(proof);
 
         let retrieved = store.get(&key_hash);
-        assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.key_hash, key_hash);
         assert_eq!(retrieved.proof_data, proof_data);
