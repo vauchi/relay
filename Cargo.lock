@@ -1101,9 +1101,9 @@ dependencies = [
 
 [[package]]
 name = "num-bigint"
-version = "0.4.7"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c863e9ab5e7bf9c99ba75e1050f1e4d624ae87ed3532d6238ffbdc7b585dbbe6"
+checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
 dependencies = [
  "num-integer",
  "num-traits",
@@ -2326,8 +2326,8 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vauchi-protocol"
-version = "0.51.68"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#4d9247be81913456fdbc6740ee321400bb101aa0"
+version = "0.51.69"
+source = "git+https://gitlab.com/vauchi/core.git?branch=main#ea39cb97a296b9358ecc8a6e53f3007de9e69572"
 dependencies = [
  "serde",
  "serde_json",

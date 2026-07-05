@@ -220,8 +220,8 @@ user-login = "Thomasdezeeuw"
 user-name = "Thomas de Zeeuw"
 
 [[publisher.num-bigint]]
-version = "0.4.7"
-when = "2026-07-02"
+version = "0.4.8"
+when = "2026-07-05"
 user-id = 539
 user-login = "cuviper"
 user-name = "Josh Stone"
