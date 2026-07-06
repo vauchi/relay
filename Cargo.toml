@@ -51,16 +51,11 @@ axum = "0.7"
 hyper = { version = "1", features = ["server", "http1", "client"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 
-# Prometheus metrics (process feature: process_cpu_seconds, open_fds, rss, vsize, threads)
-prometheus = { version = "0.14", features = ["process"] }
-
 # SHA-256 integrity hashing, Ed25519 signatures, HKDF (FIPS 140-3 Level 1)
 aws-lc-rs = "1.16"
 
 # Constant-time comparison for integrity hash verification (prevents timing attacks)
 subtle = "2.6"
-
-# Noise protocol for inner transport encryption (defense-in-depth inside TLS)
 
 # Base64url encoding for relay public key distribution
 base64 = "0.22"
@@ -94,14 +89,14 @@ rustls-pemfile = "2"
 tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]
-tokio-test = "0.4"
 tempfile = "3.0"
 rcgen = "0.14.7"
 proptest = "1"
 rstest = "0.26"
 criterion = "0.5"
 
-[target.'cfg(unix)'.dev-dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
+# Used by the built-in process metrics collector to read /proc/self/stat.
 libc = "0.2"
 
 # Development profile: fast builds, backtraces work (matches core)
