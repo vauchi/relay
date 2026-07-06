@@ -27,6 +27,7 @@ const OVERFLOW_ALIGNMENT: usize = 256;
 /// Size of the length prefix (4 bytes, big-endian).
 const LENGTH_PREFIX_SIZE: usize = 4;
 
+// TODO(PFC): randomness drawn directly in utilities — see 2026-07-06-relay-pfc-violations R24
 /// Pads payload to the nearest bucket size.
 pub fn pad(payload: &[u8]) -> Vec<u8> {
     let needed = LENGTH_PREFIX_SIZE + payload.len();

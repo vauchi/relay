@@ -33,6 +33,7 @@ impl StoredRecoveryProof {
     pub const DEFAULT_EXPIRY_DAYS: u64 = 90;
 
     /// Creates a new stored recovery proof with default expiration.
+    // TODO(PFC): StoredRecoveryProof::new calls SystemTime::now() — see 2026-07-06-relay-pfc-violations R7
     pub fn new(key_hash: [u8; 32], proof_data: Vec<u8>) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -167,6 +168,7 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
         .ok()
     }
 
+    // TODO(PFC): batch_get does N sequential queries — see 2026-07-06-relay-pfc-violations R21
     fn batch_get(&self, key_hashes: &[[u8; 32]]) -> HashMap<[u8; 32], StoredRecoveryProof> {
         // For simplicity, iterate and query each. Could optimize with IN clause.
         key_hashes

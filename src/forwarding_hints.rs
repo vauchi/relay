@@ -128,6 +128,7 @@ impl ForwardingHintStore for SqliteForwardingHintStore {
         .collect()
     }
 
+    // TODO(PFC): manual IN (...) SQL construction — see 2026-07-06-relay-pfc-violations R20
     fn get_hints_many(&self, tokens: &[&str]) -> Vec<ForwardingHint> {
         if tokens.is_empty() {
             return Vec::new();

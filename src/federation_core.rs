@@ -158,6 +158,7 @@ pub fn apply_message(
                 offload_stored: false,
             }
         }
+        // TODO(PFC): gossip handling reads SystemTime::now() — see 2026-07-06-relay-pfc-violations R16
         FederationPayload::PeerAdvertisement { peers } => {
             if config.federation.gossip_enabled {
                 let new_peers_count = gossip::process_peer_advertisement(

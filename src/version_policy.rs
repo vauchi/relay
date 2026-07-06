@@ -99,6 +99,7 @@ impl VersionPolicyState {
     ///
     /// If `min_version > 0` and `min_version_changed_at` is `None`, the current
     /// system time is used as the change timestamp (starting the grace period).
+    // TODO(PFC): VersionPolicyState auto-initializes and reads clock — see 2026-07-06-relay-pfc-violations R9
     pub fn new(config: VersionPolicyConfig, min_version_changed_at: Option<u64>) -> Self {
         let min_version_changed_at = if config.min_version > 0 && min_version_changed_at.is_none() {
             Some(

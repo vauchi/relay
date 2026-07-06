@@ -23,6 +23,7 @@ use crate::metrics::RelayMetrics;
 /// Path where build-info.json is written during Docker image builds.
 const BUILD_INFO_PATH: &str = "/usr/share/build-info.json";
 
+// TODO(PFC): BUILD_INFO cached via OnceLock — see 2026-07-06-relay-pfc-violations R14
 /// Cached build info loaded once at first request.
 static BUILD_INFO: OnceLock<serde_json::Value> = OnceLock::new();
 

@@ -1,3 +1,4 @@
+// allow(large_file)
 // SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -557,6 +558,7 @@ fn build_ohttp_error(status: StatusCode, message: &str) -> axum::response::Respo
 /// Route the decapsulated inner request to the correct v2 handler.
 ///
 /// Returns a `serde_json::Value` that will be encapsulated as the response.
+// TODO(PFC): dispatch_ohttp_action duplicated JSON parsing — see 2026-07-06-relay-pfc-violations R5
 async fn dispatch_ohttp_action(
     state: &HttpApiState,
     action: &str,
@@ -734,6 +736,7 @@ async fn dispatch_ohttp_action(
 
 /// Randomized hash for rate limiting keys. Uses SipHash with per-process
 /// random seed — collision-resistant against targeted attacks.
+// TODO(PFC): rate_limit_hash uses global LazyLock — see 2026-07-06-relay-pfc-violations R13
 fn rate_limit_hash(s: &str) -> u64 {
     use std::hash::BuildHasher;
     use std::sync::LazyLock;
@@ -1220,6 +1223,7 @@ fn handle_exchange_complete_logic(
 // OHTTP exchange rate limiter in dispatch_ohttp_action). Per-code rate
 // limits still apply to prevent brute-force.
 
+// TODO(PFC): duplicate OHTTP exchange handlers — see 2026-07-06-relay-pfc-violations R6
 fn handle_ohttp_exchange_offer_logic(
     state: &HttpApiState,
     req: V2ExchangeOfferRequest,

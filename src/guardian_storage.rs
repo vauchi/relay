@@ -39,6 +39,7 @@ impl StoredGuardianSet {
     pub const DEFAULT_EXPIRY_DAYS: u64 = 365;
 
     /// Creates a new stored guardian set with default expiration.
+    // TODO(PFC): StoredGuardianSet::new calls SystemTime::now() — see 2026-07-06-relay-pfc-violations R7
     pub fn new(guardian_hash: [u8; 32], entries: Vec<Vec<u8>>) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

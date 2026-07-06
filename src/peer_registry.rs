@@ -177,6 +177,7 @@ impl PeerRegistry {
     /// Rejects URLs that fail SSRF validation (private IPs, loopback, etc.).
     ///
     /// Returns `true` if a new peer was added.
+    // TODO(PFC): logging mixed with registry mutation — see 2026-07-06-relay-pfc-violations R16
     pub fn add_discovered_peer(
         &self,
         relay_id: &str,

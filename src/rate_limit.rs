@@ -24,6 +24,7 @@ struct TokenBucket {
     last_update: Instant,
 }
 
+// TODO(PFC): TokenBucket embeds Instant::now() — see 2026-07-06-relay-pfc-violations R18
 impl TokenBucket {
     fn new(max_tokens: u32, refill_rate: f64) -> Self {
         TokenBucket {

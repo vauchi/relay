@@ -49,6 +49,7 @@ impl EscrowStore {
         }
     }
 
+    // TODO(PFC): Escrow methods embed Instant::now() — see 2026-07-06-relay-pfc-violations R17
     /// Handle an escrow message and return the appropriate response.
     pub fn handle(&self, msg: EscrowMessage) -> EscrowResponse {
         match msg {

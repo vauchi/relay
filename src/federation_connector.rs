@@ -227,6 +227,7 @@ impl OffloadManager {
     /// Checks storage usage and offloads the oldest blobs to a peer if
     /// above threshold. Returns the number of blobs the peer accepted (and
     /// that were therefore deleted locally).
+    // TODO(PFC): check_and_offload mixes network/storage/metrics/logging — see 2026-07-06-relay-pfc-violations R23
     pub async fn check_and_offload(&self) -> usize {
         let used = self.storage.storage_size_bytes();
         let ratio = used as f64 / self.config.storage.max_storage_bytes as f64;

@@ -40,6 +40,7 @@ use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::{RecoveryProofStore, SqliteRecoveryProofStore};
 use vauchi_relay::storage::{BlobStore, StorageBackend, create_blob_store};
 
+// TODO(PFC): main() is a monolithic side-effect orchestrator — see 2026-07-06-relay-pfc-violations R1
 #[tokio::main]
 async fn main() {
     // Initialize logging. With the `flame` feature, swap in a tracing-flame

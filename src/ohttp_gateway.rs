@@ -152,6 +152,7 @@ impl OhttpGateway {
         })
     }
 
+    // TODO(PFC): Gateway generates random keys internally — see 2026-07-06-relay-pfc-violations R19
     /// Generate a fresh random seed, persist it (`0600` on unix), and return it.
     fn generate_and_save_seed(path: &Path) -> Result<Zeroizing<Vec<u8>>, OhttpGatewayError> {
         use rand::RngCore;
@@ -266,6 +267,7 @@ impl OhttpGateway {
         })
     }
 
+    // TODO(PFC): Gateway generates random keys internally — see 2026-07-06-relay-pfc-violations R19
     fn generate_state(key_id: u8) -> Result<GatewayState, OhttpGatewayError> {
         // ADR-019: chacha-family AEAD across the project. RFC 9180
         // (HPKE) does not allow the XChaCha20-Poly1305 nonce extension

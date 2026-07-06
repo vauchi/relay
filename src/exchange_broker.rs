@@ -141,6 +141,7 @@ impl ExchangeBroker {
     /// Store an offer and return a 6-digit code.
     ///
     /// The optional `ttl_secs` overrides the broker's default TTL.
+    // TODO(PFC): Instant::now() and thread_rng() embedded — see 2026-07-06-relay-pfc-violations R8
     pub fn create_offer(
         &self,
         payload: String,

@@ -10,6 +10,7 @@ pub(crate) const TIMESTAMP_WINDOW: u64 = 60;
 /// Verify Ed25519 signature over `pk || token || timestamp_be`.
 ///
 /// Shared by HTTP v2 purge endpoint (and previously by the now-removed WS handler).
+// TODO(PFC): verify_purge_ed25519 calls SystemTime::now() — see 2026-07-06-relay-pfc-violations R4
 pub(crate) fn verify_purge_ed25519(
     pk_bytes: &[u8],
     token_bytes: &[u8],
@@ -77,6 +78,7 @@ const GUARDIAN_HASH_DOMAIN: &[u8] = b"guardians";
 /// `domain || pk || guardian_hash || timestamp_be` (the operation domain is
 /// signed so a store signature cannot be replayed as a delete). Returns the
 /// validated 32-byte hash on success.
+// TODO(PFC): verify_guardian_ed25519 calls SystemTime::now() — see 2026-07-06-relay-pfc-violations R4
 pub(crate) fn verify_guardian_ed25519(
     domain: &[u8],
     designator_pk_hex: &str,

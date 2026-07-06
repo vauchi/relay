@@ -20,6 +20,7 @@ const DEFAULT_BUCKETS: &[f64] = &[
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
 ];
 
+// TODO(PFC): custom Prometheus client — see 2026-07-06-relay-pfc-violations R22
 /// A metric family that can be serialized in Prometheus text format.
 trait MetricFamily: Send + Sync {
     fn encode(&self, writer: &mut String);
@@ -115,6 +116,7 @@ impl MetricFamily for Gauge {
     }
 }
 
+// TODO(PFC): Histogram uses Mutex<f64> for sum — see 2026-07-06-relay-pfc-violations R11
 /// Prometheus-style histogram backed by atomic bucket counts.
 #[derive(Clone)]
 pub struct Histogram {
@@ -228,6 +230,7 @@ impl Registry {
 /// Metrics registry wrapper protected by a non-poisoning mutex.
 type RegistryLock = Mutex<Registry>;
 
+// TODO(PFC): /proc I/O and unsafe inside metric encoding — see 2026-07-06-relay-pfc-violations R10
 /// Linux process metrics collector.
 #[cfg(target_os = "linux")]
 mod process {

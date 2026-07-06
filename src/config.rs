@@ -247,6 +247,7 @@ impl RelayConfig {
     ///
     /// Returns `(config, warnings)` where `warnings` describes any env vars that
     /// had invalid values and were ignored (falling back to defaults).
+    // TODO(PFC): inline env-var parsing repeated ~40 times — see 2026-07-06-relay-pfc-violations R2
     pub fn from_env_with_warnings() -> (Self, Vec<String>) {
         let mut config = Self::default();
         let mut warnings: Vec<String> = Vec::new();
@@ -761,6 +762,7 @@ pub struct ConfigWarning {
 /// 1. `RELAY_FEDERATION_RELAY_ID` environment variable
 /// 2. `{data_dir}/relay_id` file (read existing)
 /// 3. Generate new UUID and write to file
+// TODO(PFC): load_relay_id mixes I/O, env, and UUID generation — see 2026-07-06-relay-pfc-violations R3
 pub fn load_relay_id(data_dir: &Path) -> String {
     if let Ok(val) = std::env::var("RELAY_FEDERATION_RELAY_ID")
         && !val.is_empty()

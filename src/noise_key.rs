@@ -101,6 +101,7 @@ pub fn load_keypair(data_dir: &Path) -> std::io::Result<RelayKeypair> {
 /// 1. `RELAY_NOISE_STATIC_KEY` env var (base64url-encoded 64-byte private+public key)
 /// 2. Existing key file at `{data_dir}/relay_noise_key.bin`
 /// 3. Generate new keypair and save to file
+// TODO(PFC): key loading depends on global env + file I/O — see 2026-07-06-relay-pfc-violations R12
 pub fn load_or_generate_keypair(data_dir: &Path) -> RelayKeypair {
     if let Ok(key_b64) = std::env::var("RELAY_NOISE_STATIC_KEY")
         && let Ok(key_bytes) = URL_SAFE_NO_PAD.decode(&key_b64)

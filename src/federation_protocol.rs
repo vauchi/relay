@@ -138,6 +138,7 @@ pub fn decode_federation_message(data: &[u8]) -> Result<FederationEnvelope, Stri
     serde_json::from_slice(json).map_err(|e| e.to_string())
 }
 
+// TODO(PFC): create_federation_envelope generates UUID/timestamp — see 2026-07-06-relay-pfc-violations R15
 /// Creates a new federation envelope with auto-generated message_id and timestamp.
 pub fn create_federation_envelope(payload: FederationPayload) -> FederationEnvelope {
     FederationEnvelope {

@@ -20,6 +20,7 @@ pub const DEFAULT_JITTER_MAX_MS: u64 = 500;
 ///
 /// Uses `aws_lc_rs::rand::SystemRandom` for cryptographically secure randomness.
 /// If `min_ms >= max_ms`, returns `min_ms` (graceful handling of invalid config).
+// TODO(PFC): randomness drawn directly in utilities — see 2026-07-06-relay-pfc-violations R24
 pub fn generate_jitter(min_ms: u64, max_ms: u64) -> Duration {
     if min_ms >= max_ms {
         return Duration::from_millis(min_ms);
