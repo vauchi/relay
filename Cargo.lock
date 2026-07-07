@@ -1638,9 +1638,9 @@ dependencies = [
 
 [[package]]
 name = "rustversion"
-version = "1.0.22"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "rusty-fork"
@@ -2206,8 +2206,8 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vauchi-protocol"
-version = "0.52.1"
-source = "git+https://gitlab.com/vauchi/core.git?branch=main#1e02e9f65dd6d46f838f1b7e640e7c88f9c2173d"
+version = "0.52.2"
+source = "git+https://gitlab.com/vauchi/core.git?branch=main#de147c1cded4e15cbf30db58abe3f4e16fbd13b1"
 dependencies = [
  "serde",
  "serde_json",
