@@ -6,6 +6,7 @@
 
 use proptest::prelude::*;
 use rstest::rstest;
+use std::collections::HashMap;
 use vauchi_relay::config::RelayConfig;
 use vauchi_relay::version_policy::{VersionEnforcement, VersionPolicyConfig, VersionPolicyState};
 
@@ -157,27 +158,15 @@ fn version_policy_state_implements_debug() {
     );
 }
 
-// ── Config integration ────────────────────────────────────────────────────
-use std::sync::{Mutex, OnceLock};
-static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
 // @internal
 #[test]
-fn config_loads_version_policy_from_env() {
-    let _env_guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
-    // Use unique env var names to avoid interference with other tests.
-    // The real env vars are RELAY_VERSION_MIN, RELAY_VERSION_WARN,
-    // RELAY_VERSION_GRACE_DAYS — set them, load config, assert, clean up.
-    unsafe { std::env::set_var("RELAY_VERSION_MIN", "3") };
-    unsafe { std::env::set_var("RELAY_VERSION_WARN", "5") };
-    unsafe { std::env::set_var("RELAY_VERSION_GRACE_DAYS", "7") };
+fn config_loads_version_policy_from_map() {
+    let mut vars = HashMap::new();
+    vars.insert("RELAY_VERSION_MIN".to_string(), "3".to_string());
+    vars.insert("RELAY_VERSION_WARN".to_string(), "5".to_string());
+    vars.insert("RELAY_VERSION_GRACE_DAYS".to_string(), "7".to_string());
 
-    let (config, warnings) = RelayConfig::from_env_with_warnings();
-
-    // Clean up before assertions so panics don't leave env dirty.
-    unsafe { std::env::remove_var("RELAY_VERSION_MIN") };
-    unsafe { std::env::remove_var("RELAY_VERSION_WARN") };
-    unsafe { std::env::remove_var("RELAY_VERSION_GRACE_DAYS") };
+    let (config, warnings) = RelayConfig::from_map(&vars);
 
     assert_eq!(config.version_policy.min_version(), 3);
     assert_eq!(config.version_policy.warn_version(), 5);
@@ -193,12 +182,10 @@ fn config_loads_version_policy_from_env() {
 // @internal
 #[test]
 fn config_warns_on_invalid_version_env() {
-    let _env_guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
-    unsafe { std::env::set_var("RELAY_VERSION_MIN", "not_a_number") };
+    let mut vars = HashMap::new();
+    vars.insert("RELAY_VERSION_MIN".to_string(), "not_a_number".to_string());
 
-    let (config, warnings) = RelayConfig::from_env_with_warnings();
-
-    unsafe { std::env::remove_var("RELAY_VERSION_MIN") };
+    let (config, warnings) = RelayConfig::from_map(&vars);
 
     // Should fall back to default (0).
     assert_eq!(config.version_policy.min_version(), 0);
@@ -211,15 +198,12 @@ fn config_warns_on_invalid_version_env() {
 // @internal
 #[test]
 fn config_warns_on_invalid_version_policy_validation() {
-    let _env_guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
     // warn < min is invalid — should produce a validation warning.
-    unsafe { std::env::set_var("RELAY_VERSION_MIN", "5") };
-    unsafe { std::env::set_var("RELAY_VERSION_WARN", "2") };
+    let mut vars = HashMap::new();
+    vars.insert("RELAY_VERSION_MIN".to_string(), "5".to_string());
+    vars.insert("RELAY_VERSION_WARN".to_string(), "2".to_string());
 
-    let (_, warnings) = RelayConfig::from_env_with_warnings();
-
-    unsafe { std::env::remove_var("RELAY_VERSION_MIN") };
-    unsafe { std::env::remove_var("RELAY_VERSION_WARN") };
+    let (_, warnings) = RelayConfig::from_map(&vars);
 
     assert!(
         warnings.iter().any(|w| w.contains("warn_version")),

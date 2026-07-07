@@ -7,6 +7,7 @@
 //! Configuration loaded from environment variables, organized into
 //! logical sub-groups: network, storage, federation, and security.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -243,16 +244,18 @@ pub struct RelayConfig {
 }
 
 impl RelayConfig {
-    /// Loads configuration from environment variables, collecting parse warnings.
+    /// Loads configuration from a key-value map, collecting parse warnings.
     ///
-    /// Returns `(config, warnings)` where `warnings` describes any env vars that
+    /// Returns `(config, warnings)` where `warnings` describes any values that
     /// had invalid values and were ignored (falling back to defaults).
-    // TODO(PFC): inline env-var parsing repeated ~40 times — see 2026-07-06-relay-pfc-violations R2
-    pub fn from_env_with_warnings() -> (Self, Vec<String>) {
+    ///
+    /// This is the pure, testable entry point. Production code should use
+    /// [`from_env_with_warnings`](Self::from_env_with_warnings).
+    pub fn from_map(vars: &HashMap<String, String>) -> (Self, Vec<String>) {
         let mut config = Self::default();
         let mut warnings: Vec<String> = Vec::new();
 
-        if let Ok(addr) = std::env::var("RELAY_LISTEN_ADDR") {
+        if let Some(addr) = vars.get("RELAY_LISTEN_ADDR") {
             match addr.parse() {
                 Ok(parsed) => config.network.listen_addr = parsed,
                 Err(_) => warnings.push(format!(
@@ -262,7 +265,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_MAX_CONNECTIONS") {
+        if let Some(val) = vars.get("RELAY_MAX_CONNECTIONS") {
             match val.parse() {
                 Ok(parsed) => config.network.max_connections = parsed,
                 Err(_) => warnings.push(format!(
@@ -272,7 +275,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_MAX_MESSAGE_SIZE") {
+        if let Some(val) = vars.get("RELAY_MAX_MESSAGE_SIZE") {
             match val.parse() {
                 Ok(parsed) => config.network.max_message_size = parsed,
                 Err(_) => warnings.push(format!(
@@ -282,7 +285,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_IDLE_TIMEOUT") {
+        if let Some(val) = vars.get("RELAY_IDLE_TIMEOUT") {
             match val.parse() {
                 Ok(parsed) => config.network.idle_timeout_secs = parsed,
                 Err(_) => warnings.push(format!(
@@ -292,7 +295,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_BLOB_TTL_SECS") {
+        if let Some(val) = vars.get("RELAY_BLOB_TTL_SECS") {
             match val.parse() {
                 Ok(parsed) => config.storage.blob_ttl_secs = parsed,
                 Err(_) => warnings.push(format!(
@@ -302,7 +305,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_CLEANUP_INTERVAL") {
+        if let Some(val) = vars.get("RELAY_CLEANUP_INTERVAL") {
             match val.parse() {
                 Ok(parsed) => config.storage.cleanup_interval_secs = parsed,
                 Err(_) => warnings.push(format!(
@@ -312,7 +315,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_STORAGE_BACKEND") {
+        if let Some(val) = vars.get("RELAY_STORAGE_BACKEND") {
             config.storage.backend = match val.to_lowercase().as_str() {
                 "memory" => StorageBackend::Memory,
                 "sqlite" => StorageBackend::Sqlite,
@@ -326,11 +329,11 @@ impl RelayConfig {
             };
         }
 
-        if let Ok(val) = std::env::var("RELAY_DATA_DIR") {
+        if let Some(val) = vars.get("RELAY_DATA_DIR") {
             config.storage.data_dir = PathBuf::from(val);
         }
 
-        if let Ok(val) = std::env::var("RELAY_MAX_BLOBS_PER_USER") {
+        if let Some(val) = vars.get("RELAY_MAX_BLOBS_PER_USER") {
             match val.parse() {
                 Ok(parsed) => config.storage.max_blobs_per_user = parsed,
                 Err(_) => warnings.push(format!(
@@ -340,7 +343,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_MAX_STORAGE_PER_USER") {
+        if let Some(val) = vars.get("RELAY_MAX_STORAGE_PER_USER") {
             match val.parse() {
                 Ok(parsed) => config.storage.max_storage_per_user = parsed,
                 Err(_) => warnings.push(format!(
@@ -350,7 +353,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_MAX_STORAGE_BYTES") {
+        if let Some(val) = vars.get("RELAY_MAX_STORAGE_BYTES") {
             match val.parse() {
                 Ok(parsed) => config.storage.max_storage_bytes = parsed,
                 Err(_) => warnings.push(format!(
@@ -360,7 +363,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_RATE_LIMIT") {
+        if let Some(val) = vars.get("RELAY_RATE_LIMIT") {
             match val.parse() {
                 Ok(parsed) => config.security.rate_limit_per_min = parsed,
                 Err(_) => warnings.push(format!(
@@ -370,7 +373,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_RECOVERY_RATE_LIMIT") {
+        if let Some(val) = vars.get("RELAY_RECOVERY_RATE_LIMIT") {
             match val.parse() {
                 Ok(parsed) => config.security.recovery_rate_limit_per_min = parsed,
                 Err(_) => warnings.push(format!(
@@ -380,7 +383,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_DELIVERY_JITTER_MIN_MS") {
+        if let Some(val) = vars.get("RELAY_DELIVERY_JITTER_MIN_MS") {
             match val.parse() {
                 Ok(parsed) => config.security.delivery_jitter_min_ms = parsed,
                 Err(_) => warnings.push(format!(
@@ -390,7 +393,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_DELIVERY_JITTER_MAX_MS") {
+        if let Some(val) = vars.get("RELAY_DELIVERY_JITTER_MAX_MS") {
             match val.parse() {
                 Ok(parsed) => config.security.delivery_jitter_max_ms = parsed,
                 Err(_) => warnings.push(format!(
@@ -400,11 +403,11 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_ENABLED") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_ENABLED") {
             config.federation.enabled = val == "true" || val == "1";
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_PEERS") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_PEERS") {
             config.federation.peers = val
                 .split(',')
                 .map(|s| s.trim().to_string())
@@ -412,7 +415,7 @@ impl RelayConfig {
                 .collect();
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_OFFLOAD_THRESHOLD") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_OFFLOAD_THRESHOLD") {
             match val.parse() {
                 Ok(parsed) => config.federation.offload_threshold = parsed,
                 Err(_) => warnings.push(format!(
@@ -422,7 +425,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_OFFLOAD_REFUSE") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_OFFLOAD_REFUSE") {
             match val.parse() {
                 Ok(parsed) => config.federation.offload_refuse = parsed,
                 Err(_) => warnings.push(format!(
@@ -432,7 +435,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_DRAIN_TIMEOUT") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_DRAIN_TIMEOUT") {
             match val.parse() {
                 Ok(parsed) => config.federation.drain_timeout_secs = parsed,
                 Err(_) => warnings.push(format!(
@@ -442,7 +445,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_PEER_TIMEOUT") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_PEER_TIMEOUT") {
             match val.parse() {
                 Ok(parsed) => config.federation.peer_timeout_secs = parsed,
                 Err(_) => warnings.push(format!(
@@ -452,7 +455,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_CAPACITY_INTERVAL") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_CAPACITY_INTERVAL") {
             match val.parse() {
                 Ok(parsed) => config.federation.capacity_interval_secs = parsed,
                 Err(_) => warnings.push(format!(
@@ -462,11 +465,11 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_GOSSIP_ENABLED") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_GOSSIP_ENABLED") {
             config.federation.gossip_enabled = val == "true" || val == "1";
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_GOSSIP_INTERVAL") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_GOSSIP_INTERVAL") {
             match val.parse() {
                 Ok(parsed) => config.federation.gossip_interval_secs = parsed,
                 Err(_) => warnings.push(format!(
@@ -476,7 +479,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_PEER_TTL") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_PEER_TTL") {
             match val.parse() {
                 Ok(parsed) => config.federation.peer_ttl_secs = parsed,
                 Err(_) => warnings.push(format!(
@@ -486,25 +489,25 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_CERT")
+        if let Some(val) = vars.get("RELAY_FEDERATION_TLS_CERT")
             && !val.is_empty()
         {
-            config.federation.tls_cert_path = Some(val);
+            config.federation.tls_cert_path = Some(val.to_string());
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_KEY")
+        if let Some(val) = vars.get("RELAY_FEDERATION_TLS_KEY")
             && !val.is_empty()
         {
-            config.federation.tls_key_path = Some(val);
+            config.federation.tls_key_path = Some(val.to_string());
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_TLS_CA")
+        if let Some(val) = vars.get("RELAY_FEDERATION_TLS_CA")
             && !val.is_empty()
         {
-            config.federation.tls_ca_path = Some(val);
+            config.federation.tls_ca_path = Some(val.to_string());
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_MTLS_ADDR") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_MTLS_ADDR") {
             match val.parse() {
                 Ok(parsed) => config.federation.mtls_addr = Some(parsed),
                 Err(_) => warnings.push(format!(
@@ -514,7 +517,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_FEDERATION_RATE_LIMIT") {
+        if let Some(val) = vars.get("RELAY_FEDERATION_RATE_LIMIT") {
             match val.parse() {
                 Ok(parsed) => config.federation.federation_rate_limit_per_min = parsed,
                 Err(_) => warnings.push(format!(
@@ -524,17 +527,20 @@ impl RelayConfig {
             }
         }
 
-        config.federation.relay_id = load_relay_id(&config.storage.data_dir);
+        config.federation.relay_id = load_relay_id(
+            &config.storage.data_dir,
+            vars.get("RELAY_FEDERATION_RELAY_ID").map(|s| s.as_str()),
+        );
 
-        if let Ok(val) = std::env::var("RELAY_HTTP_API_ENABLED") {
+        if let Some(val) = vars.get("RELAY_HTTP_API_ENABLED") {
             config.http_api.enabled = val == "true" || val == "1";
         }
 
-        if let Ok(val) = std::env::var("RELAY_OHTTP_ENABLED") {
+        if let Some(val) = vars.get("RELAY_OHTTP_ENABLED") {
             config.http_api.ohttp_enabled = val == "true" || val == "1";
         }
 
-        if let Ok(val) = std::env::var("RELAY_OHTTP_KEY_ROTATION_HOURS") {
+        if let Some(val) = vars.get("RELAY_OHTTP_KEY_ROTATION_HOURS") {
             match val.parse() {
                 Ok(parsed) => config.http_api.ohttp_key_rotation_hours = parsed,
                 Err(_) => warnings.push(format!(
@@ -544,7 +550,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_OHTTP_KEY_ROTATION_SECS") {
+        if let Some(val) = vars.get("RELAY_OHTTP_KEY_ROTATION_SECS") {
             match val.parse() {
                 Ok(parsed) => config.http_api.ohttp_key_rotation_secs = Some(parsed),
                 Err(_) => warnings.push(format!(
@@ -554,11 +560,11 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_OHTTP_KEY_FILE_PATH") {
-            config.http_api.ohttp_key_file_path = Some(val);
+        if let Some(val) = vars.get("RELAY_OHTTP_KEY_FILE_PATH") {
+            config.http_api.ohttp_key_file_path = Some(val.to_string());
         }
 
-        if let Ok(val) = std::env::var("RELAY_OHTTP_EXCHANGE_RATE_LIMIT") {
+        if let Some(val) = vars.get("RELAY_OHTTP_EXCHANGE_RATE_LIMIT") {
             match val.parse() {
                 Ok(parsed) => config.http_api.ohttp_exchange_rate_limit_per_min = parsed,
                 Err(_) => warnings.push(format!(
@@ -568,7 +574,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_EXCHANGE_MAX_OFFERS") {
+        if let Some(val) = vars.get("RELAY_EXCHANGE_MAX_OFFERS") {
             match val.parse() {
                 Ok(parsed) => config.http_api.exchange_max_offers = parsed,
                 Err(_) => warnings.push(format!(
@@ -578,7 +584,7 @@ impl RelayConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("RELAY_EXCHANGE_DEFAULT_TTL_SECS") {
+        if let Some(val) = vars.get("RELAY_EXCHANGE_DEFAULT_TTL_SECS") {
             match val.parse() {
                 Ok(parsed) => config.http_api.exchange_default_ttl_secs = parsed,
                 Err(_) => warnings.push(format!(
@@ -596,7 +602,7 @@ impl RelayConfig {
         // Parse min first; only if it's valid do we consider warn/grace to avoid
         // cross-test/env interference when MIN is not provided or invalid.
         let mut min_is_valid = false;
-        if let Ok(val) = std::env::var("RELAY_VERSION_MIN") {
+        if let Some(val) = vars.get("RELAY_VERSION_MIN") {
             match val.parse() {
                 Ok(parsed) => {
                     vp_min = parsed;
@@ -610,7 +616,7 @@ impl RelayConfig {
         }
 
         if min_is_valid {
-            if let Ok(val) = std::env::var("RELAY_VERSION_WARN") {
+            if let Some(val) = vars.get("RELAY_VERSION_WARN") {
                 match val.parse() {
                     Ok(parsed) => vp_warn = parsed,
                     Err(_) => warnings.push(format!(
@@ -620,7 +626,7 @@ impl RelayConfig {
                 }
             }
 
-            if let Ok(val) = std::env::var("RELAY_VERSION_GRACE_DAYS") {
+            if let Some(val) = vars.get("RELAY_VERSION_GRACE_DAYS") {
                 match val.parse() {
                     Ok(parsed) => vp_grace = parsed,
                     Err(_) => warnings.push(format!(
@@ -646,6 +652,12 @@ impl RelayConfig {
     ///
     /// Parse warnings for invalid numeric/address fields are silently discarded.
     /// Use [`from_env_with_warnings`](Self::from_env_with_warnings) to capture them.
+    pub fn from_env_with_warnings() -> (Self, Vec<String>) {
+        let vars: HashMap<String, String> = std::env::vars().collect();
+        Self::from_map(&vars)
+    }
+
+    /// Loads configuration from environment variables, discarding parse warnings.
     pub fn from_env() -> Self {
         let (config, _warnings) = Self::from_env_with_warnings();
         config
@@ -759,15 +771,14 @@ pub struct ConfigWarning {
 /// Loads or generates a stable relay ID.
 ///
 /// Priority:
-/// 1. `RELAY_FEDERATION_RELAY_ID` environment variable
+/// 1. `env_relay_id` parameter (set from `RELAY_FEDERATION_RELAY_ID` by the caller)
 /// 2. `{data_dir}/relay_id` file (read existing)
 /// 3. Generate new UUID and write to file
-// TODO(PFC): load_relay_id mixes I/O, env, and UUID generation — see 2026-07-06-relay-pfc-violations R3
-pub fn load_relay_id(data_dir: &Path) -> String {
-    if let Ok(val) = std::env::var("RELAY_FEDERATION_RELAY_ID")
+pub fn load_relay_id(data_dir: &Path, env_relay_id: Option<&str>) -> String {
+    if let Some(val) = env_relay_id
         && !val.is_empty()
     {
-        return val;
+        return val.to_string();
     }
 
     let relay_id_path = data_dir.join("relay_id");

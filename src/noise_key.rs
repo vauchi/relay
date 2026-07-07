@@ -98,13 +98,12 @@ pub fn load_keypair(data_dir: &Path) -> std::io::Result<RelayKeypair> {
 /// Loads an existing keypair or generates a new one.
 ///
 /// Priority:
-/// 1. `RELAY_NOISE_STATIC_KEY` env var (base64url-encoded 64-byte private+public key)
+/// 1. `static_key_b64` parameter (base64url-encoded 64-byte private+public key)
 /// 2. Existing key file at `{data_dir}/relay_noise_key.bin`
 /// 3. Generate new keypair and save to file
-// TODO(PFC): key loading depends on global env + file I/O — see 2026-07-06-relay-pfc-violations R12
-pub fn load_or_generate_keypair(data_dir: &Path) -> RelayKeypair {
-    if let Ok(key_b64) = std::env::var("RELAY_NOISE_STATIC_KEY")
-        && let Ok(key_bytes) = URL_SAFE_NO_PAD.decode(&key_b64)
+pub fn load_or_generate_keypair(data_dir: &Path, static_key_b64: Option<&str>) -> RelayKeypair {
+    if let Some(key_b64) = static_key_b64
+        && let Ok(key_bytes) = URL_SAFE_NO_PAD.decode(key_b64)
         && key_bytes.len() == KEY_FILE_SIZE
     {
         let mut private = [0u8; 32];
@@ -239,37 +238,29 @@ mod tests {
 
     #[test]
     fn test_load_or_generate_is_stable() {
-        // Ensure no env var interference from parallel tests
-        // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::remove_var("RELAY_NOISE_STATIC_KEY") };
-
         let dir = tempdir().unwrap();
-        let kp1 = load_or_generate_keypair(dir.path());
-        let kp2 = load_or_generate_keypair(dir.path());
+        let kp1 = load_or_generate_keypair(dir.path(), None);
+        let kp2 = load_or_generate_keypair(dir.path(), None);
         assert_eq!(kp1.private, kp2.private);
         assert_eq!(kp1.public, kp2.public);
     }
 
     #[test]
-    fn test_env_override_takes_priority() {
+    fn test_static_key_override_takes_priority() {
         let dir = tempdir().unwrap();
 
         // Generate and save a keypair to file
         let file_kp = generate_relay_keypair();
         save_keypair(&file_kp, dir.path()).unwrap();
 
-        // Set env var with a different key (64 bytes: private + public)
+        // Provide a different key (64 bytes: private + public) directly.
         let env_kp = generate_relay_keypair();
         let mut env_key_bytes = Vec::with_capacity(64);
         env_key_bytes.extend_from_slice(&env_kp.private);
         env_key_bytes.extend_from_slice(&env_kp.public);
         let env_key_b64 = URL_SAFE_NO_PAD.encode(&env_key_bytes);
-        // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::set_var("RELAY_NOISE_STATIC_KEY", &env_key_b64) };
 
-        let loaded = load_or_generate_keypair(dir.path());
-        // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::remove_var("RELAY_NOISE_STATIC_KEY") };
+        let loaded = load_or_generate_keypair(dir.path(), Some(&env_key_b64));
 
         assert_eq!(loaded.private, env_kp.private);
         assert_ne!(loaded.private, file_kp.private);

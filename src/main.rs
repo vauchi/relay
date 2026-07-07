@@ -71,6 +71,10 @@ async fn main() {
         tracing::warn!("Configuration parse warning: {}", warning);
     }
 
+    // Read remaining environment overrides once so library code stays pure and
+    // tests don't need to mutate the process-global environment.
+    let noise_static_key = std::env::var("RELAY_NOISE_STATIC_KEY").ok();
+
     // R-C1: Validate configuration and abort on critical errors
     let warnings = config.validate();
     for warning in &warnings {
@@ -143,7 +147,8 @@ async fn main() {
     info!("Storage backend: {:?}", config.storage.backend);
     info!("Idle timeout: {}s", config.network.idle_timeout_secs);
 
-    let noise_keypair = noise_key::load_or_generate_keypair(&config.storage.data_dir);
+    let noise_keypair =
+        noise_key::load_or_generate_keypair(&config.storage.data_dir, noise_static_key.as_deref());
     let noise_pubkey_b64 = noise_key::public_key_base64url(&noise_keypair.public);
     info!("Relay identity public key: {}", noise_pubkey_b64);
 

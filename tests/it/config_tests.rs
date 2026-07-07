@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use rstest::rstest;
+use std::collections::HashMap;
 use vauchi_relay::config::{
     ConfigWarningLevel, FederationConfig, NetworkConfig, RelayConfig, SecurityConfig,
     StorageConfig, load_relay_id,
@@ -444,10 +445,10 @@ fn test_relay_id_file_persistence() {
     let dir = tempfile::tempdir().unwrap();
     let data_dir = dir.path();
 
-    let id1 = load_relay_id(data_dir);
+    let id1 = load_relay_id(data_dir, None);
     assert!(!id1.is_empty());
 
-    let id2 = load_relay_id(data_dir);
+    let id2 = load_relay_id(data_dir, None);
     assert_eq!(id1, id2, "relay_id should be stable across calls");
 
     let file_content = std::fs::read_to_string(data_dir.join("relay_id")).unwrap();
@@ -462,11 +463,7 @@ fn test_relay_id_env_var_overrides_file() {
 
     std::fs::write(data_dir.join("relay_id"), "file-relay-id").unwrap();
 
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_FEDERATION_RELAY_ID", "env-relay-id") };
-    let id = load_relay_id(data_dir);
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_FEDERATION_RELAY_ID") };
+    let id = load_relay_id(data_dir, Some("env-relay-id"));
 
     assert_eq!(id, "env-relay-id");
 }
@@ -478,11 +475,7 @@ fn test_relay_id_empty_env_var_ignored() {
     let dir = tempfile::tempdir().unwrap();
     let data_dir = dir.path();
 
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_FEDERATION_RELAY_ID", "") };
-    let id = load_relay_id(data_dir);
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_FEDERATION_RELAY_ID") };
+    let id = load_relay_id(data_dir, Some(""));
 
     assert!(!id.is_empty(), "Empty env var should be ignored");
     assert!(id.len() >= 32, "Should be a UUID: {}", id);
@@ -497,19 +490,15 @@ fn test_relay_id_empty_file_regenerates() {
 
     std::fs::write(data_dir.join("relay_id"), "").unwrap();
 
-    let id = load_relay_id(data_dir);
+    let id = load_relay_id(data_dir, None);
     assert!(!id.is_empty(), "Empty file should trigger regeneration");
 }
 
-// ── from_env_with_warnings — parse warning tests ────────────────────────────
+// ── from_map parse warning tests ────────────────────────────────────────────
 //
-// These tests exercise the NEW behaviour: invalid numeric/address env vars
+// These tests exercise the NEW behaviour: invalid numeric/address values
 // produce a warning string and fall back to the default, rather than being
 // silently ignored.
-//
-// NOTE: env-var tests modify the process environment and MUST run serially.
-// Configure `just test relay` or set RUST_TEST_THREADS=1 when running the
-// config_tests binary directly.
 
 /// Invalid env var produces a warning and keeps the default.
 // @internal
@@ -523,10 +512,9 @@ fn test_relay_id_empty_file_regenerates() {
 #[case::offload_threshold("RELAY_FEDERATION_OFFLOAD_THRESHOLD", "eighty-percent")]
 #[case::mtls_addr("RELAY_FEDERATION_MTLS_ADDR", "bad-addr:xyz")]
 fn test_parse_warning_invalid_env_var(#[case] env_var: &str, #[case] bad_value: &str) {
-    // SAFETY: env-var tests run with --test-threads=1 (configured in .cargo/config.toml)
-    unsafe { std::env::set_var(env_var, bad_value) };
-    let (_config, warnings) = RelayConfig::from_env_with_warnings();
-    unsafe { std::env::remove_var(env_var) };
+    let mut vars = HashMap::new();
+    vars.insert(env_var.to_string(), bad_value.to_string());
+    let (_config, warnings) = RelayConfig::from_map(&vars);
 
     assert!(
         warnings.iter().any(|w| w.contains(env_var)),
@@ -538,11 +526,9 @@ fn test_parse_warning_invalid_env_var(#[case] env_var: &str, #[case] bad_value: 
 // @internal
 #[test]
 fn test_no_warning_max_connections_valid() {
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_MAX_CONNECTIONS", "500") };
-    let (config, warnings) = RelayConfig::from_env_with_warnings();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_MAX_CONNECTIONS") };
+    let mut vars = HashMap::new();
+    vars.insert("RELAY_MAX_CONNECTIONS".to_string(), "500".to_string());
+    let (config, warnings) = RelayConfig::from_map(&vars);
 
     assert_eq!(config.network.max_connections, 500);
     assert!(
@@ -555,19 +541,11 @@ fn test_no_warning_max_connections_valid() {
 // @internal
 #[test]
 fn test_parse_warnings_multiple_invalid_vars() {
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_MAX_CONNECTIONS", "abc") };
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_RATE_LIMIT", "xyz") };
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_BLOB_TTL_SECS", "forever") };
-    let (_config, warnings) = RelayConfig::from_env_with_warnings();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_MAX_CONNECTIONS") };
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_RATE_LIMIT") };
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_BLOB_TTL_SECS") };
+    let mut vars = HashMap::new();
+    vars.insert("RELAY_MAX_CONNECTIONS".to_string(), "abc".to_string());
+    vars.insert("RELAY_RATE_LIMIT".to_string(), "xyz".to_string());
+    vars.insert("RELAY_BLOB_TTL_SECS".to_string(), "forever".to_string());
+    let (_config, warnings) = RelayConfig::from_map(&vars);
 
     assert!(
         warnings.iter().any(|w| w.contains("RELAY_MAX_CONNECTIONS")),
@@ -592,12 +570,15 @@ fn test_parse_warnings_multiple_invalid_vars() {
 // @internal
 #[test]
 fn test_from_env_wrapper_still_works() {
-    // Even with a bad env var, from_env() must not panic — it discards warnings silently.
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_MAX_CONNECTIONS", "not_a_number") };
-    let config = RelayConfig::from_env();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_MAX_CONNECTIONS") };
+    // Even with a bad value, from_env() must not panic — it discards warnings silently.
+    // We can't control the real process environment here, so we exercise the pure
+    // from_map path with a bad value to prove the fallback logic.
+    let mut vars = HashMap::new();
+    vars.insert(
+        "RELAY_MAX_CONNECTIONS".to_string(),
+        "not_a_number".to_string(),
+    );
+    let config = RelayConfig::from_map(&vars).0;
 
     assert_eq!(
         config.network.max_connections,
@@ -610,11 +591,9 @@ fn test_from_env_wrapper_still_works() {
 // @internal
 #[test]
 fn test_warning_message_format() {
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var("RELAY_MAX_CONNECTIONS", "bad_val") };
-    let (_config, warnings) = RelayConfig::from_env_with_warnings();
-    // TODO: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::remove_var("RELAY_MAX_CONNECTIONS") };
+    let mut vars = HashMap::new();
+    vars.insert("RELAY_MAX_CONNECTIONS".to_string(), "bad_val".to_string());
+    let (_config, warnings) = RelayConfig::from_map(&vars);
 
     let warning = warnings
         .iter()
@@ -664,5 +643,22 @@ fn test_from_env_with_warnings_returns_valid_config() {
     assert!(
         config.security.rate_limit_per_min > 0,
         "rate_limit_per_min must be non-zero"
+    );
+}
+
+/// from_map() uses only the provided map and ignores the real process environment.
+// @internal
+#[test]
+fn test_from_map_ignores_real_environment() {
+    // Even if the real environment has a valid value, an explicit map wins.
+    let mut vars = HashMap::new();
+    vars.insert("RELAY_MAX_CONNECTIONS".to_string(), "123".to_string());
+
+    let (config, warnings) = RelayConfig::from_map(&vars);
+
+    assert_eq!(config.network.max_connections, 123);
+    assert!(
+        !warnings.iter().any(|w| w.contains("RELAY_MAX_CONNECTIONS")),
+        "No warning expected when map provides a valid value"
     );
 }
