@@ -58,8 +58,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.bytes]]
-version = "1.12.0"
-when = "2026-06-18"
+version = "1.12.1"
+when = "2026-07-08"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
