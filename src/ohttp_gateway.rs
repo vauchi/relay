@@ -120,7 +120,11 @@ impl OhttpGateway {
     ///
     /// Key rotation still works — `rotate()` generates a fresh random key and
     /// replaces the in-memory state (the seed file is the initial state only).
-    pub fn from_key_file(path: &Path, rotation_hours: u64) -> Result<Self, OhttpGatewayError> {
+    ///
+    /// `rotation_secs` sets the in-memory rotation interval. It accepts seconds
+    /// (rather than hours) so E2E tests can pass sub-hour overrides such as
+    /// `RELAY_OHTTP_KEY_ROTATION_SECS` without losing precision.
+    pub fn from_key_file(path: &Path, rotation_secs: u64) -> Result<Self, OhttpGatewayError> {
         let seed = match std::fs::read(path) {
             Ok(bytes) if bytes.len() == OHTTP_SEED_LEN => {
                 info!(
@@ -147,7 +151,7 @@ impl OhttpGateway {
         Ok(Self {
             state: RwLock::new(Arc::new(inner)),
             previous_state: RwLock::new(None),
-            rotation_interval: Duration::from_secs(rotation_hours * 3600),
+            rotation_interval: Duration::from_secs(rotation_secs),
             next_key_id: AtomicU8::new(1),
         })
     }
@@ -426,6 +430,23 @@ mod tests {
         assert_eq!(gw.rotation_interval(), Duration::from_secs(12 * 3600));
     }
 
+    // @scenario: ohttp_gateway :: from_key_file respects rotation interval in seconds
+    #[test]
+    fn from_key_file_uses_rotation_secs_not_hours() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ohttp_key");
+
+        // Pass a small seconds value (not hours). This is the path used when
+        // RELAY_OHTTP_KEY_ROTATION_SECS is set in E2E tests; a previous bug
+        // passed rotation_hours to from_key_file, so the override was ignored.
+        let gw = OhttpGateway::from_key_file(&path, 123).expect("load must succeed");
+        assert_eq!(
+            gw.rotation_interval(),
+            Duration::from_secs(123),
+            "from_key_file must use the supplied rotation_secs directly"
+        );
+    }
+
     // @scenario: ohttp_gateway :: persisted key reloads as a usable keypair
     #[test]
     fn from_key_file_reload_preserves_working_keypair() {
@@ -433,7 +454,7 @@ mod tests {
         let path = dir.path().join("ohttp_key");
 
         // First start generates + persists the key.
-        let gw1 = OhttpGateway::from_key_file(&path, 24).expect("first load must succeed");
+        let gw1 = OhttpGateway::from_key_file(&path, 24 * 3600).expect("first load must succeed");
         let cfg1 = gw1.encoded_key_config();
 
         // Restart: loading from the same file must NOT panic and must yield a
@@ -441,7 +462,7 @@ mod tests {
         // code persisted only the public config, so `Server::new` hit
         // `assert!(config.sk.is_some())` and the relay crash-looped on every
         // restart after the first (problem 2026-05-25-relay-ohttp-forward-hop-502).
-        let gw2 = OhttpGateway::from_key_file(&path, 24).expect("reload must succeed");
+        let gw2 = OhttpGateway::from_key_file(&path, 24 * 3600).expect("reload must succeed");
         let cfg2 = gw2.encoded_key_config();
         assert_eq!(
             cfg1, cfg2,
@@ -468,7 +489,7 @@ mod tests {
         std::fs::write(&path, &legacy).expect("write legacy file");
 
         // Must not panic — detect the bad format and regenerate a usable key.
-        let gw = OhttpGateway::from_key_file(&path, 24)
+        let gw = OhttpGateway::from_key_file(&path, 24 * 3600)
             .expect("legacy public-config file must be healed, not fatal");
         let cfg = gw.encoded_key_config();
         let client = ClientRequest::from_encoded_config(&cfg).expect("client config");

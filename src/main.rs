@@ -440,10 +440,7 @@ async fn main() {
                 .ohttp_key_rotation_secs
                 .unwrap_or(config.http_api.ohttp_key_rotation_hours * 3600);
             let result = if let Some(ref key_path) = config.http_api.ohttp_key_file_path {
-                OhttpGateway::from_key_file(
-                    std::path::Path::new(key_path),
-                    config.http_api.ohttp_key_rotation_hours,
-                )
+                OhttpGateway::from_key_file(std::path::Path::new(key_path), rotation_secs)
             } else {
                 OhttpGateway::with_rotation_secs(rotation_secs)
             };
