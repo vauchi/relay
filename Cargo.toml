@@ -35,7 +35,7 @@ hex = "0.4"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "json"] }
 
 # Profiling layer (enabled via `flame` feature)
 tracing-flame = { version = "0.2", optional = true }
@@ -44,7 +44,7 @@ tracing-flame = { version = "0.2", optional = true }
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # HTTP server for health/metrics endpoints
-axum = "0.7"
+axum = { version = "0.7", default-features = false, features = ["json", "http1", "tokio", "tower-log", "tracing"] }
 
 # Federation transport: serve/consume the axum router over the in-process
 # mTLS stream (ADR-052). Already in the tree transitively via axum.
@@ -64,7 +64,8 @@ base64 = "0.22"
 zeroize = "1.8"
 
 # OHTTP gateway (RFC 9458) — pure Rust, no NSS
-ohttp = { version = "0.7", default-features = false, features = ["client", "server", "rust-hpke"] }
+# Client API is only needed for tests; dev-dependency adds the client feature.
+ohttp = { version = "0.7", default-features = false, features = ["server", "rust-hpke"] }
 
 # Enable zeroize-on-drop for OHTTP X25519 private keys.
 # The hpke crate (via ohttp) only enables x25519-dalek's `static_secrets`
@@ -90,10 +91,13 @@ tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]
 tempfile = "3.0"
-rcgen = "0.14.7"
+# Certificate generation for tests — use aws_lc_rs to reuse the production crypto provider
+rcgen = { version = "0.14.7", default-features = false, features = ["aws_lc_rs", "pem"] }
+# OHTTP client API used only by unit tests
+ohttp = { version = "0.7", default-features = false, features = ["client", "rust-hpke"] }
 proptest = "1"
 rstest = "0.26"
-criterion = "0.5"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Used by the built-in process metrics collector to read /proc/self/stat.

@@ -282,13 +282,6 @@ user-id = 6825
 user-login = "sunfishcode"
 user-name = "Dan Gohman"
 
-[[publisher.ryu]]
-version = "1.0.23"
-when = "2026-02-08"
-user-id = 3618
-user-login = "dtolnay"
-user-name = "David Tolnay"
-
 [[publisher.scopeguard]]
 version = "1.2.0"
 when = "2023-07-17"
