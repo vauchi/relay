@@ -12,6 +12,7 @@ mod escrow_store_tests;
 mod exchange_adversarial_tests;
 mod exchange_broker_tests;
 mod federation_connector_tests;
+mod federation_handshake_tests;
 mod federation_http_tests;
 mod federation_offload_core_tests;
 mod federation_two_process_e2e;

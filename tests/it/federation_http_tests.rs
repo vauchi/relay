@@ -327,3 +327,110 @@ async fn offload_round_trips_over_real_mtls() {
     assert_eq!(stored.len(), 1, "blob offloaded over mTLS must be stored");
     assert_eq!(stored[0].data, b"loopback-mtls-payload");
 }
+
+fn envelope_json(version: u8, payload: Value) -> Value {
+    serde_json::json!({
+        "version": version,
+        "message_id": "test-msg-1",
+        "timestamp": 1_700_000_000u64,
+        "payload": payload,
+    })
+}
+
+// @internal
+#[tokio::test]
+async fn control_envelope_with_mismatched_version_returns_426() {
+    let (state, _storage) = fed_state();
+    let metrics = state.metrics.clone();
+    let app = create_federation_router(state);
+
+    for wrong_version in [0u8, 2, 255] {
+        let env = envelope_json(
+            wrong_version,
+            serde_json::json!({"type": "CapacityReport", "used_bytes": 1, "max_bytes": 100, "blob_count": 0}),
+        );
+        let resp = post_msg(&app, Some("peer-1"), &env).await;
+
+        assert_eq!(
+            resp.status(),
+            426,
+            "version {wrong_version} control message must be refused with Upgrade Required"
+        );
+        let bytes = ax_body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(
+            body.contains(&wrong_version.to_string()) && body.contains('1'),
+            "refusal must name both versions for diagnosability, got: {body}"
+        );
+    }
+    assert!(
+        metrics
+            .encode()
+            .contains("relay_federation_version_rejected_total 3"),
+        "each refusal must be counted"
+    );
+}
+
+// @internal
+#[tokio::test]
+async fn handshake_envelope_bypasses_version_gate_for_structured_ack() {
+    let (state, _storage) = fed_state();
+    let app = create_federation_router(state);
+
+    let env = envelope_json(
+        99,
+        serde_json::json!({"type": "PeerHandshake", "relay_id": "peer-Z", "version": 99, "listen_addr": ""}),
+    );
+    let resp = post_msg(&app, Some("peer-Z"), &env).await;
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "a version-skewed handshake still gets a structured answer"
+    );
+    let body = response_json(resp).await;
+    assert_eq!(body["payload"]["type"], "PeerHandshakeAck");
+    assert_eq!(body["payload"]["accepted"], false);
+    assert_eq!(
+        body["payload"]["version"], 1,
+        "ack carries the responder's version"
+    );
+}
+
+// @internal
+#[tokio::test]
+async fn matching_version_control_envelope_still_dispatches() {
+    let (state, _storage) = fed_state();
+    let app = create_federation_router(state);
+
+    let env = envelope_json(
+        1,
+        serde_json::json!({"type": "CapacityReport", "used_bytes": 1, "max_bytes": 100, "blob_count": 0}),
+    );
+    let resp = post_msg(&app, Some("peer-1"), &env).await;
+
+    assert_eq!(resp.status(), 204, "CapacityReport has no response payload");
+}
+
+// @internal
+#[tokio::test]
+async fn unknown_payload_type_is_counted_not_erred() {
+    let (state, _storage) = fed_state();
+    let metrics = state.metrics.clone();
+    let app = create_federation_router(state);
+
+    let env = envelope_json(1, serde_json::json!({"type": "FromTheFuture"}));
+    let resp = post_msg(&app, Some("peer-1"), &env).await;
+
+    assert_eq!(
+        resp.status(),
+        204,
+        "unknown same-version payloads follow must-ignore forward compat"
+    );
+    assert!(
+        metrics
+            .encode()
+            .contains("relay_federation_unknown_payloads_total 1"),
+        "the ignored payload must be observable"
+    );
+}
