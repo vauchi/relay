@@ -467,6 +467,12 @@ pub struct RelayMetrics {
     pub federation_drain_notices: Counter,
     /// Total peer rate-limited messages.
     pub federation_rate_limited: Counter,
+    /// Total peer version handshakes received (accepted or rejected).
+    pub federation_handshakes_received: Counter,
+    /// Total inbound envelopes refused for a protocol version mismatch.
+    pub federation_version_rejected: Counter,
+    /// Total inbound payloads ignored as unknown/unhandled (forward compat).
+    pub federation_unknown_payloads: Counter,
 
     // Tokio runtime metrics
     /// Number of alive async tasks in the tokio runtime.
@@ -565,6 +571,18 @@ impl RelayMetrics {
             "relay_federation_rate_limited_total",
             "Total peer rate-limited messages",
         );
+        let federation_handshakes_received = Counter::new(
+            "relay_federation_handshakes_received_total",
+            "Total peer version handshakes received (accepted or rejected)",
+        );
+        let federation_version_rejected = Counter::new(
+            "relay_federation_version_rejected_total",
+            "Total inbound envelopes refused for a protocol version mismatch",
+        );
+        let federation_unknown_payloads = Counter::new(
+            "relay_federation_unknown_payloads_total",
+            "Total inbound payloads ignored as unknown/unhandled (forward compat)",
+        );
 
         let tokio_alive_tasks = Gauge::new(
             "relay_tokio_alive_tasks",
@@ -605,6 +623,9 @@ impl RelayMetrics {
         registry.register(Box::new(federation_hints_expired.clone()));
         registry.register(Box::new(federation_drain_notices.clone()));
         registry.register(Box::new(federation_rate_limited.clone()));
+        registry.register(Box::new(federation_handshakes_received.clone()));
+        registry.register(Box::new(federation_version_rejected.clone()));
+        registry.register(Box::new(federation_unknown_payloads.clone()));
         registry.register(Box::new(tokio_alive_tasks.clone()));
         registry.register(Box::new(tokio_workers.clone()));
 
@@ -636,6 +657,9 @@ impl RelayMetrics {
             federation_hints_expired,
             federation_drain_notices,
             federation_rate_limited,
+            federation_handshakes_received,
+            federation_version_rejected,
+            federation_unknown_payloads,
             tokio_alive_tasks,
             tokio_workers,
         }

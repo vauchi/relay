@@ -12,7 +12,7 @@
 //! the store side-effect.
 
 use crate::config::RelayConfig;
-use crate::federation_protocol::FederationPayload;
+use crate::federation_protocol::{FEDERATION_PROTOCOL_VERSION, FederationPayload};
 use crate::integrity;
 use crate::metrics::RelayMetrics;
 use crate::padding;
@@ -108,6 +108,19 @@ pub fn apply_message(
     peer_relay_id: &str,
 ) -> MessageResult {
     match payload {
+        FederationPayload::PeerHandshake { version, .. } => {
+            metrics.federation_handshakes_received.inc();
+            MessageResult {
+                response: Some(FederationPayload::PeerHandshakeAck {
+                    relay_id: config.federation.relay_id.clone(),
+                    version: FEDERATION_PROTOCOL_VERSION,
+                    accepted: version == FEDERATION_PROTOCOL_VERSION,
+                    capacity_used_bytes: storage.storage_size_bytes(),
+                    capacity_max_bytes: config.storage.max_storage_bytes,
+                }),
+                offload_stored: false,
+            }
+        }
         FederationPayload::OffloadBlob {
             blob_id,
             routing_id,
@@ -182,9 +195,15 @@ pub fn apply_message(
                 }
             }
         }
-        _ => MessageResult {
-            response: None,
-            offload_stored: false,
-        },
+        // Must-ignore-unknown forward compat (same-version peers may send
+        // newer payloads), but the drop is counted — a silent no-op between
+        // operators is undebuggable.
+        _ => {
+            metrics.federation_unknown_payloads.inc();
+            MessageResult {
+                response: None,
+                offload_stored: false,
+            }
+        }
     }
 }

@@ -27,7 +27,7 @@ use axum::routing::{get, post};
 use crate::config::RelayConfig;
 use crate::federation_core;
 use crate::federation_protocol::{
-    FederationEnvelope, FederationPayload, create_federation_envelope,
+    FEDERATION_PROTOCOL_VERSION, FederationEnvelope, FederationPayload, create_federation_envelope,
 };
 use crate::metrics::RelayMetrics;
 use crate::peer_registry::PeerRegistry;
@@ -122,10 +122,29 @@ async fn message_handler(
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
 
-    let payload = match decode_payload(&headers, body) {
-        Ok(payload) => payload,
+    let (envelope_version, payload) = match decode_payload(&headers, body) {
+        Ok(decoded) => decoded,
         Err((status, msg)) => return (status, msg).into_response(),
     };
+
+    // ADR-041 analogue of the client↔relay UnsupportedVersion reject: a
+    // version-skewed control message is refused explicitly, never silently
+    // dispatched. Handshakes pass through so the peer always receives a
+    // structured `PeerHandshakeAck` naming this relay's version.
+    if let Some(version) = envelope_version {
+        let is_handshake = matches!(payload, FederationPayload::PeerHandshake { .. });
+        if !is_handshake && version != FEDERATION_PROTOCOL_VERSION {
+            state.metrics.federation_version_rejected.inc();
+            return (
+                StatusCode::UPGRADE_REQUIRED,
+                format!(
+                    "unsupported federation protocol version {version} \
+                     (this relay speaks {FEDERATION_PROTOCOL_VERSION})"
+                ),
+            )
+                .into_response();
+        }
+    }
 
     let result = federation_core::apply_message(
         payload,
@@ -148,10 +167,15 @@ async fn message_handler(
 /// on the `Content-Type` (ADR-052 Amendment 2): an `application/octet-stream`
 /// body is a raw offload blob whose metadata rides the `X-Federation-*`
 /// headers; anything else is parsed as a JSON `FederationEnvelope`.
+///
+/// Returns the envelope's protocol version alongside the payload so the
+/// handler can gate on it. The raw-offload path carries no envelope —
+/// its version is `None` (the header contract is part of protocol v1;
+/// a future version bump must version these headers too).
 fn decode_payload(
     headers: &HeaderMap,
     body: Bytes,
-) -> Result<FederationPayload, (StatusCode, String)> {
+) -> Result<(Option<u8>, FederationPayload), (StatusCode, String)> {
     let is_offload = headers
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -159,7 +183,7 @@ fn decode_payload(
 
     if !is_offload {
         return serde_json::from_slice::<FederationEnvelope>(&body)
-            .map(|envelope| envelope.payload)
+            .map(|envelope| (Some(envelope.version), envelope.payload))
             .map_err(|_| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -182,12 +206,15 @@ fn decode_payload(
         .and_then(|v| v.parse().ok())
         .ok_or_else(|| bad("bad hop count"))?;
 
-    Ok(FederationPayload::OffloadBlob {
-        blob_id: blob_id.to_string(),
-        routing_id: routing_id.to_string(),
-        data: body.to_vec(),
-        created_at_secs,
-        integrity_hash: integrity_hash.to_string(),
-        hop_count,
-    })
+    Ok((
+        None,
+        FederationPayload::OffloadBlob {
+            blob_id: blob_id.to_string(),
+            routing_id: routing_id.to_string(),
+            data: body.to_vec(),
+            created_at_secs,
+            integrity_hash: integrity_hash.to_string(),
+            hop_count,
+        },
+    ))
 }

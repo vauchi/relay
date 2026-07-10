@@ -202,6 +202,52 @@ async fn post_federation_message(
     send_payload_to_addr(&host, addr, own_relay_id, client_config, envelope).await
 }
 
+/// Probes a peer's federation protocol version with a `PeerHandshake` and
+/// returns `Ok(())` only when the peer answers an accepting
+/// `PeerHandshakeAck` at our version. Any other outcome — rejecting ack,
+/// version-skewed accept, HTTP refusal (e.g. 426 from a newer relay), or
+/// transport error — is an explicit, diagnosable refusal
+/// (2026-07-04-federation-version-negotiation: never a silent flag-day).
+pub async fn verify_peer_version(
+    peer_url: &str,
+    own_relay_id: &str,
+    client_config: &Arc<ClientConfig>,
+    allow_loopback: bool,
+) -> Result<(), String> {
+    let envelope =
+        federation_protocol::create_federation_envelope(FederationPayload::PeerHandshake {
+            relay_id: own_relay_id.to_string(),
+            version: federation_protocol::FEDERATION_PROTOCOL_VERSION,
+            listen_addr: String::new(),
+        });
+
+    match post_federation_message(
+        peer_url,
+        own_relay_id,
+        client_config,
+        &envelope,
+        allow_loopback,
+    )
+    .await?
+    {
+        FederationPayload::PeerHandshakeAck {
+            version,
+            accepted: true,
+            ..
+        } if version == federation_protocol::FEDERATION_PROTOCOL_VERSION => Ok(()),
+        FederationPayload::PeerHandshakeAck {
+            version, accepted, ..
+        } => Err(format!(
+            "peer federation protocol version {version} is incompatible with local {} \
+             (accepted={accepted})",
+            federation_protocol::FEDERATION_PROTOCOL_VERSION
+        )),
+        other => Err(format!(
+            "unexpected response to version handshake: {other:?}"
+        )),
+    }
+}
+
 /// Manages offloading blobs to federation peers when storage exceeds the
 /// configured threshold.
 ///
@@ -251,6 +297,24 @@ impl OffloadManager {
         };
 
         let own_relay_id = &self.config.federation.relay_id;
+
+        // Version-gate the batch: one tiny handshake per offload cycle keeps
+        // the relay stateless while guaranteeing a version-skewed peer is an
+        // explicit refusal, not a silent drop. Blobs stay local and retry
+        // next cycle — same no-data-loss posture as a rejected OffloadAck.
+        if let Err(e) = verify_peer_version(
+            peer_url,
+            own_relay_id,
+            client_config,
+            self.allow_loopback_peers,
+        )
+        .await
+        {
+            self.metrics.federation_peer_connection_errors.inc();
+            warn!("Federation version handshake with peer failed: {e}");
+            return 0;
+        }
+
         let candidates = self.storage.get_oldest_blobs(OFFLOAD_BATCH_SIZE);
 
         let mut sent = 0;
