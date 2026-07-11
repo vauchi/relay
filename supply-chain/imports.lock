@@ -746,12 +746,6 @@ criteria = "safe-to-deploy"
 delta = "1.13.2 -> 1.14.0"
 notes = "Minor new feature, nothing out of the ordinary."
 
-[[audits.bytecode-alliance.audits.thread_local]]
-who = "Pat Hickey <phickey@fastly.com>"
-criteria = "safe-to-deploy"
-version = "1.1.4"
-notes = "uses unsafe to implement thread local storage of objects"
-
 [[audits.bytecode-alliance.audits.try-lock]]
 who = "Pat Hickey <phickey@fastly.com>"
 criteria = "safe-to-deploy"
@@ -1883,33 +1877,6 @@ who = "Jack Grigg <jack@electriccoin.co>"
 criteria = "safe-to-deploy"
 delta = "0.4.0 -> 0.4.1"
 notes = "Changes to `Command` usage are to add support for `RUSTC_WRAPPER`."
-aggregated-from = "https://raw.githubusercontent.com/zcash/zcash/master/qa/supply-chain/audits.toml"
-
-[[audits.zcash.audits.thread_local]]
-who = "Jack Grigg <jack@z.cash>"
-criteria = "safe-to-deploy"
-delta = "1.1.4 -> 1.1.7"
-notes = """
-New `unsafe` usage:
-- An extra `deallocate_bucket`, to replace a `Mutex::lock` with a `compare_exchange`.
-- Setting and getting a `#[thread_local] static mut Option<Thread>` on nightly.
-"""
-aggregated-from = "https://raw.githubusercontent.com/zcash/zcash/master/qa/supply-chain/audits.toml"
-
-[[audits.zcash.audits.thread_local]]
-who = "Daira-Emma Hopwood <daira@jacaranda.org>"
-criteria = "safe-to-deploy"
-delta = "1.1.7 -> 1.1.8"
-notes = """
-Adds `unsafe` code that makes an assumption that `ptr::null_mut::<Entry<T>>()` is a valid representation
-of an `AtomicPtr<Entry<T>>`, but this is likely a correct assumption.
-"""
-aggregated-from = "https://raw.githubusercontent.com/zcash/zcash/master/qa/supply-chain/audits.toml"
-
-[[audits.zcash.audits.thread_local]]
-who = "Jack Grigg <jack@electriccoin.co>"
-criteria = "safe-to-deploy"
-delta = "1.1.8 -> 1.1.9"
 aggregated-from = "https://raw.githubusercontent.com/zcash/zcash/master/qa/supply-chain/audits.toml"
 
 [[audits.zcash.audits.try-lock]]
