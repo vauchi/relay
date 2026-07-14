@@ -41,6 +41,9 @@ RUN echo "${BUILD_INFO}" > /tmp/build-info.json \
 # (zlib, libpng, glibc, etc.). Pinned distroless images accumulate CVEs.
 FROM gcr.io/distroless/base-nossl-debian12:latest
 
+# Rust binaries still need libgcc_s for panic unwinding; base-nossl omits it.
+COPY --from=builder /lib/x86_64-linux-gnu/libgcc_s.so.1 /lib/x86_64-linux-gnu/libgcc_s.so.1
+
 COPY --from=builder /app/relay/target/release/vauchi-relay /usr/local/bin/
 COPY --from=builder /tmp/build-info.json /usr/share/build-info.json
 COPY --chown=nonroot:nonroot --from=builder /tmp/data /data
