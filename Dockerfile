@@ -36,10 +36,10 @@ ARG BUILD_INFO='{"sha":"development","ref":"local","built":"unknown"}'
 RUN echo "${BUILD_INFO}" > /tmp/build-info.json \
     && mkdir -p /tmp/data && chown 65534:65534 /tmp/data
 
-# Runtime stage — distroless for minimal attack surface
+# Runtime stage — distroless glibc without unused OpenSSL libraries
 # Use :latest tag to get latest security patches for base OS libraries
 # (zlib, libpng, glibc, etc.). Pinned distroless images accumulate CVEs.
-FROM gcr.io/distroless/cc-debian12:latest
+FROM gcr.io/distroless/base-nossl-debian12:latest
 
 COPY --from=builder /app/relay/target/release/vauchi-relay /usr/local/bin/
 COPY --from=builder /tmp/build-info.json /usr/share/build-info.json
