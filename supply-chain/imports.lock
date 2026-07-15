@@ -332,8 +332,8 @@ user-login = "Thomasdezeeuw"
 user-name = "Thomas de Zeeuw"
 
 [[publisher.syn]]
-version = "2.0.118"
-when = "2026-06-16"
+version = "2.0.119"
+when = "2026-07-15"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
