@@ -292,8 +292,8 @@ fuzz:nightly:
 semgrep-sast:
   stage: security
   tags: !reference [.security-gate-sast-tags, tags]
-  interruptible: !reference [.security-gate-sast-flags, interruptible]
-  allow_failure: !reference [.security-gate-sast-flags, allow_failure]
+  interruptible: false
+  allow_failure: false
   retry: !reference [.security-gate-sast-retry, retry]
   rules: !reference [.security-gate-sast-rules, rules]
   needs:
@@ -305,8 +305,8 @@ semgrep-sast:
 secret_detection:
   stage: security
   tags: !reference [.security-gate-secret-tags, tags]
-  interruptible: !reference [.security-gate-secret-flags, interruptible]
-  allow_failure: !reference [.security-gate-secret-flags, allow_failure]
+  interruptible: false
+  allow_failure: false
   rules: !reference [.security-gate-secret-rules, rules]
   needs:
     - job: lint:format
@@ -323,7 +323,17 @@ secret_detection:
 # the dashboard, the main-branch advisory is a silent gap. Routing
 # decision deferred to 2026-02-03-cicd-observability Tier 3.
 container_scanning:
-  extends: .security-gate-container
+  stage: scan
+  tags: [docker]
+  interruptible: false
+  needs: ["build:docker"]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CONTAINER_SCANNING_ALLOW_FAILURE == "true"'
+      allow_failure: true
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      allow_failure: false
 
 # Rust-specific security (runs on dependency changes)
 security:audit:
