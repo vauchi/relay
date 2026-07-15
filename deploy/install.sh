@@ -6,11 +6,12 @@
 # Vauchi Relay Server Installer
 #
 # Install locally after review (do not pipe curl directly to bash):
-#   curl -fsSL -o install.sh https://raw.githubusercontent.com/megloff1/Vauchi/main/vauchi-relay/deploy/install.sh
+#   curl -fsSL -o install.sh https://raw.githubusercontent.com/megloff1/Vauchi/v1.1.0/vauchi-relay/deploy/install.sh
 #   # inspect install.sh, then:
-#   sudo bash install.sh [RELEASE_TAG]
+#   sudo bash install.sh v1.1.0
 #
-# RELEASE_TAG defaults to "main". Pin to a signed release tag for production.
+# Pass an immutable release tag (e.g. v1.1.0) or a full commit SHA.
+# Do not use "main" in production: it is mutable and rebuilds on every push.
 
 set -euo pipefail
 
@@ -22,8 +23,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-REPO="megloff1/Vauchi"
-RELEASE_TAG="${1:-main}"
+RELEASE_REF=""
 INSTALL_DIR="/usr/local/bin"
 DATA_DIR="/var/lib/vauchi-relay"
 SERVICE_USER="vauchi"
@@ -63,7 +63,7 @@ detect_platform() {
 
 # Check dependencies
 check_dependencies() {
-    for cmd in curl tar; do
+    for cmd in curl sha256sum; do
         if ! command -v "$cmd" &> /dev/null; then
             log_error "Required command not found: $cmd"
         fi
@@ -81,32 +81,47 @@ create_user() {
     fi
 }
 
-# Download and install binary
+# Download and install binary from the GitLab generic package registry.
+# RELEASE_REF must be an immutable release tag (e.g. v1.1.0) or a full
+# commit SHA. The downloaded artifact is verified against a SHA-256
+# checksum before it is installed.
 install_binary() {
-    log_info "Building from source (release tag: ${RELEASE_TAG})..."
+    log_info "Installing binary (release ref: ${RELEASE_REF})..."
 
-    if ! command -v cargo &> /dev/null; then
-        log_error "Rust toolchain not found. Install Rust first: https://rustup.rs"
+    if [ "$OS" != "linux" ]; then
+        log_error "Pre-built binaries are only available for Linux. Build from source manually for ${OS}-${ARCH}."
     fi
 
-    log_info "Rust toolchain found, building from source..."
+    if [ "$ARCH" != "x86_64" ]; then
+        log_error "Pre-built binaries are only available for x86_64. Build from source manually for ${OS}-${ARCH}."
+    fi
 
     TEMP_DIR=$(mktemp -d)
     # shellcheck disable=SC2064
     trap 'rm -rf "${TEMP_DIR:?}"' EXIT
 
-    log_info "Cloning repository..."
-    git clone --depth 1 --branch "$RELEASE_TAG" "https://github.com/${REPO}.git" "$TEMP_DIR/vauchi"
-    cd "$TEMP_DIR/vauchi" || log_error "Failed to enter build directory"
+    local artifact="vauchi-relay-${OS}-${ARCH}"
+    local package_name="vauchi-relay"
+    local project_id="77874349"
+    local base_url="${VAUCHI_RELAY_PACKAGE_BASE_URL:-https://gitlab.com/api/v4/projects/${project_id}/packages/generic/${package_name}/${RELEASE_REF}}"
+    local bin_url="${base_url}/${artifact}"
+    local checksum_url="${base_url}/${artifact}.sha256"
 
-    log_info "Building relay server (this may take a few minutes)..."
-    cargo build --release -p vauchi-relay
+    log_info "Downloading ${artifact}@${RELEASE_REF}..."
+    local curl_opts=(-fsSL)
+    if [ -n "${GITLAB_TOKEN:-}" ]; then
+        curl_opts+=(--header "JOB-TOKEN: ${GITLAB_TOKEN}")
+    fi
+    curl "${curl_opts[@]}" -o "${TEMP_DIR}/${artifact}" "${bin_url}"
+    curl "${curl_opts[@]}" -o "${TEMP_DIR}/${artifact}.sha256" "${checksum_url}"
+
+    log_info "Verifying checksum..."
+    (cd "${TEMP_DIR}" && sha256sum -c "${artifact}.sha256")
 
     log_info "Installing binary..."
-    cp target/release/vauchi-relay "$INSTALL_DIR/"
-    chmod 755 "$INSTALL_DIR/vauchi-relay"
+    install -m 755 "${TEMP_DIR}/${artifact}" "${INSTALL_DIR}/vauchi-relay"
 
-    log_success "Binary installed to $INSTALL_DIR/vauchi-relay"
+    log_success "Binary installed to ${INSTALL_DIR}/vauchi-relay"
 }
 
 # Create data directory
@@ -198,7 +213,9 @@ print_summary() {
     echo "  Then: systemctl daemon-reload && systemctl restart vauchi-relay"
     echo ""
     echo "Data directory: $DATA_DIR"
-    echo "Listening on: http://0.0.0.0:8080"
+    if [ "${VAUCHI_RELAY_INSTALL_BINARY_ONLY:-}" != "true" ]; then
+        echo "Listening on: http://0.0.0.0:8080"
+    fi
     echo ""
 }
 
@@ -234,14 +251,23 @@ main() {
         exit 0
     fi
 
+    RELEASE_REF="${1:-}"
+    if [ -z "$RELEASE_REF" ]; then
+        log_error "RELEASE_REF required: pass an immutable release tag (e.g. v1.1.0) or a full commit SHA."
+    fi
+
     check_root
     check_dependencies
     detect_platform
     create_user
     install_binary
     create_data_dir
-    install_service
-    start_service
+
+    if [ "${VAUCHI_RELAY_INSTALL_BINARY_ONLY:-}" != "true" ]; then
+        install_service
+        start_service
+    fi
+
     print_summary
 }
 

@@ -152,6 +152,42 @@ test:unit:
       junit: target/nextest/ci/junit.xml
     expire_in: 1 week
 
+# Exercise deploy/install.sh end-to-end: build a release binary, serve it
+# from a local HTTP server, and verify the installer downloads it, checks
+# the SHA-256 checksum, and installs it. Runs as root so /usr/local/bin is
+# writable; service management is skipped via VAUCHI_RELAY_INSTALL_BINARY_ONLY.
+test:install:
+  stage: load
+  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/debian:bookworm-slim
+  tags: [docker]
+  needs:
+    - job: build:release
+      artifacts: true
+  variables:
+    VAUCHI_RELAY_INSTALL_BINARY_ONLY: "true"
+    VAUCHI_RELAY_PACKAGE_BASE_URL: "http://127.0.0.1:8765/packages/generic/vauchi-relay/test"
+  before_script:
+    - apt-get update -qq && apt-get install -yqq python3 libgcc-s1 curl >/dev/null
+  script:
+    - |
+      set -euo pipefail
+      mkdir -p /tmp/pkg/vauchi-relay/test
+      cp target/release/vauchi-relay /tmp/pkg/vauchi-relay/test/vauchi-relay-linux-amd64
+      (cd /tmp/pkg/vauchi-relay/test && sha256sum vauchi-relay-linux-amd64 > vauchi-relay-linux-amd64.sha256)
+      python3 -m http.server --directory /tmp/pkg 8765 &
+      SERVER_PID=$!
+      sleep 1
+      bash deploy/install.sh test
+      kill $SERVER_PID
+      /usr/local/bin/vauchi-relay --version
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        compare_to: refs/heads/$CI_DEFAULT_BRANCH
+        paths:
+          - "deploy/install.sh"
+          - ".gitlab-ci.yml"
+
 # Main: full coverage with llvm-cov
 coverage:workspace:
   extends: [.coverage-job, .rust-runner, .timeout-long]
@@ -571,6 +607,14 @@ build:release:
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+    # Run in MRs when the installer changes so test:install can exercise
+    # the full download + checksum + install path.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        compare_to: refs/heads/$CI_DEFAULT_BRANCH
+        paths:
+          - "deploy/install.sh"
+          - ".gitlab-ci.yml"
 
 build:docker:
   extends: .timeout-standard
@@ -673,7 +717,8 @@ build:docker:
 # The _private pipeline has manual gate jobs — click "play" there.
 
 # Publish the release binary to the GitLab generic package registry so
-# downstream E2E tests can fetch it by SHA instead of rebuilding from source.
+# downstream E2E tests and deploy/install.sh can fetch it by SHA or tag
+# instead of rebuilding from source as root.
 publish:package:relay:
   stage: deploy
   image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/alpine:3.21
@@ -689,15 +734,23 @@ publish:package:relay:
   script:
     - |
       set -euo pipefail
-      ARTIFACT="${BINARY_NAME}-${CI_COMMIT_SHA}"
-      cp target/release/vauchi-relay "${ARTIFACT}"
-      sha256sum "${ARTIFACT}" > "${ARTIFACT}.sha256"
-      UPLOAD_BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${PACKAGE_NAME}/${CI_COMMIT_SHA}"
-      curl -fsSL --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-        --upload-file "${ARTIFACT}" "${UPLOAD_BASE}/${ARTIFACT}"
-      curl -fsSL --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-        --upload-file "${ARTIFACT}.sha256" "${UPLOAD_BASE}/${ARTIFACT}.sha256"
-      echo "✅ Published ${PACKAGE_NAME}@${CI_COMMIT_SHA}"
+      cp target/release/vauchi-relay "${BINARY_NAME}"
+      sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256"
+
+      upload_package() {
+        local version="$1"
+        local base="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${PACKAGE_NAME}/${version}"
+        curl -fsSL --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --upload-file "${BINARY_NAME}" "${base}/${BINARY_NAME}"
+        curl -fsSL --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --upload-file "${BINARY_NAME}.sha256" "${base}/${BINARY_NAME}.sha256"
+        echo "✅ Published ${PACKAGE_NAME}@${version}"
+      }
+
+      upload_package "${CI_COMMIT_SHA}"
+      if [ -n "${CI_COMMIT_TAG:-}" ]; then
+        upload_package "${CI_COMMIT_TAG}"
+      fi
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
