@@ -49,8 +49,12 @@ require_pattern \
     'image: .*debian:bullseye-slim' \
     "$install_job"
 require_pattern \
-    "installer smoke test executes the installed artifact" \
-    '/usr/local/bin/vauchi-relay --version' \
+    "installer smoke test starts the installed artifact on loopback" \
+    'RELAY_LISTEN_ADDR=127\.0\.0\.1:[0-9]+ /usr/local/bin/vauchi-relay' \
+    "$install_job"
+require_pattern \
+    "installer smoke test verifies relay readiness" \
+    'http://127\.0\.0\.1:[0-9]+/health' \
     "$install_job"
 require_pattern \
     "installer smoke test consumes build:release" \
