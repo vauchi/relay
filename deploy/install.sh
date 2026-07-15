@@ -41,16 +41,20 @@ check_root() {
     fi
 }
 
+package_arch() {
+    case "$1" in
+        x86_64) printf '%s\n' "amd64" ;;
+        aarch64|arm64) printf '%s\n' "arm64" ;;
+        *) return 1 ;;
+    esac
+}
+
 # Detect OS and architecture
 detect_platform() {
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-    ARCH=$(uname -m)
-
-    case "$ARCH" in
-        x86_64) ARCH="x86_64" ;;
-        aarch64|arm64) ARCH="aarch64" ;;
-        *) log_error "Unsupported architecture: $ARCH" ;;
-    esac
+    local machine_arch
+    machine_arch=$(uname -m)
+    ARCH=$(package_arch "$machine_arch") || log_error "Unsupported architecture: $machine_arch"
 
     case "$OS" in
         linux) OS="linux" ;;
@@ -92,7 +96,7 @@ install_binary() {
         log_error "Pre-built binaries are only available for Linux. Build from source manually for ${OS}-${ARCH}."
     fi
 
-    if [ "$ARCH" != "x86_64" ]; then
+    if [ "$ARCH" != "amd64" ]; then
         log_error "Pre-built binaries are only available for x86_64. Build from source manually for ${OS}-${ARCH}."
     fi
 
@@ -271,4 +275,6 @@ main() {
     print_summary
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
