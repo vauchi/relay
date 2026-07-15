@@ -177,8 +177,10 @@ test:install:
       (cd "${package_dir}" && sha256sum vauchi-relay-linux-amd64 > vauchi-relay-linux-amd64.sha256)
       python3 -m http.server --directory /tmp/pkg 8765 &
       SERVER_PID=$!
-      sleep 1
-      VAUCHI_RELAY_PACKAGE_BASE_URL="http://127.0.0.1:8765/packages/generic/vauchi-relay/${release_ref}" \
+      package_url="http://127.0.0.1:8765/packages/generic/vauchi-relay/${release_ref}"
+      curl --fail --silent --retry 20 --retry-connrefused --retry-delay 0 \
+        "${package_url}/vauchi-relay-linux-amd64.sha256" >/dev/null
+      VAUCHI_RELAY_PACKAGE_BASE_URL="${package_url}" \
         bash deploy/install.sh "${release_ref}"
       kill $SERVER_PID
       /usr/local/bin/vauchi-relay --version
