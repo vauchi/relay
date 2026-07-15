@@ -4,8 +4,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Vauchi Relay Server Installer
-# Usage: curl -sSL https://raw.githubusercontent.com/megloff1/Vauchi/main/vauchi-relay/deploy/install.sh | bash
 #
+# Install locally after review (do not pipe curl directly to bash):
+#   curl -fsSL -o install.sh https://raw.githubusercontent.com/megloff1/Vauchi/main/vauchi-relay/deploy/install.sh
+#   # inspect install.sh, then:
+#   sudo bash install.sh [RELEASE_TAG]
+#
+# RELEASE_TAG defaults to "main". Pin to a signed release tag for production.
 
 set -euo pipefail
 
@@ -18,16 +23,16 @@ NC='\033[0m' # No Color
 
 # Configuration
 REPO="megloff1/Vauchi"
-BINARY_NAME="vauchi-relay"
+RELEASE_TAG="${1:-main}"
 INSTALL_DIR="/usr/local/bin"
 DATA_DIR="/var/lib/vauchi-relay"
 SERVICE_USER="vauchi"
 SERVICE_GROUP="vauchi"
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+log_info() { printf '%b\n' "${BLUE}[INFO]${NC} $1"; }
+log_success() { printf '%b\n' "${GREEN}[OK]${NC} $1"; }
+log_warn() { printf '%b\n' "${YELLOW}[WARN]${NC} $1"; }
+log_error() { printf '%b\n' "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # Check if running as root
 check_root() {
@@ -78,33 +83,30 @@ create_user() {
 
 # Download and install binary
 install_binary() {
-    log_info "Building from source (release binary not available yet)..."
+    log_info "Building from source (release tag: ${RELEASE_TAG})..."
 
-    # Check if cargo is available
-    if command -v cargo &> /dev/null; then
-        log_info "Rust toolchain found, building from source..."
-
-        TEMP_DIR=$(mktemp -d)
-        cd "$TEMP_DIR"
-
-        log_info "Cloning repository..."
-        git clone --depth 1 "https://github.com/${REPO}.git" vauchi
-        cd vauchi
-
-        log_info "Building relay server (this may take a few minutes)..."
-        cargo build --release -p vauchi-relay
-
-        log_info "Installing binary..."
-        cp target/release/vauchi-relay "$INSTALL_DIR/"
-        chmod 755 "$INSTALL_DIR/vauchi-relay"
-
-        cd /
-        rm -rf "$TEMP_DIR"
-
-        log_success "Binary installed to $INSTALL_DIR/vauchi-relay"
-    else
-        log_error "Rust toolchain not found. Install Rust first: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    if ! command -v cargo &> /dev/null; then
+        log_error "Rust toolchain not found. Install Rust first: https://rustup.rs"
     fi
+
+    log_info "Rust toolchain found, building from source..."
+
+    TEMP_DIR=$(mktemp -d)
+    # shellcheck disable=SC2064
+    trap 'rm -rf "${TEMP_DIR:?}"' EXIT
+
+    log_info "Cloning repository..."
+    git clone --depth 1 --branch "$RELEASE_TAG" "https://github.com/${REPO}.git" "$TEMP_DIR/vauchi"
+    cd "$TEMP_DIR/vauchi" || log_error "Failed to enter build directory"
+
+    log_info "Building relay server (this may take a few minutes)..."
+    cargo build --release -p vauchi-relay
+
+    log_info "Installing binary..."
+    cp target/release/vauchi-relay "$INSTALL_DIR/"
+    chmod 755 "$INSTALL_DIR/vauchi-relay"
+
+    log_success "Binary installed to $INSTALL_DIR/vauchi-relay"
 }
 
 # Create data directory
@@ -182,9 +184,9 @@ start_service() {
 # Print summary
 print_summary() {
     echo ""
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN} Vauchi Relay installed successfully!${NC}"
-    echo -e "${GREEN}========================================${NC}"
+    printf '%b\n' "${GREEN}========================================${NC}"
+    printf '%b\n' "${GREEN} Vauchi Relay installed successfully!${NC}"
+    printf '%b\n' "${GREEN}========================================${NC}"
     echo ""
     echo "Service commands:"
     echo "  systemctl status vauchi-relay   # Check status"
@@ -222,7 +224,7 @@ uninstall() {
 # Main
 main() {
     echo ""
-    echo -e "${BLUE}Vauchi Relay Server Installer${NC}"
+    printf '%b\n' "${BLUE}Vauchi Relay Server Installer${NC}"
     echo "================================"
     echo ""
 

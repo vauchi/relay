@@ -427,12 +427,8 @@ mod tests {
     // @internal
     #[test]
     fn test_sqlite_wal_mode_on_file() {
-        let temp_dir = std::env::temp_dir();
-        let db_path = temp_dir.join(format!("test_guardian_wal_{}.db", std::process::id()));
-
-        let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
-        let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_guardian_wal.db");
 
         {
             let store = SqliteGuardianStore::open(&db_path).unwrap();
@@ -445,9 +441,5 @@ mod tests {
                 "Expected WAL mode for file-based database, got '{journal_mode}'"
             );
         }
-
-        let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
-        let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     }
 }

@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 use rand::Rng;
+use rand::rngs::OsRng;
 
 /// Maximum retry attempts when generating a unique 6-digit code.
 /// At 10k offers (max_offers default), collision probability per try is ~1%.
@@ -141,7 +142,7 @@ impl ExchangeBroker {
     /// Store an offer and return a 6-digit code.
     ///
     /// The optional `ttl_secs` overrides the broker's default TTL.
-    // TODO(PFC): Instant::now() and thread_rng() embedded — see 2026-07-06-relay-pfc-violations R8
+    // TODO(PFC): Instant::now() embedded — see 2026-07-06-relay-pfc-violations R8
     pub fn create_offer(
         &self,
         payload: String,
@@ -247,10 +248,15 @@ impl ExchangeBroker {
     }
 
     /// Generate a unique 6-digit code, retrying on collision.
+    ///
+    /// Uses `OsRng` so code generation is backed by the operating-system
+    /// CSPRNG. The 6-digit space has only ~20 bits of entropy, so this is
+    /// not a secrecy primitive — it is only meant to make guessing and
+    /// collision timing less predictable than a userspace PRNG.
     fn generate_code_inner(
         offers: &HashMap<String, ExchangeOffer>,
     ) -> Result<String, ExchangeError> {
-        let mut rng = rand::thread_rng();
+        let mut rng = OsRng;
         for _ in 0..MAX_CODE_RETRIES {
             let code = format!("{:06}", rng.gen_range(0..1_000_000u32));
             if !offers.contains_key(&code) {

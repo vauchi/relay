@@ -173,10 +173,7 @@ impl OhttpGateway {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
         }
-        info!(
-            "OHTTP gateway seed generated and persisted to: {}",
-            path.display()
-        );
+        info!("OHTTP gateway seed generated and persisted");
         Ok(seed)
     }
 

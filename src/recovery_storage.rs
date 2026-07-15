@@ -343,13 +343,8 @@ mod tests {
     #[test]
     fn test_sqlite_wal_mode_on_file() {
         // Test with actual file to verify WAL mode
-        let temp_dir = std::env::temp_dir();
-        let db_path = temp_dir.join(format!("test_recovery_wal_{}.db", std::process::id()));
-
-        // Clean up if exists from previous failed test
-        let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
-        let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_recovery_wal.db");
 
         {
             let store = SqliteRecoveryProofStore::open(&db_path).unwrap();
@@ -362,10 +357,5 @@ mod tests {
                 "Expected WAL mode for file-based database"
             );
         }
-
-        // Cleanup
-        let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
-        let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     }
 }
