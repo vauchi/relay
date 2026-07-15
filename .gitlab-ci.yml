@@ -290,8 +290,12 @@ fuzz:nightly:
 # Override child analyzer jobs (not parent stubs) to add tags and rules
 
 semgrep-sast:
-  extends: .security-gate-sast
   stage: security
+  tags: !reference [.security-gate-sast-tags, tags]
+  interruptible: !reference [.security-gate-sast-flags, interruptible]
+  allow_failure: !reference [.security-gate-sast-flags, allow_failure]
+  retry: !reference [.security-gate-sast-retry, retry]
+  rules: !reference [.security-gate-sast-rules, rules]
   needs:
     - job: lint:format
       optional: true
@@ -299,8 +303,11 @@ semgrep-sast:
       optional: true
 
 secret_detection:
-  extends: .security-gate-secret
   stage: security
+  tags: !reference [.security-gate-secret-tags, tags]
+  interruptible: !reference [.security-gate-secret-flags, interruptible]
+  allow_failure: !reference [.security-gate-secret-flags, allow_failure]
+  rules: !reference [.security-gate-secret-rules, rules]
   needs:
     - job: lint:format
       optional: true
