@@ -49,6 +49,14 @@ package_arch() {
     esac
 }
 
+validate_release_ref() {
+    local release_ref="$1"
+    local semver_component='(0|[1-9][0-9]*)'
+
+    [[ "$release_ref" =~ ^v${semver_component}\.${semver_component}\.${semver_component}$ \
+        || "$release_ref" =~ ^[0-9a-f]{40}$ ]]
+}
+
 # Detect OS and architecture
 detect_platform() {
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -256,8 +264,8 @@ main() {
     fi
 
     RELEASE_REF="${1:-}"
-    if [ -z "$RELEASE_REF" ]; then
-        log_error "RELEASE_REF required: pass an immutable release tag (e.g. v1.1.0) or a full commit SHA."
+    if ! validate_release_ref "$RELEASE_REF"; then
+        log_error "RELEASE_REF must be a stable release tag (e.g. v1.1.0) or a full lowercase commit SHA."
     fi
 
     check_root

@@ -165,20 +165,21 @@ test:install:
       artifacts: true
   variables:
     VAUCHI_RELAY_INSTALL_BINARY_ONLY: "true"
-    VAUCHI_RELAY_PACKAGE_BASE_URL: "http://127.0.0.1:8765/packages/generic/vauchi-relay/test"
   before_script:
     - apt-get update -qq && apt-get install -yqq python3 libgcc-s1 curl >/dev/null
   script:
     - |
       set -euo pipefail
-      package_dir=/tmp/pkg/packages/generic/vauchi-relay/test
+      release_ref="${CI_COMMIT_SHA}"
+      package_dir="/tmp/pkg/packages/generic/vauchi-relay/${release_ref}"
       mkdir -p "${package_dir}"
       cp target/release/vauchi-relay "${package_dir}/vauchi-relay-linux-amd64"
       (cd "${package_dir}" && sha256sum vauchi-relay-linux-amd64 > vauchi-relay-linux-amd64.sha256)
       python3 -m http.server --directory /tmp/pkg 8765 &
       SERVER_PID=$!
       sleep 1
-      bash deploy/install.sh test
+      VAUCHI_RELAY_PACKAGE_BASE_URL="http://127.0.0.1:8765/packages/generic/vauchi-relay/${release_ref}" \
+        bash deploy/install.sh "${release_ref}"
       kill $SERVER_PID
       /usr/local/bin/vauchi-relay --version
   rules:
