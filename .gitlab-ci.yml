@@ -171,9 +171,10 @@ test:install:
   script:
     - |
       set -euo pipefail
-      mkdir -p /tmp/pkg/vauchi-relay/test
-      cp target/release/vauchi-relay /tmp/pkg/vauchi-relay/test/vauchi-relay-linux-amd64
-      (cd /tmp/pkg/vauchi-relay/test && sha256sum vauchi-relay-linux-amd64 > vauchi-relay-linux-amd64.sha256)
+      package_dir=/tmp/pkg/packages/generic/vauchi-relay/test
+      mkdir -p "${package_dir}"
+      cp target/release/vauchi-relay "${package_dir}/vauchi-relay-linux-amd64"
+      (cd "${package_dir}" && sha256sum vauchi-relay-linux-amd64 > vauchi-relay-linux-amd64.sha256)
       python3 -m http.server --directory /tmp/pkg 8765 &
       SERVER_PID=$!
       sleep 1
