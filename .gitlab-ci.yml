@@ -182,6 +182,17 @@ test:install:
     - test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.31"
     - |
       set -euo pipefail
+      cleanup() {
+        if [ -n "${RELAY_PID:-}" ]; then
+          kill "${RELAY_PID}" 2>/dev/null || true
+          wait "${RELAY_PID}" 2>/dev/null || true
+        fi
+        if [ -n "${SERVER_PID:-}" ]; then
+          kill "${SERVER_PID}" 2>/dev/null || true
+          wait "${SERVER_PID}" 2>/dev/null || true
+        fi
+      }
+      trap cleanup EXIT
       release_ref="${CI_COMMIT_SHA}"
       package_dir="/tmp/pkg/packages/generic/vauchi-relay/${release_ref}"
       mkdir -p "${package_dir}"
@@ -194,8 +205,13 @@ test:install:
         "${package_url}/vauchi-relay-linux-amd64.sha256" >/dev/null
       VAUCHI_RELAY_PACKAGE_BASE_URL="${package_url}" \
         bash deploy/install.sh "${release_ref}"
-      kill $SERVER_PID
-      /usr/local/bin/vauchi-relay --version
+      kill "${SERVER_PID}"
+      wait "${SERVER_PID}" 2>/dev/null || true
+      SERVER_PID=
+      RELAY_LISTEN_ADDR=127.0.0.1:18080 /usr/local/bin/vauchi-relay &
+      RELAY_PID=$!
+      curl --fail --silent --retry 20 --retry-connrefused --retry-delay 0 \
+        http://127.0.0.1:18080/health >/dev/null
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
