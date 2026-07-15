@@ -169,7 +169,7 @@ test:unit:
 # writable; service management is skipped via VAUCHI_RELAY_INSTALL_BINARY_ONLY.
 test:install:
   stage: load
-  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/debian:bookworm-slim
+  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/debian:bullseye-slim
   tags: [docker]
   needs:
     - job: build:release
@@ -179,6 +179,7 @@ test:install:
   before_script:
     - apt-get update -qq && apt-get install -yqq python3 libgcc-s1 curl >/dev/null
   script:
+    - test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.31"
     - |
       set -euo pipefail
       release_ref="${CI_COMMIT_SHA}"
@@ -606,15 +607,17 @@ rc:security:audit:
 # ============================================================
 
 build:release:
-  extends: [.linux-runner, .timeout-standard]
+  extends: .timeout-standard
   stage: build
+  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/rust:1.93.1-bullseye
+  tags: [docker]
   needs:
     - job: test:unit
       optional: true
     - job: lint:format
       optional: true
   script:
-    - cargo build --release
+    - cargo build --release --locked
   artifacts:
     paths:
       - target/release/vauchi-relay
