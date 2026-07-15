@@ -41,6 +41,7 @@ include:
       - '/ci-templates/github-mirror.yml'
       - '/ci-templates/verified-fetch.yml'
       - '/ci-templates/tool-install.yml'
+      - '/ci-templates/security-gates.yml'
   # Container scanning is relay-specific (not included in shared security.yml)
   - template: Security/Container-Scanning.gitlab-ci.yml
 
@@ -289,34 +290,22 @@ fuzz:nightly:
 # Override child analyzer jobs (not parent stubs) to add tags and rules
 
 semgrep-sast:
-  allow_failure: false
-  tags: [docker]
+  extends: .security-gate-sast
+  stage: security
   needs:
     - job: lint:format
       optional: true
     - job: lint:clippy
       optional: true
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        compare_to: refs/heads/$CI_DEFAULT_BRANCH
-        paths:
-          - "**/*.rs"
-          - ".gitlab-ci.yml"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "schedule"
 
 secret_detection:
-  allow_failure: false
-  tags: [docker]
+  extends: .security-gate-secret
+  stage: security
   needs:
     - job: lint:format
       optional: true
     - job: lint:clippy
       optional: true
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # Container vulnerability scan. Tag pipelines and schedule pipelines
 # block on findings (release gate); main-branch pipelines are advisory
@@ -327,16 +316,7 @@ secret_detection:
 # the dashboard, the main-branch advisory is a silent gap. Routing
 # decision deferred to 2026-02-03-cicd-observability Tier 3.
 container_scanning:
-  stage: scan
-  needs: ["build:docker"]
-  tags: [docker]
-  rules:
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CONTAINER_SCANNING_ALLOW_FAILURE == "true"'
-      allow_failure: true
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      allow_failure: false
+  extends: .security-gate-container
 
 # Rust-specific security (runs on dependency changes)
 security:audit:
@@ -674,6 +654,36 @@ build:docker:
 # ============================================================
 # Auto-triggers the centralized deploy pipeline in _private.
 # The _private pipeline has manual gate jobs — click "play" there.
+
+# Publish the release binary to the GitLab generic package registry so
+# downstream E2E tests can fetch it by SHA instead of rebuilding from source.
+publish:package:relay:
+  stage: deploy
+  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/alpine:3.21
+  tags: [docker]
+  needs:
+    - job: build:release
+      artifacts: true
+  variables:
+    PACKAGE_NAME: "vauchi-relay"
+    BINARY_NAME: "vauchi-relay-linux-amd64"
+  before_script:
+    - apk add --no-cache curl coreutils
+  script:
+    - |
+      set -euo pipefail
+      ARTIFACT="${BINARY_NAME}-${CI_COMMIT_SHA}"
+      cp target/release/vauchi-relay "${ARTIFACT}"
+      sha256sum "${ARTIFACT}" > "${ARTIFACT}.sha256"
+      UPLOAD_BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${PACKAGE_NAME}/${CI_COMMIT_SHA}"
+      curl -fsSL --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file "${ARTIFACT}" "${UPLOAD_BASE}/${ARTIFACT}"
+      curl -fsSL --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file "${ARTIFACT}.sha256" "${UPLOAD_BASE}/${ARTIFACT}.sha256"
+      echo "✅ Published ${PACKAGE_NAME}@${CI_COMMIT_SHA}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
 
 deploy:trigger:
   stage: deploy
