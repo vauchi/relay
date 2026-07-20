@@ -36,13 +36,22 @@ ARG BUILD_INFO='{"sha":"development","ref":"local","built":"unknown"}'
 RUN echo "${BUILD_INFO}" > /tmp/build-info.json \
     && mkdir -p /tmp/data && chown 65534:65534 /tmp/data
 
+# Stage libgcc_s.so.1 at its native multiarch path so the runtime COPY below
+# is arch-agnostic: x86_64-linux-gnu on amd64, aarch64-linux-gnu on arm64.
+# Required to build this image natively on the arm64 Pi runner.
+RUN set -eux; \
+    lib="$(find /lib /usr/lib -name 'libgcc_s.so.1' | head -n1)"; \
+    mkdir -p "/staging$(dirname "$lib")"; \
+    cp "$lib" "/staging$(dirname "$lib")/"
+
 # Runtime stage — distroless glibc without unused OpenSSL libraries
 # Use :latest tag to get latest security patches for base OS libraries
 # (zlib, libpng, glibc, etc.). Pinned distroless images accumulate CVEs.
 FROM gcr.io/distroless/base-nossl-debian12:latest
 
 # Rust binaries still need libgcc_s for panic unwinding; base-nossl omits it.
-COPY --from=builder /lib/x86_64-linux-gnu/libgcc_s.so.1 /lib/x86_64-linux-gnu/libgcc_s.so.1
+# Staged arch-agnostically in the builder above (see the /staging copy).
+COPY --from=builder /staging/ /
 
 COPY --from=builder /app/relay/target/release/vauchi-relay /usr/local/bin/
 COPY --from=builder /tmp/build-info.json /usr/share/build-info.json
