@@ -650,81 +650,63 @@ build:release:
           - "deploy/install.sh"
           - ".gitlab-ci.yml"
 
+# ------------------------------------------------------------
+# Container image builds are DAEMONLESS. Both CI docker runners run a
+# rootless, unprivileged dockerd, so docker:dind (which needs --privileged)
+# cannot start there — after the 2026-07-20 rootless reinstall it fails at
+# "mount: permission denied (are you root?)". kaniko builds the images with
+# no daemon; crane assembles the multi-arch manifest and promotes :latest
+# without one. .kaniko-build carries the shared image + registry/proxy auth.
+# ------------------------------------------------------------
+.kaniko-build:
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  before_script:
+    - export BUILD_INFO="{\"sha\":\"$CI_COMMIT_SHA\",\"short_sha\":\"$CI_COMMIT_SHORT_SHA\",\"ref\":\"$CI_COMMIT_REF_NAME\",\"built\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"pipeline\":\"$CI_PIPELINE_URL\"}"
+    # kaniko reads registry + dependency-proxy creds from this file. The proxy
+    # auth is what lets the Dockerfile's `FROM ${HUB}/rust:...` pulls go through
+    # GitLab's dependency proxy instead of anonymous (rate-limited) Docker Hub.
+    - mkdir -p /kaniko/.docker
+    - |
+      cat > /kaniko/.docker/config.json <<JSON
+      {"auths":{
+        "${CI_REGISTRY}":{"auth":"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')"},
+        "${CI_DEPENDENCY_PROXY_SERVER}":{"auth":"$(printf '%s:%s' "$CI_DEPENDENCY_PROXY_USER" "$CI_DEPENDENCY_PROXY_PASSWORD" | base64 | tr -d '\n')"}
+      }}
+      JSON
+
+# crane (daemonless) for the manifest + :latest promotion jobs. Downloaded
+# into an alpine image so we get a real shell + apk for git.
+.crane-tools:
+  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/alpine:3.21
+  tags: [docker]
+  before_script:
+    - apk add --no-cache curl
+    - curl -sSL "https://github.com/google/go-containerregistry/releases/download/v0.20.2/go-containerregistry_Linux_x86_64.tar.gz" | tar -xzf - -C /usr/local/bin crane
+
+# amd64 image build (kaniko, on allyson-docker). Pushes :$SHA; also advances
+# :latest on the default branch. Release-tag :latest promotion is gated on
+# highest-semver in promote:docker:latest. MR builds push only the SHA tag so
+# demo/test consumers of :latest are never clobbered.
 build:docker:
-  extends: .timeout-standard
+  extends: [.kaniko-build, .timeout-standard]
   stage: build
   tags: [docker]
-  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/docker:27
-  services:
-    - ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
   script:
     - |
-      if [ -n "$CI_REGISTRY_PASSWORD" ]; then
-        echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+      DESTS="--destination $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        DESTS="$DESTS --destination $CI_REGISTRY_IMAGE:latest"
       fi
-    # Authenticate the in-build docker daemon (running inside dind)
-    # against GitLab's dependency proxy. Without this, pulls of
-    # `${HUB}/rust:1.93-bookworm` from inside `docker build` come
-    # through anonymously and the proxy returns 403 Forbidden:
-    #   "failed to fetch anonymous token: ... 403 Forbidden"
-    # (caught on relay!270 pipeline 2497760220). The proxy uses a
-    # short-lived job token, regenerated per pipeline.
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login -u "$CI_DEPENDENCY_PROXY_USER" --password-stdin "$CI_DEPENDENCY_PROXY_SERVER"
-    # Generate build metadata for deploy traceability
-    - BUILD_INFO="{\"sha\":\"$CI_COMMIT_SHA\",\"short_sha\":\"$CI_COMMIT_SHORT_SHA\",\"ref\":\"$CI_COMMIT_REF_NAME\",\"built\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"pipeline\":\"$CI_PIPELINE_URL\"}"
-    # --pull forces a fresh base-image fetch on every build so upstream
-    # security patches in distroless/debian land in the next image.
-    # --cache-from reuses our own intermediate layers for speed.
-    # BUILDKIT_INLINE_CACHE=1 embeds cache metadata in the pushed image
-    # so the next build's `--cache-from :latest` can reuse layer hashes
-    # from the BuildKit graph, not just filesystem-level diff. Combined
-    # with DOCKER_BUILDKIT=1 + cargo-chef's dep-only `cook` stage, this
-    # keeps the long-tail 6:05 build under ~3 min when deps haven't
-    # changed. See 2026-04-22-ci-pipeline-health-audit T3.2.
-    # --build-arg HUB= routes the Dockerfile's `FROM rust:1.93-bookworm`
-    # stages through GitLab's dependency proxy. Bare Docker Hub pulls
-    # from inside `docker build` are anonymous and rate-limited
-    # (took down `relay!270` pipeline `2497693079`). Default in the
-    # Dockerfile is `docker.io/library` so local `docker build .`
-    # still works without args.
-    - docker build --pull --build-arg HUB="${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}" --build-arg BUILD_INFO="$BUILD_INFO" --build-arg BUILDKIT_INLINE_CACHE=1 --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
-    - |
-      if [ -n "$CI_REGISTRY_PASSWORD" ]; then
-        docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
-        # :latest is consumed by deploy/{demo,test,docker-compose.ohttp}.yml —
-        # only advance it when the pipeline represents a production-ready
-        # artifact (main branch, or a release tag). MR-pipeline builds push
-        # only the SHA tag; they must not overwrite what demo consumers pull.
-        promote_latest=false
-        if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-          promote_latest=true
-        elif [ -n "$CI_COMMIT_TAG" ]; then
-          # Only the highest existing semver tag advances :latest — prevents
-          # a hotfix tag on an older release line (e.g. v0.17.5 landing after
-          # v0.19.33 has shipped) from regressing the pointer consumed by
-          # demo/test deploys. Fetch all tags (shallow clones may omit them),
-          # match the strict vMAJOR.MINOR.PATCH form, sort by version.
-          command -v git >/dev/null 2>&1 || apk add --no-cache git >/dev/null 2>&1
-          git fetch --tags --quiet origin
-          highest_tag=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
-          if [ -z "$highest_tag" ]; then
-            echo "No existing semver tags found — treating $CI_COMMIT_TAG as the highest."
-            promote_latest=true
-          elif [ "$CI_COMMIT_TAG" = "$highest_tag" ]; then
-            promote_latest=true
-          else
-            echo "Skipping :latest push — tag $CI_COMMIT_TAG is not the highest semver (current highest: $highest_tag)."
-          fi
-        else
-          echo "Skipping :latest push — pipeline context ($CI_PIPELINE_SOURCE) is not main/tag."
-        fi
-        if [ "$promote_latest" = "true" ]; then
-          docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest
-          docker push $CI_REGISTRY_IMAGE:latest
-        fi
-      fi
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        --build-arg HUB="${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}" \
+        --build-arg BUILD_INFO="$BUILD_INFO" \
+        $DESTS \
+        --cache=true \
+        --cache-repo "$CI_REGISTRY_IMAGE/cache"
   rules:
     # Main + release-tag pipelines build unconditionally — deploy:trigger
     # and downstream consumers expect a freshly-pushed image even on
@@ -734,8 +716,7 @@ build:docker:
     # Schedule pipelines run dast:zap (T3.2 moved it here) which needs
     # the image, so build unconditionally on schedule too.
     - if: $CI_PIPELINE_SOURCE == "schedule"
-    # MR pipelines build only when changes could affect the image — no
-    # doc-only or test-only docker:dind burn.
+    # MR pipelines build only when changes could affect the image.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - src/**/*
@@ -744,45 +725,22 @@ build:docker:
         - Dockerfile
         - .gitlab-ci.yml
 
-# ------------------------------------------------------------
-# Native arm64 image build on the shelly-ann (Raspberry Pi 5) runner.
-# shelly-ann's docker executor is rootless + unprivileged, so docker:dind
-# (which needs --privileged) cannot run there — we build daemonlessly with
-# kaniko instead. Produces an arch-suffixed tag; build:docker:manifest then
-# stitches amd64 + arm64 into a multi-arch manifest. Promoting that manifest
-# to :latest / :$SHA is a deliberate follow-up — deploy/{demo,test} and
-# container_scanning still consume the amd64 :latest / :$SHA tags today.
-# ------------------------------------------------------------
+# Native arm64 image build on the shelly-ann (Raspberry Pi 5) runner — same
+# daemonless kaniko path as amd64, arch-suffixed destination.
 build:docker:arm64:
-  extends: .timeout-long
+  extends: [.kaniko-build, .timeout-long]
   stage: build
   tags: [arm64, rpi5]
-  image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug
-    entrypoint: [""]
   script:
-    - BUILD_INFO="{\"sha\":\"$CI_COMMIT_SHA\",\"short_sha\":\"$CI_COMMIT_SHORT_SHA\",\"ref\":\"$CI_COMMIT_REF_NAME\",\"built\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"pipeline\":\"$CI_PIPELINE_URL\"}"
-    # kaniko reads registry + dependency-proxy creds from this file. The proxy
-    # auth is what lets the Dockerfile's `FROM ${HUB}/rust:...` pulls go through
-    # GitLab's dependency proxy instead of anonymous (rate-limited) Docker Hub —
-    # the same reason the amd64 job does two `docker login`s.
-    - mkdir -p /kaniko/.docker
     - |
-      cat > /kaniko/.docker/config.json <<JSON
-      {"auths":{
-        "${CI_REGISTRY}":{"auth":"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')"},
-        "${CI_DEPENDENCY_PROXY_SERVER}":{"auth":"$(printf '%s:%s' "$CI_DEPENDENCY_PROXY_USER" "$CI_DEPENDENCY_PROXY_PASSWORD" | base64 | tr -d '\n')"}
-      }}
-      JSON
-    - >
-      /kaniko/executor
-      --context "$CI_PROJECT_DIR"
-      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
-      --build-arg HUB="${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}"
-      --build-arg BUILD_INFO="$BUILD_INFO"
-      --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA-arm64"
-      --cache=true
-      --cache-repo "$CI_REGISTRY_IMAGE/cache-arm64"
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        --build-arg HUB="${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}" \
+        --build-arg BUILD_INFO="$BUILD_INFO" \
+        --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA-arm64" \
+        --cache=true \
+        --cache-repo "$CI_REGISTRY_IMAGE/cache-arm64"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
@@ -794,22 +752,18 @@ build:docker:arm64:
         - Dockerfile
         - .gitlab-ci.yml
 
-# Stitch the amd64 (:$SHA) and arm64 (:$SHA-arm64) images into one multi-arch
-# manifest. Runs on the amd64 docker runner (dind available there).
+# Stitch amd64 (:$SHA) + arm64 (:$SHA-arm64) into a multi-arch manifest with
+# crane (no daemon). :latest / :$SHA stay amd64 until arm64 deploy targets +
+# container_scanning are wired to consume the manifest.
 build:docker:manifest:
-  extends: .timeout-quick
+  extends: [.crane-tools, .timeout-quick]
   stage: build
-  tags: [docker]
-  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/docker:27
-  services:
-    - ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/docker:dind
   needs:
     - build:docker
     - build:docker:arm64
   script:
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    - docker manifest create "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA-multiarch" --amend "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" --amend "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA-arm64"
-    - docker manifest push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA-multiarch"
+    - crane auth login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD"
+    - crane index append -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA-multiarch" -m "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" -m "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA-arm64"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
@@ -820,6 +774,30 @@ build:docker:manifest:
         - Cargo.lock
         - Dockerfile
         - .gitlab-ci.yml
+
+# Advance :latest to a release tag's image, but only when the tag is the
+# highest semver — prevents a hotfix on an older line from regressing the
+# pointer that demo/test deploys pull. Main-branch :latest is handled inline
+# in build:docker; this covers only the release-tag case (crane copy, no daemon).
+promote:docker:latest:
+  extends: [.crane-tools, .timeout-quick]
+  stage: build
+  needs:
+    - build:docker
+  script:
+    - apk add --no-cache git
+    - git fetch --tags --quiet origin || true
+    - |
+      highest_tag=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+      if [ -z "$highest_tag" ] || [ "$CI_COMMIT_TAG" = "$highest_tag" ]; then
+        crane auth login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD"
+        crane copy "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" "$CI_REGISTRY_IMAGE:latest"
+        echo "Promoted :latest -> $CI_COMMIT_TAG"
+      else
+        echo "Tag $CI_COMMIT_TAG is not the highest semver ($highest_tag) — leaving :latest."
+      fi
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
 
 # ============================================================
 # Deploy Stage
