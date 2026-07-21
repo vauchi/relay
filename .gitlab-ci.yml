@@ -425,7 +425,7 @@ security:vet:
     FETCH_SCRIPT_OUTPUT: "vet-autofix.sh"
     FETCH_SCRIPT_SHA256: "ee37d77f6befea5abe4899c873893b0724d1517bab7608cd080021ae809d7c30"
   script:
-    - ./vet-autofix.sh --regenerate-lockfile --sync-from=77874344
+    - ./vet-autofix.sh --sync-from=77874344
 
 # ============================================================
 # Load Test Stage (PI-10)
