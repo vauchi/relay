@@ -21,7 +21,7 @@
 # Shared templates + GitLab Ultimate Templates
 include:
   - project: 'vauchi/scripts'
-    ref: ci-templates-v2026.07.6
+    ref: ci-templates-v2026.07.10
     file:
       - '/ci-templates/rust-base.yml'
       - '/ci-templates/security.yml'
@@ -60,7 +60,7 @@ stages:
 
 
 variables:
-  VAUCHI_SCRIPTS_REF: "ci-templates-v2026.07.6"
+  VAUCHI_SCRIPTS_REF: "ci-templates-v2026.07.10"
   # Container scanning for relay image
   # SAST/DS/SECRET_DETECTION excluded paths inherit from shared security.yml
   # (template defaults are more restrictive than relay's previous "target/" only)
@@ -423,7 +423,7 @@ security:vet:
   variables:
     FETCH_SCRIPT_PATH: "scripts/ci/vet-autofix.sh"
     FETCH_SCRIPT_OUTPUT: "vet-autofix.sh"
-    FETCH_SCRIPT_SHA256: "ee37d77f6befea5abe4899c873893b0724d1517bab7608cd080021ae809d7c30"
+    FETCH_SCRIPT_SHA256: "038e5caf3b4f5ea179490f5fb51544e10496eec6bb185ded4801abd09ce8ac11"
   script:
     - ./vet-autofix.sh --sync-from=77874344
 
