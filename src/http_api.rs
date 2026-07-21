@@ -185,7 +185,14 @@ async fn version_check_middleware(
     }
 }
 
-/// Helper to extract JSON body and handle errors by returning 400 instead of axum's default 422.
+/// JSON body extractor that pins a deserialize failure to 400 Bad Request.
+///
+/// axum's `JsonDataError` status changed 400→422 across a version; forwarding
+/// `rejection.status()` would let an axum bump silently flip this public API
+/// status (the exact regression a bumped Cargo.lock surfaced in
+/// `test_guardian_store_too_many_entries`). Pin the 422 case to 400 so relay's
+/// contract survives dependency bumps; other rejections (415 wrong
+/// content-type, 413 too large) keep their specific status.
 struct JsonBadRequest<T>(T);
 
 #[axum::async_trait]
@@ -203,7 +210,11 @@ where
         match Json::<T>::from_request(req, state).await {
             Ok(Json(value)) => Ok(JsonBadRequest(value)),
             Err(rejection) => {
-                let status = rejection.status();
+                let status = if rejection.status() == StatusCode::UNPROCESSABLE_ENTITY {
+                    StatusCode::BAD_REQUEST
+                } else {
+                    rejection.status()
+                };
                 Err((
                     status,
                     Json(serde_json::json!({
