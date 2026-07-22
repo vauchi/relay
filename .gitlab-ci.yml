@@ -829,6 +829,19 @@ publish:package:relay:
       upload_package() {
         local version="$1"
         local base="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${PACKAGE_NAME}/${version}"
+        # Retry idempotency: the registry rejects duplicate uploads with
+        # HTTP 400, so a retried pipeline on an already-published SHA
+        # fails here even though the artifact is fine. If this version
+        # is already published, verify it matches our build and skip.
+        if curl -fsSL --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          -o existing.sha256 "${base}/${BINARY_NAME}.sha256" 2>/dev/null; then
+          if sha256sum -c existing.sha256; then
+            echo "✅ ${PACKAGE_NAME}@${version} already published (checksum verified) — skipping"
+            return 0
+          fi
+          echo "ERROR: ${PACKAGE_NAME}@${version} exists with a DIFFERENT checksum" >&2
+          return 1
+        fi
         curl -fsSL --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
           --upload-file "${BINARY_NAME}" "${base}/${BINARY_NAME}"
         curl -fsSL --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
