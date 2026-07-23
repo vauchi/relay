@@ -21,7 +21,7 @@
 # Shared templates + GitLab Ultimate Templates
 include:
   - project: 'vauchi/scripts'
-    ref: ci-templates-v2026.07.10
+    ref: ci-templates-v2026.07.11
     file:
       - '/ci-templates/rust-base.yml'
       - '/ci-templates/security.yml'
@@ -60,7 +60,7 @@ stages:
 
 
 variables:
-  VAUCHI_SCRIPTS_REF: "ci-templates-v2026.07.10"
+  VAUCHI_SCRIPTS_REF: "ci-templates-v2026.07.11"
   # Container scanning for relay image
   # SAST/DS/SECRET_DETECTION excluded paths inherit from shared security.yml
   # (template defaults are more restrictive than relay's previous "target/" only)
@@ -93,7 +93,7 @@ lint:format:
   needs: []
 
 lint:clippy:
-  extends: [.rust-runner-readonly, .lint-clippy, .validation-rust, .timeout-quick]
+  extends: [.rust-runner-readonly, .lint-clippy, .validation-rust, .timeout-cold-rebuild]
   needs: []
 
 # Duplicate dependency check (advisory)
@@ -150,7 +150,7 @@ check:release-package-contract:
 
 # MR: fast nextest (no coverage overhead)
 test:unit:
-  extends: [.rust-runner, .validation-rust, .timeout-standard]
+  extends: [.rust-runner, .validation-rust, .timeout-cold-rebuild]
   stage: test
   needs:
     - job: lint:format
@@ -222,7 +222,7 @@ test:install:
 
 # Main: full coverage with llvm-cov
 coverage:workspace:
-  extends: [.coverage-job, .rust-runner, .timeout-long]
+  extends: [.coverage-job, .rust-runner, .timeout-cold-rebuild]
   before_script:
     - !reference [.self-hosted, before_script]
     - !reference [.git-credentials, before_script]
@@ -232,7 +232,7 @@ coverage:workspace:
 
 # Binary size tracking (main merges + release tags)
 perf:binary-size:
-  extends: [.binary-size-tracking-job, .rust-runner, .timeout-long]
+  extends: [.binary-size-tracking-job, .rust-runner, .timeout-cold-rebuild]
   before_script:
     - !reference [.self-hosted, before_script]
     - !reference [.git-credentials, before_script]
@@ -255,7 +255,7 @@ mutation:nightly:
 # ============================================================
 
 bench:save-baseline:
-  extends: [.bench-save-baseline, .linux-runner, .timeout-standard, .bench-cache]
+  extends: [.bench-save-baseline, .linux-runner, .timeout-cold-rebuild, .bench-cache]
   before_script:
     - !reference [.self-hosted, before_script]
     - !reference [.git-credentials, before_script]
@@ -263,7 +263,7 @@ bench:save-baseline:
     BENCH_TARGETS: "--bench storage_benchmarks --bench transport_benchmarks"
 
 bench:compare:
-  extends: [.bench-compare, .linux-runner, .timeout-standard, .bench-cache]
+  extends: [.bench-compare, .linux-runner, .timeout-cold-rebuild, .bench-cache]
   before_script:
     - !reference [.self-hosted, before_script]
     - !reference [.git-credentials, before_script]
