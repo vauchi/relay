@@ -18,6 +18,12 @@ path = ["**/Cargo.lock", "**/*.lock"]
 SPDX-FileCopyrightText = "2026 Mattia Egloff <mattia.egloff@pm.me>"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 
+# Fuzzer seed corpus files are raw parser inputs and cannot carry comments.
+[[annotations]]
+path = ["fuzz/corpus/**"]
+SPDX-FileCopyrightText = "2026 Mattia Egloff <mattia.egloff@pm.me>"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
 # Git and editor config files
 [[annotations]]
 path = [".gitignore", "**/.gitignore", ".DS_Store", "**/.gitkeep"]

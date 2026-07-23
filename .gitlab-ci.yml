@@ -144,6 +144,17 @@ check:release-package-contract:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
+check:fuzz-security:
+  stage: lint
+  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/alpine:3.21
+  tags: [docker]
+  needs: []
+  script:
+    - ci/tests/fuzz-security.test.sh
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
 # ============================================================
 # Test Stage (change-based, gated by lint)
 # ============================================================
@@ -274,19 +285,15 @@ bench:compare:
 # Fuzz Stage (nightly, libfuzzer via cargo-fuzz)
 # ============================================================
 
-# Schedule-only libfuzzer run. Fuzz findings are noisy by nature (false-
-# positives from harness shape, intentional panics, etc.); the value is
-# in the corpus + a human review of crashes after the run, not in a hard
-# pass/fail gate. allow_failure: true keeps the schedule pipeline green
-# while still surfacing crashes via the fuzz/artifacts/ upload.
-# Audited 2026-04-22 T1.2/T2.5.
+# Schedule-only libfuzzer run. A crash is an operationally blocking finding:
+# the job publishes the reproducer and fails the scheduled pipeline.
 fuzz:nightly:
   extends: [.rust-runner]
   timeout: 12h
   stage: mutation
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $FUZZ_ENABLED == "true"
-  allow_failure: true
+  allow_failure: false
   before_script:
     - !reference [.self-hosted, before_script]
     - !reference [.git-credentials, before_script]
@@ -300,10 +307,10 @@ fuzz:nightly:
       FUZZ_DURATION="${FUZZ_DURATION_SECS:-300}"
       FUZZ_JOBS="${FUZZ_PARALLEL_JOBS:-3}"
       REPORT_DIR="../fuzz-report"
-      mkdir -p "$REPORT_DIR"
+      COVERAGE_REPORT_DIR="$REPORT_DIR/coverage"
+      mkdir -p "$COVERAGE_REPORT_DIR"
 
       TARGETS="fuzz_federation_message fuzz_federation_padding \
-               fuzz_noise_handshake fuzz_noise_v2_detect \
                fuzz_federation_url fuzz_validate_client_id"
 
       TARGET_COUNT=$(echo $TARGETS | wc -w | tr -d ' ')
@@ -334,8 +341,36 @@ fuzz:nightly:
       echo "  </testsuite>" >> "$REPORT_DIR/fuzz-junit.xml"
       echo "</testsuites>" >> "$REPORT_DIR/fuzz-junit.xml"
 
-      echo "=== Fuzz Summary: Targets=${TARGET_COUNT}, Passed=$PASSED, Crashes=$FAILED ==="
-      [ "$FAILED" -eq 0 ] || exit 1
+      COVERAGE_FAILED=0
+      TARGET_TRIPLE=$(rustc +nightly -vV | awk '/^host:/ { print $2 }')
+      NIGHTLY_SYSROOT=$(rustc +nightly --print sysroot)
+      LLVM_COV="$NIGHTLY_SYSROOT/lib/rustlib/$TARGET_TRIPLE/bin/llvm-cov"
+      for t in $TARGETS; do
+        echo "COVERAGE: ${t}"
+        if cargo +nightly fuzz coverage "$t"; then
+          COVERAGE_BINARY=$(find target -type f \
+            -path "*/coverage/*/release/${t}" | head -n 1)
+          COVERAGE_PROFILE="coverage/${t}/coverage.profdata"
+          if [ -z "$COVERAGE_BINARY" ]; then
+            echo "COVERAGE-BINARY-MISSING:${t}"
+            COVERAGE_FAILED=$((COVERAGE_FAILED + 1))
+          elif "$LLVM_COV" report "$COVERAGE_BINARY" \
+            --instr-profile="$COVERAGE_PROFILE" \
+            --ignore-filename-regex='(/.cargo/registry|/rustc/)' \
+            --summary-only > "$COVERAGE_REPORT_DIR/${t}.txt"; then
+            cat "$COVERAGE_REPORT_DIR/${t}.txt"
+          else
+            echo "COVERAGE-REPORT-FAILED:${t}"
+            COVERAGE_FAILED=$((COVERAGE_FAILED + 1))
+          fi
+        else
+          echo "COVERAGE-REPLAY-FAILED:${t}"
+          COVERAGE_FAILED=$((COVERAGE_FAILED + 1))
+        fi
+      done
+
+      echo "=== Fuzz Summary: Targets=${TARGET_COUNT}, Passed=$PASSED, Crashes=$FAILED, Coverage failures=$COVERAGE_FAILED ==="
+      [ "$FAILED" -eq 0 ] && [ "$COVERAGE_FAILED" -eq 0 ]
   cache:
     key: fuzz-corpus-relay
     paths:
@@ -345,6 +380,7 @@ fuzz:nightly:
     when: always
     paths:
       - fuzz/artifacts/
+      - fuzz/coverage/
       - fuzz-report/
     reports:
       junit: fuzz-report/fuzz-junit.xml
