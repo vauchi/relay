@@ -195,6 +195,32 @@ async fn version_check_middleware(
 /// content-type, 413 too large) keep their specific status.
 struct JsonBadRequest<T>(T);
 
+fn json_bad_request_message(rejection: &axum::extract::rejection::JsonRejection) -> String {
+    let detail = rejection.body_text();
+    let guardian_limit = format!(
+        "too many items (max {})",
+        vauchi_protocol::v2::MAX_GUARDIAN_ENTRIES
+    );
+    if detail.contains(&guardian_limit) {
+        return format!(
+            "too many entries (max {})",
+            vauchi_protocol::v2::MAX_GUARDIAN_ENTRIES
+        );
+    }
+    let mailbox_limit = format!(
+        "too many items (max {})",
+        vauchi_protocol::v2::MAX_MAILBOX_TOKENS
+    );
+    if detail.contains(&mailbox_limit) {
+        return format!(
+            "too many mailbox_tokens: {} (max {})",
+            vauchi_protocol::v2::MAX_MAILBOX_TOKENS + 1,
+            vauchi_protocol::v2::MAX_MAILBOX_TOKENS
+        );
+    }
+    format!("invalid request: {rejection}")
+}
+
 #[axum::async_trait]
 impl<S, T> FromRequest<S> for JsonBadRequest<T>
 where
@@ -210,6 +236,7 @@ where
         match Json::<T>::from_request(req, state).await {
             Ok(Json(value)) => Ok(JsonBadRequest(value)),
             Err(rejection) => {
+                let message = json_bad_request_message(&rejection);
                 let status = if rejection.status() == StatusCode::UNPROCESSABLE_ENTITY {
                     StatusCode::BAD_REQUEST
                 } else {
@@ -219,7 +246,7 @@ where
                     status,
                     Json(serde_json::json!({
                         "status": "error",
-                        "error": format!("invalid request: {rejection}")
+                        "error": message
                     })),
                 ))
             }
