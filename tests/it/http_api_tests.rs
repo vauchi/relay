@@ -13,7 +13,9 @@ use tower::ServiceExt;
 use vauchi_relay::http_api::create_v2_router;
 use vauchi_relay::storage::StoredBlob;
 
-use common::http_helpers::{ax_body::Body, create_test_state, post_json, response_json};
+use common::http_helpers::{
+    ax_body::Body, create_test_state, post_json, response_json, response_json_large,
+};
 
 // ── Health ──
 
@@ -214,6 +216,78 @@ async fn test_v2_fetch_attributes_blobs_to_their_token() {
         .count();
     assert_eq!(alice_count, 1);
     assert_eq!(bob_count, 2);
+}
+
+// @internal
+#[tokio::test]
+async fn test_v2_fetch_bounds_response_under_ohttp_cap() {
+    // The OHTTP relay refuses to forward a gateway response exceeding
+    // OHTTP_RELAY_MAX_RESPONSE_BYTES (128 KiB). A six-device F4 mailbox can
+    // hold more than that; /v2/fetch must cap the page it returns and flag
+    // `truncated` so the client re-fetches the remainder after ACK-removal.
+    let state = create_test_state();
+    let storage = state.storage.clone();
+    let app = create_v2_router(state);
+
+    let token = "c".repeat(64);
+    // 60 × 4 KiB ≈ 240 KiB raw (≈ 320 KiB base64) — well over the 128 KiB cap.
+    for _ in 0..60 {
+        storage.store(&token, StoredBlob::new(vec![0x5a; 4096]));
+    }
+
+    let resp = post_json(
+        &app,
+        "/v2/fetch",
+        &serde_json::json!({ "version": 2, "mailbox_tokens": [token] }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_json_large(resp).await;
+    assert_eq!(body["status"], "ok");
+    let blobs = body["blobs"].as_array().unwrap();
+    assert!(
+        blobs.len() < 60,
+        "fetch must not return all 60 blobs at once: got {}",
+        blobs.len()
+    );
+    assert!(!blobs.is_empty(), "fetch must make progress (>=1 blob)");
+    assert_eq!(
+        body["truncated"], true,
+        "a capped page must flag truncated so the client re-fetches"
+    );
+    // The serialized page must fit under the OHTTP forward cap (128 KiB).
+    let page_bytes = serde_json::to_vec(&body["blobs"]).unwrap().len();
+    assert!(
+        page_bytes < 128 * 1024,
+        "page serialized to {page_bytes} bytes, must be < 128 KiB"
+    );
+}
+
+// @internal
+#[tokio::test]
+async fn test_v2_fetch_not_truncated_when_all_fit() {
+    let state = create_test_state();
+    let storage = state.storage.clone();
+    let app = create_v2_router(state);
+
+    let token = "d".repeat(64);
+    storage.store(&token, StoredBlob::new(b"small-1".to_vec()));
+    storage.store(&token, StoredBlob::new(b"small-2".to_vec()));
+
+    let resp = post_json(
+        &app,
+        "/v2/fetch",
+        &serde_json::json!({ "version": 2, "mailbox_tokens": [token] }),
+    )
+    .await;
+
+    let body = response_json(resp).await;
+    assert_eq!(body["blobs"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        body["truncated"], false,
+        "a page that returns everything must not flag truncated"
+    );
 }
 
 // @internal

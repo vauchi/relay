@@ -880,6 +880,17 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
     ApiResult::ok(serde_json::json!({ "status": "ok", "blob_id": blob_id }))
 }
 
+/// Response byte budget for a single `/v2/fetch` page.
+///
+/// The OHTTP relay refuses to forward a gateway response exceeding
+/// `OHTTP_RELAY_MAX_RESPONSE_BYTES` (128 KiB; `ohttp-relay/src/config.rs`). A
+/// six-device F4 mailbox can exceed that (device registries + per-device
+/// sessions + genesis cards fan out per linked device). Cap each page well
+/// under the limit — leaving margin for the JSON wrapper and OHTTP/HPKE
+/// encapsulation — and flag `truncated` so the client drains the rest across
+/// re-fetches. 96 KiB keeps ~32 KiB headroom under the 128 KiB cap.
+const MAX_FETCH_RESPONSE_BYTES: usize = 96 * 1024;
+
 #[tracing::instrument(level = "debug", skip_all, fields(token_count = req.mailbox_tokens.len()), name = "relay.fetch")]
 fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
     // Rate-limit by first token (representative of the client session).
@@ -893,18 +904,31 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
     }
     let token_refs: Vec<&str> = req.mailbox_tokens.iter().map(String::as_str).collect();
     let blobs = state.storage.peek_many(&token_refs);
-    let blob_data: Vec<serde_json::Value> = blobs
-        .iter()
-        .map(|(token, blob)| {
-            serde_json::json!({
-                "blob_id": blob.id,
-                "ciphertext": base64::engine::general_purpose::STANDARD.encode(&blob.data),
-                "created_at": blob.created_at_secs,
-                "mailbox_token": token,
-            })
-        })
-        .collect();
-    ApiResult::ok(serde_json::json!({ "status": "ok", "blobs": blob_data }))
+    // Cap the page under the OHTTP forward limit and flag `truncated` so the
+    // client re-fetches the remainder after ACK-removing this page. Order is
+    // irrelevant to correctness: each fetch returns whatever still remains, so
+    // ACK-removal is the continuation cursor.
+    let mut blob_data: Vec<serde_json::Value> = Vec::new();
+    let mut used_bytes = 0usize;
+    let mut truncated = false;
+    for (token, blob) in &blobs {
+        let entry = serde_json::json!({
+            "blob_id": blob.id,
+            "ciphertext": base64::engine::general_purpose::STANDARD.encode(&blob.data),
+            "created_at": blob.created_at_secs,
+            "mailbox_token": token,
+        });
+        let entry_bytes = serde_json::to_vec(&entry).map_or(0, |v| v.len()) + 1;
+        // Always emit at least one blob so an oversized single blob can still
+        // be drained; otherwise stop before the budget is exceeded.
+        if !blob_data.is_empty() && used_bytes + entry_bytes > MAX_FETCH_RESPONSE_BYTES {
+            truncated = true;
+            break;
+        }
+        used_bytes += entry_bytes;
+        blob_data.push(entry);
+    }
+    ApiResult::ok(serde_json::json!({ "status": "ok", "blobs": blob_data, "truncated": truncated }))
 }
 
 #[tracing::instrument(level = "debug", skip_all, name = "relay.ack")]

@@ -105,6 +105,17 @@ pub async fn response_json(response: Response) -> serde_json::Value {
     serde_json::from_slice(&body_bytes).unwrap()
 }
 
+/// Helper: extract JSON from a response that may approach the OHTTP forward
+/// cap (a bounded `/v2/fetch` page is up to 96 KiB — larger than the 64 KiB
+/// `response_json` limit).
+#[allow(dead_code)]
+pub async fn response_json_large(response: Response) -> serde_json::Value {
+    let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    serde_json::from_slice(&body_bytes).unwrap()
+}
+
 /// Helper: fetch the OHTTP public key from the gateway.
 #[allow(dead_code)]
 pub async fn get_ohttp_key(app: &Router) -> Response {
