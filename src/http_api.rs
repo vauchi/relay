@@ -918,7 +918,16 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
             "created_at": blob.created_at_secs,
             "mailbox_token": token,
         });
-        let entry_bytes = serde_json::to_vec(&entry).map_or(0, |v| v.len()) + 1;
+        // Estimate the serialized entry size instead of serializing each blob a
+        // second time just to measure it (the entry is serialized again in the
+        // final response). base64 expands data to 4*ceil(n/3); the remaining
+        // JSON keys, blob_id, token, and created_at add a small bounded amount.
+        // The `+ 96` fixed margin makes this a conservative OVER-estimate, so the
+        // page can only truncate EARLIER than strictly necessary — it can never
+        // exceed MAX_FETCH_RESPONSE_BYTES (the OHTTP forward cap). Correctness of
+        // truncation is preserved: the client re-fetches whatever remains.
+        let base64_len = 4 * blob.data.len().div_ceil(3);
+        let entry_bytes = base64_len + blob.id.len() + token.len() + 96;
         // Always emit at least one blob so an oversized single blob can still
         // be drained; otherwise stop before the budget is exceeded.
         if !blob_data.is_empty() && used_bytes + entry_bytes > MAX_FETCH_RESPONSE_BYTES {
