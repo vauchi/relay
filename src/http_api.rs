@@ -869,7 +869,7 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
     {
         return ApiResult::QuotaExceeded;
     }
-    let blob = StoredBlob::new(ciphertext);
+    let blob = StoredBlob::new(ciphertext).with_origin_hint(req.origin_hint);
     let blob_id = blob.id.clone();
     state.storage.store(&req.recipient_id, blob);
     state.metrics.blobs_created.inc();
@@ -917,6 +917,7 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
             "ciphertext": base64::engine::general_purpose::STANDARD.encode(&blob.data),
             "created_at": blob.created_at_secs,
             "mailbox_token": token,
+            "origin_hint": blob.origin_hint,
         });
         // Estimate the serialized entry size instead of serializing each blob a
         // second time just to measure it (the entry is serialized again in the
@@ -927,7 +928,8 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
         // exceed MAX_FETCH_RESPONSE_BYTES (the OHTTP forward cap). Correctness of
         // truncation is preserved: the client re-fetches whatever remains.
         let base64_len = 4 * blob.data.len().div_ceil(3);
-        let entry_bytes = base64_len + blob.id.len() + token.len() + 96;
+        let hint_len = blob.origin_hint.as_ref().map_or(0, String::len);
+        let entry_bytes = base64_len + blob.id.len() + token.len() + hint_len + 96;
         // Always emit at least one blob so an oversized single blob can still
         // be drained; otherwise stop before the budget is exceeded.
         if !blob_data.is_empty() && used_bytes + entry_bytes > MAX_FETCH_RESPONSE_BYTES {

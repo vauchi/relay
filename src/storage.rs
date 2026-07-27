@@ -26,6 +26,10 @@ pub struct StoredBlob {
     /// Number of federation hops. 0 = stored locally (original), ≥1 = offloaded from peer.
     /// Internal field — never exposed in client protocol messages.
     pub hop_count: u8,
+    /// Opaque base64 origin-device hint the sender attached, stored and
+    /// returned verbatim (never decoded — ADR-004). Lets the recipient resolve
+    /// the sender device before decrypting. `None` for legacy senders.
+    pub origin_hint: Option<String>,
 }
 
 impl StoredBlob {
@@ -42,7 +46,14 @@ impl StoredBlob {
             data,
             created_at_secs,
             hop_count: 0,
+            origin_hint: None,
         }
+    }
+
+    /// Attaches an opaque origin-device hint, returning the updated blob.
+    pub fn with_origin_hint(mut self, origin_hint: Option<String>) -> Self {
+        self.origin_hint = origin_hint;
+        self
     }
 
     /// Creates a blob with specific metadata (for received offloaded blobs).
@@ -53,6 +64,7 @@ impl StoredBlob {
             data,
             created_at_secs,
             hop_count,
+            origin_hint: None,
         }
     }
 
@@ -157,10 +169,25 @@ impl SqliteBlobStore {
                 recipient_id TEXT NOT NULL,
                 data BLOB NOT NULL,
                 created_at_secs INTEGER NOT NULL,
-                hop_count INTEGER NOT NULL DEFAULT 0
+                hop_count INTEGER NOT NULL DEFAULT 0,
+                origin_hint TEXT
             )",
             [],
         )?;
+
+        // Idempotent migration for databases created before the origin_hint
+        // column existed. SQLite has no ADD COLUMN IF NOT EXISTS, so gate on
+        // pragma_table_info; the ALTER runs once and is a no-op thereafter.
+        let has_origin_hint: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('blobs') WHERE name = 'origin_hint'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if has_origin_hint == 0 {
+            conn.execute("ALTER TABLE blobs ADD COLUMN origin_hint TEXT", [])?;
+        }
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_blobs_recipient ON blobs(recipient_id)",
@@ -195,14 +222,15 @@ impl BlobStore for SqliteBlobStore {
     fn store(&self, recipient_id: &str, blob: StoredBlob) {
         let conn = self.conn.lock();
         let _ = conn.execute(
-            "INSERT INTO blobs (id, recipient_id, data, created_at_secs, hop_count)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO blobs (id, recipient_id, data, created_at_secs, hop_count, origin_hint)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 blob.id,
                 recipient_id,
                 blob.data,
                 blob.created_at_secs as i64,
                 blob.hop_count as i64,
+                blob.origin_hint,
             ],
         );
     }
@@ -211,7 +239,7 @@ impl BlobStore for SqliteBlobStore {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
-                "SELECT id, data, created_at_secs, hop_count
+                "SELECT id, data, created_at_secs, hop_count, origin_hint
                  FROM blobs WHERE recipient_id = ?1
                  ORDER BY created_at_secs ASC",
             )
@@ -223,6 +251,7 @@ impl BlobStore for SqliteBlobStore {
                 data: row.get(1)?,
                 created_at_secs: row.get::<_, i64>(2)? as u64,
                 hop_count: row.get::<_, i64>(3)? as u8,
+                origin_hint: row.get(4)?,
             })
         })
         .expect("peek query must succeed")
@@ -238,7 +267,7 @@ impl BlobStore for SqliteBlobStore {
         let conn = self.conn.lock();
         let placeholders: String = tokens.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT id, data, created_at_secs, hop_count, recipient_id FROM blobs WHERE recipient_id IN ({}) ORDER BY created_at_secs ASC",
+            "SELECT id, data, created_at_secs, hop_count, recipient_id, origin_hint FROM blobs WHERE recipient_id IN ({}) ORDER BY created_at_secs ASC",
             placeholders
         );
         let mut stmt = conn.prepare(&sql).expect("peek_many SQL must be valid");
@@ -254,6 +283,7 @@ impl BlobStore for SqliteBlobStore {
                     data: row.get(1)?,
                     created_at_secs: row.get::<_, i64>(2)? as u64,
                     hop_count: row.get::<_, i64>(3)? as u8,
+                    origin_hint: row.get(5)?,
                 },
             ))
         })
@@ -267,7 +297,7 @@ impl BlobStore for SqliteBlobStore {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
-                "SELECT id, data, created_at_secs, hop_count FROM blobs WHERE recipient_id = ?1",
+                "SELECT id, data, created_at_secs, hop_count, origin_hint FROM blobs WHERE recipient_id = ?1",
             )
             .expect("take SQL must be valid");
         let blobs: Vec<StoredBlob> = stmt
@@ -277,6 +307,7 @@ impl BlobStore for SqliteBlobStore {
                     data: row.get(1)?,
                     created_at_secs: row.get::<_, i64>(2)? as u64,
                     hop_count: row.get::<_, i64>(3)? as u8,
+                    origin_hint: row.get(4)?,
                 })
             })
             .expect("take query must succeed")
@@ -380,7 +411,7 @@ impl BlobStore for SqliteBlobStore {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
-                "SELECT id, recipient_id, data, created_at_secs, hop_count
+                "SELECT id, recipient_id, data, created_at_secs, hop_count, origin_hint
                  FROM blobs WHERE hop_count = 0
                  ORDER BY created_at_secs ASC
                  LIMIT ?1",
@@ -393,6 +424,7 @@ impl BlobStore for SqliteBlobStore {
                 data: row.get(2)?,
                 created_at_secs: row.get::<_, i64>(3)? as u64,
                 hop_count: row.get::<_, i64>(4)? as u8,
+                origin_hint: row.get(5)?,
             };
             let recipient_id: String = row.get(1)?;
             Ok((recipient_id, blob))
@@ -506,6 +538,88 @@ mod tests {
         // Take removes all
         let taken_again = store.take("recipient-1");
         assert!(taken_again.is_empty());
+    }
+
+    // @internal
+    #[test]
+    fn origin_hint_roundtrips_through_peek_take_and_peek_many() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        let hint = "bm9uY2V8Y2lwaGVydGV4dA==".to_string();
+        store.store(
+            "recipient-hint",
+            StoredBlob::new(vec![9]).with_origin_hint(Some(hint.clone())),
+        );
+
+        assert_eq!(
+            store.peek("recipient-hint")[0].origin_hint.as_ref(),
+            Some(&hint)
+        );
+        let many = store.peek_many(&["recipient-hint"]);
+        assert_eq!(many[0].1.origin_hint.as_ref(), Some(&hint));
+        assert_eq!(
+            store.take("recipient-hint")[0].origin_hint.as_ref(),
+            Some(&hint)
+        );
+    }
+
+    // @internal
+    #[test]
+    fn legacy_blob_without_origin_hint_reads_as_none() {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        store.store("recipient-legacy", StoredBlob::new(vec![1]));
+        assert_eq!(store.peek("recipient-legacy")[0].origin_hint, None);
+    }
+
+    // @internal
+    #[test]
+    fn open_migrates_a_pre_origin_hint_database() {
+        let dir = std::env::temp_dir().join(format!("vauchi-migr-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("blobs.db");
+
+        // Simulate a database created before the origin_hint column existed.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "CREATE TABLE blobs (
+                    id TEXT PRIMARY KEY,
+                    recipient_id TEXT NOT NULL,
+                    data BLOB NOT NULL,
+                    created_at_secs INTEGER NOT NULL,
+                    hop_count INTEGER NOT NULL DEFAULT 0
+                )",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO blobs (id, recipient_id, data, created_at_secs, hop_count)
+                 VALUES ('legacy-1', 'recipient-legacy', X'01', 100, 0)",
+                [],
+            )
+            .unwrap();
+        }
+
+        // Opening runs the idempotent ALTER: the legacy blob survives and reads
+        // as None, and a new hinted blob roundtrips.
+        let store = SqliteBlobStore::open(&path).expect("open migrates the column");
+        let legacy = store.peek("recipient-legacy");
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].origin_hint, None);
+
+        store.store(
+            "recipient-new",
+            StoredBlob::new(vec![2]).with_origin_hint(Some("aGludA==".to_string())),
+        );
+        assert_eq!(
+            store.peek("recipient-new")[0].origin_hint.as_deref(),
+            Some("aGludA==")
+        );
+
+        // Re-open once more to prove the ALTER is a no-op the second time.
+        let reopened = SqliteBlobStore::open(&path).expect("second open is idempotent");
+        assert_eq!(reopened.blob_count(), 2);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     fn test_acknowledge_impl(store: &dyn BlobStore) {

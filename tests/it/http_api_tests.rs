@@ -220,6 +220,77 @@ async fn test_v2_fetch_attributes_blobs_to_their_token() {
 
 // @internal
 #[tokio::test]
+async fn test_v2_send_then_fetch_carries_origin_hint() {
+    let state = create_test_state();
+    let app = create_v2_router(state);
+
+    let recipient_id = "c".repeat(64);
+    let hint = "bm9uY2V8Y2lwaGVy";
+    let send = post_json(
+        &app,
+        "/v2/send",
+        &serde_json::json!({
+            "version": 2,
+            "recipient_id": recipient_id,
+            "ciphertext": "YmFzZTY0LWRhdGE=",
+            "origin_hint": hint,
+        }),
+    )
+    .await;
+    assert_eq!(send.status(), StatusCode::OK);
+
+    let resp = post_json(
+        &app,
+        "/v2/fetch",
+        &serde_json::json!({ "version": 2, "mailbox_tokens": [recipient_id] }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_json(resp).await;
+    let blobs = body["blobs"].as_array().unwrap();
+    assert_eq!(blobs.len(), 1);
+    assert_eq!(
+        blobs[0]["origin_hint"].as_str(),
+        Some(hint),
+        "the relay must return the sender's origin_hint verbatim"
+    );
+}
+
+// @internal
+#[tokio::test]
+async fn test_v2_send_without_origin_hint_fetches_null() {
+    let state = create_test_state();
+    let app = create_v2_router(state);
+
+    let recipient_id = "d".repeat(64);
+    post_json(
+        &app,
+        "/v2/send",
+        &serde_json::json!({
+            "version": 2,
+            "recipient_id": recipient_id,
+            "ciphertext": "YmFzZTY0LWRhdGE=",
+        }),
+    )
+    .await;
+
+    let resp = post_json(
+        &app,
+        "/v2/fetch",
+        &serde_json::json!({ "version": 2, "mailbox_tokens": [recipient_id] }),
+    )
+    .await;
+    let body = response_json(resp).await;
+    let blobs = body["blobs"].as_array().unwrap();
+    assert_eq!(blobs.len(), 1);
+    assert!(
+        blobs[0]["origin_hint"].is_null(),
+        "a legacy send must fetch back a null origin_hint"
+    );
+}
+
+// @internal
+#[tokio::test]
 async fn test_v2_fetch_bounds_response_under_ohttp_cap() {
     // The OHTTP relay refuses to forward a gateway response exceeding
     // OHTTP_RELAY_MAX_RESPONSE_BYTES (128 KiB). A six-device F4 mailbox can
