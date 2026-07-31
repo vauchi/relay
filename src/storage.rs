@@ -573,9 +573,8 @@ mod tests {
     // @internal
     #[test]
     fn open_migrates_a_pre_origin_hint_database() {
-        let dir = std::env::temp_dir().join(format!("vauchi-migr-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("blobs.db");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blobs.db");
 
         // Simulate a database created before the origin_hint column existed.
         {
@@ -618,8 +617,6 @@ mod tests {
         // Re-open once more to prove the ALTER is a no-op the second time.
         let reopened = SqliteBlobStore::open(&path).expect("second open is idempotent");
         assert_eq!(reopened.blob_count(), 2);
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     fn test_acknowledge_impl(store: &dyn BlobStore) {
