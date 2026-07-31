@@ -55,8 +55,12 @@ async fn metrics_auth_middleware(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    // Only check auth for /metrics endpoint
-    if request.uri().path() == "/metrics"
+    // R-M2: both endpoints disclose version/internal detail, so both sit
+    // behind the bearer check. /build-info reports the exact commit sha,
+    // the release ref and the pipeline URL; it was previously reachable
+    // unauthenticated while the surrounding docs claimed otherwise.
+    // /health stays open — kamal-proxy healthchecks it on every rollout.
+    if matches!(request.uri().path(), "/metrics" | "/build-info")
         && let Some(ref expected_token) = state.metrics_token
     {
         // Check Authorization header
@@ -512,6 +516,78 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // R-M2: build metadata is version disclosure and must sit behind the
+    // same bearer check as /metrics. It reports the exact commit sha, the
+    // release ref and the pipeline URL.
+    // @scenario: relay_network.feature:Relay node monitoring
+    #[tokio::test]
+    async fn test_build_info_requires_token() {
+        let state = HttpState {
+            metrics: RelayMetrics::new(),
+            metrics_token: Some("secret-token-123".to_string()),
+        };
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/build-info")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // @scenario: relay_network.feature:Relay node monitoring
+    #[tokio::test]
+    async fn test_build_info_valid_token_accepted() {
+        let state = HttpState {
+            metrics: RelayMetrics::new(),
+            metrics_token: Some("secret-token-123".to_string()),
+        };
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/build-info")
+                    .header("Authorization", "Bearer secret-token-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // kamal-proxy healthchecks /health unauthenticated on every deploy —
+    // guarding it would fail every rollout.
+    // @scenario: relay_network.feature:Relay node monitoring
+    #[tokio::test]
+    async fn test_health_stays_unauthenticated() {
+        let state = HttpState {
+            metrics: RelayMetrics::new(),
+            metrics_token: Some("secret-token-123".to_string()),
+        };
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     // @scenario: relay_network.feature:Relay node monitoring
