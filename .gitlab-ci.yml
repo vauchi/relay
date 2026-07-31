@@ -733,7 +733,11 @@ build:release:
 # highest-semver in promote:docker:latest. MR builds push only the SHA tag so
 # demo/test consumers of :latest are never clobbered.
 build:docker:
-  extends: [.kaniko-build, .timeout-standard]
+  # Same hour as build:docker:arm64 below — both kaniko-build the same
+  # Rust image and only the arch differs, but amd64 sat at 30 minutes and
+  # timed out at 1812s on a cold cache (after 49 minutes queued, which
+  # evicts it). Aligning the pair, not buying headroom for a slowdown.
+  extends: [.kaniko-build, .timeout-long]
   stage: build
   tags: [docker]
   script:
