@@ -865,6 +865,9 @@ release:verify-image:
     - job: promote:docker:latest
       optional: true
   script:
+    # .crane-tools only installs the binary; every crane job authenticates
+    # itself against the private registry.
+    - crane auth login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD"
     - |
       set -eu
       FAILED=""
