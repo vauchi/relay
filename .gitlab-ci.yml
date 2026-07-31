@@ -845,6 +845,48 @@ promote:docker:latest:
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
 
+# Assert the release actually produced a pullable image.
+#
+# Job status is a poor proxy for a published image: core v0.59.1 reported
+# success on every job that ran, tagged the release, and shipped no
+# artifacts at all because the packaging jobs were cancelled by a later
+# failure. The same shape applies here — an arch build or the index append
+# can be skipped or cancelled and leave a release tag with nothing to pull.
+#
+# `optional: true` plus `when: always` are load-bearing: a plain `needs:`
+# on a cancelled job would skip this check in exactly the case it exists
+# to catch.
+release:verify-image:
+  extends: .crane-tools
+  stage: build
+  needs:
+    - job: build:docker:manifest
+      optional: true
+    - job: promote:docker:latest
+      optional: true
+  script:
+    - |
+      set -eu
+      FAILED=""
+      for ref in "$CI_COMMIT_SHA" "$CI_COMMIT_SHA-arm64" "$CI_COMMIT_SHA-multiarch"; do
+        if crane manifest "$CI_REGISTRY_IMAGE:$ref" >/dev/null 2>&1; then
+          echo "OK   $CI_REGISTRY_IMAGE:$ref"
+        else
+          echo "MISS $CI_REGISTRY_IMAGE:$ref"
+          FAILED="${FAILED} $ref"
+        fi
+      done
+      if [ -n "$FAILED" ]; then
+        echo ""
+        echo "Release $CI_COMMIT_TAG is tagged but not pullable:${FAILED}"
+        exit 1
+      fi
+      echo ""
+      echo "Release $CI_COMMIT_TAG is pullable on every published architecture."
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+      when: always
+
 # ============================================================
 # Deploy Stage
 # ============================================================
