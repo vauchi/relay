@@ -320,6 +320,15 @@ fuzz:nightly:
       # single input. The dep tracks `branch = "main"` — re-resolve it.
       cargo update -p vauchi-protocol
 
+      # Build before fuzzing. The run loop below turns any non-zero exit
+      # into `CRASH:<target>`, so a compile error was reported as a fuzz
+      # crash — sending whoever triaged it hunting for a finding that did
+      # not exist. A build failure must look like a build failure.
+      if ! cargo +nightly fuzz build; then
+          echo "BUILD-FAILED: fuzz targets do not compile" >&2
+          exit 1
+      fi
+
       FUZZ_DURATION="${FUZZ_DURATION_SECS:-300}"
       FUZZ_JOBS="${FUZZ_PARALLEL_JOBS:-3}"
       REPORT_DIR="../fuzz-report"
