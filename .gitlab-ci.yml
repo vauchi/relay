@@ -311,6 +311,15 @@ fuzz:nightly:
       command -v cargo-fuzz >/dev/null 2>&1 || cargo +nightly install cargo-fuzz --locked --force
 
       cd fuzz
+
+      # fuzz/Cargo.lock is gitignored, and the self-hosted runner's checkout
+      # runs `git clean -ffd` WITHOUT -x, so ignored files survive between
+      # runs. A lock resolved in June pinned vauchi-protocol 0.52.1 and was
+      # reused ever since; today's relay lib reads `origin_hint`, added
+      # later, so every scheduled run died with E0609 before fuzzing a
+      # single input. The dep tracks `branch = "main"` — re-resolve it.
+      cargo update -p vauchi-protocol
+
       FUZZ_DURATION="${FUZZ_DURATION_SECS:-300}"
       FUZZ_JOBS="${FUZZ_PARALLEL_JOBS:-3}"
       REPORT_DIR="../fuzz-report"
