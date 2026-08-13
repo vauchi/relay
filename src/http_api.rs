@@ -690,7 +690,7 @@ async fn dispatch_ohttp_action(
             // OHTTP-05: Use separate OHTTP rate limiter for exchange actions
             if !state
                 .ohttp_exchange_rate_limiter
-                .consume("ohttp_exchange_claim")
+                .consume("ohttp_exchange_complete")
             {
                 return serde_json::json!({ "status": "error", "error": "rate limit exceeded" });
             }
