@@ -3,8 +3,8 @@
 
 > **Mirror:** This repo is a read-only mirror of [gitlab.com/vauchi/relay](https://gitlab.com/vauchi/relay). Please open issues and merge requests there.
 
-[![Pipeline](https://img.shields.io/endpoint?url=https://vauchi.gitlab.io/relay/badges/pipeline.json&label=pipeline)](https://gitlab.com/vauchi/relay/-/pipelines)
-[![Coverage](https://img.shields.io/endpoint?url=https://vauchi.gitlab.io/relay/badges/coverage.json&label=coverage)](https://gitlab.com/vauchi/relay/-/pipelines)
+[![Pipeline](https://img.shields.io/endpoint?url=https://vauchi.gitlab.io/relay/badges/pipeline.json&label=pipeline)](https://gitlab.com/vauchi/relay)
+[![Coverage](https://img.shields.io/endpoint?url=https://vauchi.gitlab.io/relay/badges/coverage.json&label=coverage)](https://gitlab.com/vauchi/relay)
 [![REUSE](https://api.reuse.software/badge/gitlab.com/vauchi/relay)](https://api.reuse.software/info/gitlab.com/vauchi/relay)
 
 > [!NOTE]
