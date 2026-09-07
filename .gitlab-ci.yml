@@ -202,7 +202,25 @@ test:install:
   variables:
     VAUCHI_RELAY_INSTALL_BINARY_ONLY: "true"
   before_script:
-    - apt-get update -qq && apt-get install -yqq python3 libgcc-s1 curl >/dev/null
+    # Check-Valid-Until=false: bullseye is EOL and its security suite's
+    # last InRelease expired 2026-09-07T21:13:04Z, so apt refuses those
+    # lists and python3/curl silently do not install — the job then died
+    # at `python3: command not found`, exit 127, on every pipeline after
+    # that timestamp. The main bullseye suite is already frozen with no
+    # Valid-Until at all. The image is pinned deliberately (the glibc
+    # 2.31 floor asserted below), so accepting a frozen Release is the
+    # point, not a workaround.
+    - apt-get -o Acquire::Check-Valid-Until=false update -qq
+    - apt-get install -yqq python3 libgcc-s1 curl >/dev/null
+    # apt-get exited 0 while installing nothing, which is how a trust
+    # failure reached the script stage disguised as a missing binary.
+    - |
+      for t in python3 curl; do
+        if ! command -v "$t" >/dev/null; then
+          echo "ERROR: $t missing after apt-get install — check apt trust/lists above"
+          exit 1
+        fi
+      done
   script:
     - test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.31"
     - |
