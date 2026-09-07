@@ -61,6 +61,13 @@ stages:
 
 variables:
   VAUCHI_SCRIPTS_REF: "ci-templates-v2026.07.13"
+  # cargo audit runs with --deny warnings; the one entry here is
+  # temporary, and unlike the other repos' it IS ours to fix.
+  #   RUSTSEC-2025-0134  rustls-pemfile unmaintained. It is a DIRECT
+  #                      dependency of this crate, superseded by
+  #                      rustls-pki-types. Migrating is a code change,
+  #                      so it is ignored here rather than rushed.
+  AUDIT_IGNORES: "--ignore RUSTSEC-2025-0134"
   # Container scanning for relay image
   # SAST/DS/SECRET_DETECTION excluded paths inherit from shared security.yml
   # (template defaults are more restrictive than relay's previous "target/" only)
