@@ -572,14 +572,14 @@ version = "0.8.56"
 when = "2026-08-06"
 user-id = 7178
 user-login = "joshlf"
-user-name = "Josh Liebow-Feeser"
+user-name = "Joshua Liebow-Feeser"
 
 [[publisher.zerocopy-derive]]
 version = "0.8.56"
 when = "2026-08-06"
 user-id = 7178
 user-login = "joshlf"
-user-name = "Josh Liebow-Feeser"
+user-name = "Joshua Liebow-Feeser"
 
 [[publisher.zmij]]
 version = "1.0.23"
