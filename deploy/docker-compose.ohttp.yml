@@ -60,7 +60,9 @@ services:
     # No external ports — only reachable via Caddy on the external network
     environment:
       - OHTTP_RELAY_LISTEN_ADDR=0.0.0.0:8082
-      - OHTTP_RELAY_GATEWAY_URL=http://vauchi-relay:8080
+      # The relay's OHTTP gateway (/v2/ohttp) lives on the HTTP API listener
+      # (RELAY_METRICS_ADDR), not the WebSocket listener on 8080.
+      - OHTTP_RELAY_GATEWAY_URL=http://vauchi-relay:8081
       - RUST_LOG=vauchi_ohttp_relay=info
     networks:
       - external
@@ -76,6 +78,8 @@ services:
       - RELAY_OHTTP_ENABLED=true
       - RELAY_OHTTP_KEY_ROTATION_HOURS=24
       - RELAY_HTTP_API_ENABLED=true
+      # Reachable only on the internal network (no ports published, see above).
+      - RELAY_METRICS_ADDR=0.0.0.0:8081
       - RELAY_MAX_CONNECTIONS=1000
       - RELAY_MAX_MESSAGE_SIZE=1048576
       - RELAY_STORAGE_BACKEND=sqlite
