@@ -179,7 +179,7 @@ SIGTERM/SIGINT → stop accepting → drain connections
 
 ### Container Image
 
-Multi-stage build → `distroless/cc-debian12` runtime.
+Multi-stage build → `distroless/base-nossl-debian13` runtime.
 Non-root user. No shell. See `Dockerfile`.
 
 ### Runbooks

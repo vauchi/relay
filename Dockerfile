@@ -16,7 +16,7 @@ ARG HUB=docker.io/library
 # minute build, which is what pushed build:docker past its timeout).
 # Deriving planner and builder from one prepared base also installs
 # cargo-chef once instead of twice.
-FROM ${HUB}/rust:1.93-bookworm AS chef
+FROM ${HUB}/rust:1.93-trixie AS chef
 RUN cargo install cargo-chef
 WORKDIR /app
 
@@ -56,7 +56,7 @@ RUN set -eux; \
 # Runtime stage — distroless glibc without unused OpenSSL libraries
 # Use :latest tag to get latest security patches for base OS libraries
 # (zlib, libpng, glibc, etc.). Pinned distroless images accumulate CVEs.
-FROM gcr.io/distroless/base-nossl-debian12:latest
+FROM gcr.io/distroless/base-nossl-debian13:latest
 
 # Rust binaries still need libgcc_s for panic unwinding; base-nossl omits it.
 # Staged arch-agnostically in the builder above (see the /staging copy).
