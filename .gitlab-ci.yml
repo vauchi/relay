@@ -514,7 +514,7 @@ security:vet:
   variables:
     FETCH_SCRIPT_PATH: "scripts/ci/vet-autofix.sh"
     FETCH_SCRIPT_OUTPUT: "vet-autofix.sh"
-    FETCH_SCRIPT_SHA256: "038e5caf3b4f5ea179490f5fb51544e10496eec6bb185ded4801abd09ce8ac11"
+    FETCH_SCRIPT_SHA256: "411e1562c96f7dc6f74153575839f1faa0ad276b3866ea1c7f5cad68fd9a41d5"
   script:
     - ./vet-autofix.sh --sync-from=77874344
 
