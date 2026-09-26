@@ -791,9 +791,13 @@ build:docker:
   script:
     - |
       DESTS="--destination $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
-      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] &&
-        [ "$CI_PIPELINE_SOURCE" != "schedule" ]; then
-        DESTS="$DESTS --destination $CI_REGISTRY_IMAGE:latest"
+      # Only a push (or a deliberate web run) advances :latest. Schedules and
+      # upstream-triggered verify pipelines rebuild the same locked sources
+      # with a newer base, and must not move the tag demo/test deploys pull.
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        case "$CI_PIPELINE_SOURCE" in
+          push|web) DESTS="$DESTS --destination $CI_REGISTRY_IMAGE:latest" ;;
+        esac
       fi
       /kaniko/executor \
         --context "$CI_PROJECT_DIR" \
@@ -801,8 +805,16 @@ build:docker:
         --build-arg HUB="${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}" \
         --build-arg BUILD_INFO="$BUILD_INFO" \
         $DESTS \
+        --digest-file "$CI_PROJECT_DIR/image.digest" \
         --cache=true \
         --cache-repo "$CI_REGISTRY_IMAGE/cache"
+    # deploy:trigger forwards this so production can refuse the :$SHA tag
+    # once a later rebuild re-pushes it (private problems/
+    # 2026-09-26-deploy-sha-tags-are-mutable).
+    - printf 'DEPLOY_IMAGE_DIGEST=%s\n' "$(cat "$CI_PROJECT_DIR/image.digest")" > deploy-image.env
+  artifacts:
+    reports:
+      dotenv: deploy-image.env
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
     # Main + release-tag pipelines build unconditionally — deploy:trigger
@@ -1012,8 +1024,13 @@ deploy:trigger:
   variables:
     DEPLOY_SERVICE: relay
     DEPLOY_IMAGE: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    DEPLOY_IMAGE_DIGEST: $DEPLOY_IMAGE_DIGEST
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    # An upstream verify pipeline rebuilds unchanged, lock-pinned sources;
+    # it has nothing new to deploy.
+    - if: $CI_PIPELINE_SOURCE == "pipeline" || $CI_PIPELINE_SOURCE == "trigger" || $CI_PIPELINE_SOURCE == "api"
       when: never
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
