@@ -28,7 +28,7 @@ serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 
 # Shared protocol message types
-vauchi-protocol = { git = "https://gitlab.com/vauchi/core.git", branch = "main" }
+vauchi-protocol = { git = "https://gitlab.com/vauchi/core.git", tag = "v0.69.0", version = "=0.69.0" }
 
 # Hex encoding/decoding for key hashes
 hex = "0.4"
