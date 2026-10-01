@@ -37,13 +37,10 @@ pub fn pad(payload: &[u8]) -> Vec<u8> {
     padded.extend_from_slice(&(payload.len() as u32).to_be_bytes());
     padded.extend_from_slice(payload);
 
-    let padding_len = target_size - needed;
-    if padding_len > 0 {
-        padded.resize(target_size, 0);
-        let rng = SystemRandom::new();
-        rng.fill(&mut padded[needed..])
-            .expect("System RNG should not fail");
-    }
+    padded.resize(target_size, 0);
+    SystemRandom::new()
+        .fill(&mut padded[needed..])
+        .expect("System RNG should not fail");
 
     padded
 }
@@ -68,8 +65,7 @@ pub fn is_valid_bucket_size(len: usize) -> bool {
     len == BUCKET_SMALL
         || len == BUCKET_MEDIUM_SMALL
         || len == BUCKET_MEDIUM
-        || len == BUCKET_LARGE
-        || (len > BUCKET_LARGE && len.is_multiple_of(OVERFLOW_ALIGNMENT))
+        || (len >= BUCKET_LARGE && len.is_multiple_of(OVERFLOW_ALIGNMENT))
 }
 
 /// Selects the smallest bucket that fits the given size.
