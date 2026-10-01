@@ -82,6 +82,17 @@ fn grace_deadline_without_changed_at() {
     assert_eq!(state.grace_deadline(), None);
 }
 
+// @internal
+#[rstest]
+#[case::set(Some(1_000_000))]
+#[case::unset(None)]
+fn min_version_changed_at_reports_the_stored_timestamp(#[case] changed_at: Option<u64>) {
+    let config = VersionPolicyConfig::new(2, 3, 7).unwrap();
+    let state = new_state(config, changed_at);
+
+    assert_eq!(state.min_version_changed_at(), changed_at);
+}
+
 // ── Enforcement ────────────────────────────────────────────────────────────
 
 const NOW: u64 = 1_700_000_000; // Fixed test time (2023-11-14)

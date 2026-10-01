@@ -137,10 +137,25 @@ mod tests {
         assert!(recovered.is_empty());
     }
 
+    // @internal
+    #[test]
+    fn test_pad_payload_that_exactly_fills_a_bucket_gets_no_padding() {
+        let payload = vec![0x5A; BUCKET_SMALL - LENGTH_PREFIX_SIZE];
+        let padded = pad(&payload);
+        assert_eq!(padded.len(), BUCKET_SMALL);
+        assert_eq!(padded[LENGTH_PREFIX_SIZE..], payload[..]);
+    }
+
     #[test]
     fn test_unpad_invalid_too_short() {
         assert!(unpad(&[]).is_none());
         assert!(unpad(&[0x01]).is_none());
+    }
+
+    // @internal
+    #[test]
+    fn test_unpad_bare_length_prefix_of_zero_is_an_empty_payload() {
+        assert_eq!(unpad(&[0x00, 0x00, 0x00, 0x00]), Some(Vec::new()));
     }
 
     #[test]

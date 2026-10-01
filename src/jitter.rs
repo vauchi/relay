@@ -93,6 +93,19 @@ mod tests {
         );
     }
 
+    // @internal
+    #[test]
+    fn test_generate_jitter_covers_both_ends_of_an_inclusive_range() {
+        // 200 draws from {0, 1}: missing either end has probability 2^-199.
+        let mut seen: Vec<u64> = (0..200)
+            .map(|_| generate_jitter(0, 1).as_millis() as u64)
+            .collect();
+        seen.sort_unstable();
+        seen.dedup();
+
+        assert_eq!(seen, vec![0, 1]);
+    }
+
     #[test]
     fn test_generate_jitter_min_greater_than_max_returns_min() {
         // Graceful handling: when min > max, return min
