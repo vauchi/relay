@@ -167,3 +167,30 @@ pub fn ohttp_decrypt(client_response: ohttp::ClientResponse, enc: &[u8]) -> serd
     let unpadded = vauchi_relay::padding::unpad(&plaintext).unwrap();
     serde_json::from_slice(&unpadded).unwrap()
 }
+
+/// Helper: fetch the gateway's OHTTP key config as bytes.
+#[allow(dead_code)]
+pub async fn ohttp_key_bytes(app: &Router) -> Vec<u8> {
+    let key_resp = get_ohttp_key(app).await;
+    axum::body::to_bytes(key_resp.into_body(), 65536)
+        .await
+        .unwrap()
+        .to_vec()
+}
+
+/// Helper: send one action through OHTTP and return the decrypted response.
+#[allow(dead_code)]
+pub async fn send_ohttp_action(
+    app: &Router,
+    key_bytes: &[u8],
+    action: &str,
+    mut inner: serde_json::Value,
+) -> serde_json::Value {
+    inner["version"] = serde_json::json!(2);
+    inner["action"] = serde_json::json!(action);
+    let (enc_req, client_resp) = ohttp_encrypt(key_bytes, &inner);
+    let resp = post_ohttp_bytes(app, enc_req).await;
+    assert_eq!(resp.status(), 200);
+    let enc_resp_bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+    ohttp_decrypt(client_resp, &enc_resp_bytes)
+}

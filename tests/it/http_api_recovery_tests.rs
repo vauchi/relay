@@ -230,3 +230,31 @@ async fn test_recovery_store_rate_limited() {
     .await;
     assert_eq!(resp.status(), 429);
 }
+
+// @internal
+#[tokio::test]
+async fn test_recovery_store_accepts_proof_of_exactly_the_size_limit() {
+    let app = create_v2_router(create_test_state());
+    let at_limit = base64::engine::general_purpose::STANDARD.encode(vec![0u8; 4096]);
+
+    let resp = post_json(
+        &app,
+        "/v2/recovery/store",
+        &json!({ "key_hash": "e1".repeat(32), "proof_data": at_limit }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), 200);
+}
+
+// @internal
+#[tokio::test]
+async fn test_recovery_query_accepts_exactly_the_hash_limit() {
+    let app = create_v2_router(create_test_state());
+    let hashes: Vec<String> = (0..50).map(|i| format!("{:064x}", i)).collect();
+
+    let resp = post_json(&app, "/v2/recovery/query", &json!({ "key_hashes": hashes })).await;
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(response_json(resp).await["proofs"], json!([]));
+}

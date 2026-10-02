@@ -582,3 +582,78 @@ async fn test_guardian_query_invalid_hash() {
     .await;
     assert_eq!(resp.status(), 400);
 }
+
+// @internal
+#[tokio::test]
+async fn test_guardian_store_accepts_exactly_the_entry_count_limit() {
+    let app = create_v2_router(create_test_state());
+    let owner = owner_from_seed(21);
+    let entries: Vec<Value> = (0..10).map(|_| json!({ "data": b64(b"entry") })).collect();
+
+    let resp = post_json(
+        &app,
+        "/v2/guardian/store",
+        &store_body(&owner, entries, now()),
+    )
+    .await;
+
+    assert_eq!(resp.status(), 200);
+}
+
+// 8 entries of 256 bytes sit exactly on the per-entry limit (256) and on
+// the total limit (2048) at once.
+// @internal
+#[tokio::test]
+async fn test_guardian_store_accepts_entries_exactly_at_both_size_limits() {
+    let app = create_v2_router(create_test_state());
+    let owner = owner_from_seed(22);
+    let entries: Vec<Value> = (0..8)
+        .map(|_| json!({ "data": b64(&[0u8; 256]) }))
+        .collect();
+
+    let resp = post_json(
+        &app,
+        "/v2/guardian/store",
+        &store_body(&owner, entries, now()),
+    )
+    .await;
+
+    assert_eq!(resp.status(), 200);
+}
+
+// Each hash fails only one half of the format check: right length but not
+// hex, and hex but the wrong length.
+// @internal
+#[tokio::test]
+async fn test_guardian_store_and_delete_reject_each_kind_of_malformed_hash() {
+    let app = create_v2_router(create_test_state());
+
+    for malformed in ["z".repeat(64), "ab".repeat(8)] {
+        let store = post_json(
+            &app,
+            "/v2/guardian/store",
+            &json!({
+                "guardian_hash": malformed,
+                "entries": [{ "data": b64(b"data") }],
+                "designator_pk": "00".repeat(32),
+                "timestamp": now(),
+                "signature": "00".repeat(64),
+            }),
+        )
+        .await;
+        let delete = post_json(
+            &app,
+            "/v2/guardian/delete",
+            &json!({
+                "guardian_hash": malformed,
+                "designator_pk": "00".repeat(32),
+                "timestamp": now(),
+                "signature": "00".repeat(64),
+            }),
+        )
+        .await;
+
+        assert_eq!(store.status(), 400, "store accepted hash {malformed}");
+        assert_eq!(delete.status(), 400, "delete accepted hash {malformed}");
+    }
+}
