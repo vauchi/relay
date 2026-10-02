@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use vauchi_relay::exchange_broker::{
     ExchangeBroker, ExchangeError, MAX_EXCHANGE_PAYLOAD_BYTES, MAX_EXCHANGE_TTL_SECS,
@@ -628,4 +629,72 @@ fn test_cleanup_empty_broker() {
     let broker = ExchangeBroker::new(100, 300);
     assert_eq!(broker.cleanup_expired(), 0);
     assert_eq!(broker.offer_count(), 0);
+}
+
+// ================================================================
+// Expiry with the time as input (no reliance on a zero TTL)
+// ================================================================
+
+// The size is written out: a test built from MAX_EXCHANGE_PAYLOAD_BYTES
+// still passes when the constant itself is wrong.
+// @internal
+#[test]
+fn test_s4_payload_of_exactly_64_kib_is_accepted_and_one_more_byte_is_not() {
+    let broker = ExchangeBroker::new(100, 300);
+
+    let at_limit = broker.create_offer("C".repeat(65_536), None);
+    let over_limit = broker.create_offer("C".repeat(65_537), None);
+
+    assert_eq!(at_limit.map(|code| code.len()), Ok(6));
+    assert_eq!(over_limit, Err(ExchangeError::PayloadTooLarge));
+}
+
+// @internal
+#[test]
+fn test_offer_can_be_claimed_and_completed_at_its_exact_expiry_instant() {
+    let broker = ExchangeBroker::new(100, 300);
+    let start = Instant::now();
+    let at_expiry = start + Duration::from_secs(300);
+    let code = broker
+        .create_offer_at("p".to_string(), None, start)
+        .unwrap();
+
+    let claim = broker.claim_offer_at(&code, "r".to_string(), at_expiry);
+    let complete = broker.complete_offer_at(&code, at_expiry);
+
+    assert_eq!(claim, Ok("p".to_string()));
+    assert_eq!(complete, Ok("r".to_string()));
+}
+
+// @internal
+#[test]
+fn test_complete_after_expiry_fails_even_for_a_claimed_offer() {
+    let broker = ExchangeBroker::new(100, 300);
+    let start = Instant::now();
+    let code = broker
+        .create_offer_at("p".to_string(), None, start)
+        .unwrap();
+    broker
+        .claim_offer_at(&code, "r".to_string(), start)
+        .unwrap();
+
+    let complete = broker.complete_offer_at(&code, start + Duration::from_secs(301));
+
+    assert_eq!(complete, Err(ExchangeError::CodeExpired));
+}
+
+// @internal
+#[test]
+fn test_cleanup_removes_an_offer_from_its_expiry_instant_on() {
+    let broker = ExchangeBroker::new(100, 300);
+    let start = Instant::now();
+    broker
+        .create_offer_at("p".to_string(), None, start)
+        .unwrap();
+
+    let before_expiry = broker.cleanup_expired_at(start + Duration::from_secs(299));
+    let at_expiry = broker.cleanup_expired_at(start + Duration::from_secs(300));
+
+    assert_eq!(before_expiry, 0);
+    assert_eq!(at_expiry, 1);
 }

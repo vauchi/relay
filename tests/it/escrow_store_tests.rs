@@ -4,6 +4,8 @@
 
 //! Tests for the escrow store (gated blob exchange).
 
+use std::time::{Duration, Instant};
+
 use vauchi_protocol::escrow::{EscrowMessage, EscrowResponse, MAX_TTL_SECONDS};
 use vauchi_relay::escrow::{EscrowStore, MAX_ACTIVE_GATES};
 
@@ -191,28 +193,127 @@ fn max_size_blob_accepted() {
 #[test]
 fn expired_gate_returns_not_found() {
     let store = EscrowStore::new(100);
-    // TTL=0 means immediately expired on next check
-    store.handle(make_put(&gate_hash(), &slot_init(), &small_blob(), 0));
+    let start = Instant::now();
+    store.handle_at(
+        make_put(&gate_hash(), &slot_init(), &small_blob(), 60),
+        start,
+    );
+    let after_expiry = start + Duration::from_secs(61);
 
-    // Small sleep to ensure Instant::now() passes expiry
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    let get = store.handle_at(make_get(&gate_hash(), &slot_init()), after_expiry);
+    let count = store.handle_at(make_count(&gate_hash()), after_expiry);
 
-    let resp = store.handle(make_get(&gate_hash(), &slot_init()));
-    assert_eq!(resp, EscrowResponse::NotFound);
+    assert_eq!(get, EscrowResponse::NotFound);
+    assert_eq!(count, EscrowResponse::NotFound);
 }
 
 // @internal
 #[test]
-fn cleanup_removes_expired_gates() {
+fn cleanup_counts_and_removes_only_expired_gates() {
     let store = EscrowStore::new(100);
-    store.handle(make_put(&gate_hash(), &slot_init(), &small_blob(), 0));
-    assert_eq!(store.gate_count(), 1);
+    let start = Instant::now();
+    store.handle_at(
+        make_put(&gate_hash(), &slot_init(), &small_blob(), 60),
+        start,
+    );
+    let long_lived_gate = "dd".repeat(32);
+    store.handle_at(
+        make_put(&long_lived_gate, &slot_init(), &small_blob(), 3600),
+        start,
+    );
 
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    let after_first_expiry = start + Duration::from_secs(61);
+
+    let removed = store.cleanup_expired_at(after_first_expiry);
+
+    assert_eq!(removed, 1);
+    assert_eq!(
+        store.handle_at(make_count(&long_lived_gate), after_first_expiry),
+        EscrowResponse::Count { count: 1 }
+    );
+    assert_eq!(store.gate_count(), 1);
+}
+
+// Gates are put in the past so they are already expired when the
+// clock-reading cleanup_expired runs — no waiting (CC-06).
+// @internal
+#[test]
+fn cleanup_expired_reads_the_clock_and_removes_what_has_expired_by_now() {
+    let store = EscrowStore::new(100);
+    let five_seconds_ago = Instant::now() - Duration::from_secs(5);
+    for gate in ["d1".repeat(32), "d2".repeat(32)] {
+        store.handle_at(
+            make_put(&gate, &slot_init(), &small_blob(), 1),
+            five_seconds_ago,
+        );
+    }
+    store.handle(make_put(&gate_hash(), &slot_init(), &small_blob(), 3600));
 
     let removed = store.cleanup_expired();
-    assert_eq!(removed, 1);
-    assert_eq!(store.gate_count(), 0);
+
+    assert_eq!(removed, 2);
+    assert_eq!(store.gate_count(), 1);
+}
+
+// @internal
+#[test]
+fn put_into_an_expired_gate_starts_a_fresh_gate() {
+    let store = EscrowStore::new(100);
+    let start = Instant::now();
+    store.handle_at(
+        make_put(&gate_hash(), &slot_init(), &small_blob(), 60),
+        start,
+    );
+    let after_expiry = start + Duration::from_secs(61);
+
+    let put = store.handle_at(
+        make_put(&gate_hash(), &slot_resp(), &small_blob(), 60),
+        after_expiry,
+    );
+
+    assert_eq!(put, EscrowResponse::Stored);
+    assert_eq!(
+        store.handle_at(make_count(&gate_hash()), after_expiry),
+        EscrowResponse::Count { count: 1 }
+    );
+}
+
+// @internal
+#[test]
+fn put_at_the_exact_expiry_instant_joins_the_existing_gate() {
+    let store = EscrowStore::new(100);
+    let start = Instant::now();
+    store.handle_at(
+        make_put(&gate_hash(), &slot_init(), &small_blob(), 60),
+        start,
+    );
+    let at_expiry = start + Duration::from_secs(60);
+
+    let put = store.handle_at(
+        make_put(&gate_hash(), &slot_resp(), &small_blob(), 60),
+        at_expiry,
+    );
+
+    assert_eq!(put, EscrowResponse::Stored);
+    assert_eq!(
+        store.handle_at(make_count(&gate_hash()), at_expiry),
+        EscrowResponse::Count { count: 2 }
+    );
+}
+
+// @internal
+#[test]
+fn ttl_of_exactly_the_maximum_is_accepted() {
+    let store = EscrowStore::new(100);
+
+    let resp = store.handle(make_put(
+        &gate_hash(),
+        &slot_init(),
+        &small_blob(),
+        MAX_TTL_SECONDS,
+    ));
+
+    assert_eq!(resp, EscrowResponse::Stored);
 }
 
 // @internal
