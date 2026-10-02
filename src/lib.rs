@@ -27,6 +27,7 @@ pub mod padding;
 pub mod peer_registry;
 pub mod rate_limit;
 pub mod recovery_storage;
+pub mod startup;
 pub mod storage;
 pub mod url_validation;
 pub mod version_policy;

@@ -38,6 +38,7 @@ use vauchi_relay::peer_registry::PeerRegistry;
 use vauchi_relay::peer_registry::gossip;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::{RecoveryProofStore, SqliteRecoveryProofStore};
+use vauchi_relay::startup;
 use vauchi_relay::storage::{BlobStore, StorageBackend, create_blob_store};
 
 // TODO(PFC): main() is a monolithic side-effect orchestrator — see 2026-07-06-relay-pfc-violations R1
@@ -56,7 +57,7 @@ async fn main() {
                 .expect("hardcoded log directive must be valid"),
         );
         let log_format = std::env::var("RELAY_LOG_FORMAT").unwrap_or_default();
-        if log_format == "json" {
+        if startup::wants_json_logs(&log_format) {
             tracing_subscriber::fmt()
                 .json()
                 .with_env_filter(env_filter)
@@ -92,12 +93,9 @@ async fn main() {
     }
 
     // TLS enforcement: refuse to start if not localhost and TLS not confirmed
-    let is_localhost = config.network.listen_addr.ip().is_loopback();
-    let tls_verified = std::env::var("RELAY_TLS_VERIFIED")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false);
+    let tls_verified = startup::env_flag_is_on(std::env::var("RELAY_TLS_VERIFIED").ok().as_deref());
 
-    if !is_localhost && !tls_verified {
+    if !startup::tls_requirement_met(config.network.listen_addr, tls_verified) {
         error!("=======================================================================");
         error!("SECURITY ERROR: Relay MUST run behind a TLS proxy in production!");
         error!("=======================================================================");
@@ -234,10 +232,12 @@ async fn main() {
     // does NOT get re-persisted, so a test run with the override does
     // not pollute the storage backend that a subsequent override-less
     // run would read.
-    if env_override.is_none()
-        && let Some(changed_at) = version_policy.read().min_version_changed_at()
-        && Some(changed_at) != min_version_changed_at
-    {
+    let current_changed_at = version_policy.read().min_version_changed_at();
+    if let Some(changed_at) = startup::min_version_change_to_persist(
+        env_override,
+        min_version_changed_at,
+        current_changed_at,
+    ) {
         info!("Persisting new min_version_changed_at: {}", changed_at);
         storage.set_config("min_version_changed_at", &changed_at.to_string());
     }
@@ -321,15 +321,16 @@ async fn main() {
             config: config.clone(),
             metrics: metrics.clone(),
             tls_client_config: tls_client_config.clone(),
-            allow_loopback_peers: federation_allow_loopback_peers(),
+            allow_loopback_peers: startup::federation_allow_loopback_peers(
+                std::env::var("RELAY_FEDERATION_DANGEROUSLY_ALLOW_LOOPBACK").is_ok(),
+            ),
         });
 
         if let Some(ref tls_config) = federation_tls_config {
-            let mtls_addr = config.federation.mtls_addr.unwrap_or_else(|| {
-                let mut addr = config.network.listen_addr;
-                addr.set_port(addr.port() + 1);
-                addr
-            });
+            let mtls_addr = config
+                .federation
+                .mtls_addr
+                .unwrap_or_else(|| startup::default_mtls_addr(config.network.listen_addr));
             let acceptor = tokio_rustls::TlsAcceptor::from(tls_config.server_config.clone());
             let fed_http_state = federation_http::FederationHttpState {
                 storage: storage.clone(),
@@ -430,7 +431,7 @@ async fn main() {
     let metrics_token = std::env::var("RELAY_METRICS_TOKEN").ok();
     if metrics_token.is_some() {
         info!("Metrics endpoint protected with bearer token");
-    } else if !http_addr.starts_with("127.0.0.1") && !http_addr.starts_with("localhost") {
+    } else if startup::binds_beyond_localhost(&http_addr) {
         info!("WARNING: Metrics exposed on non-localhost without auth token");
         info!("Consider setting RELAY_METRICS_TOKEN for production use");
     }
@@ -443,10 +444,10 @@ async fn main() {
 
     if config.http_api.enabled {
         let ohttp_gateway = if config.http_api.ohttp_enabled {
-            let rotation_secs = config
-                .http_api
-                .ohttp_key_rotation_secs
-                .unwrap_or(config.http_api.ohttp_key_rotation_hours * 3600);
+            let rotation_secs = startup::ohttp_rotation_secs(
+                config.http_api.ohttp_key_rotation_secs,
+                config.http_api.ohttp_key_rotation_hours,
+            );
             let result = if let Some(ref key_path) = config.http_api.ohttp_key_file_path {
                 OhttpGateway::from_key_file(std::path::Path::new(key_path), rotation_secs)
             } else {
@@ -774,19 +775,4 @@ async fn main() {
     info!("Running WAL checkpoint on databases...");
     storage.shutdown();
     info!("Shutdown complete");
-}
-
-/// DEV/TEST-only: whether federation offload may target loopback/private peers
-/// (bypassing the SSRF IP blocklist). Honored only in debug builds via
-/// `RELAY_FEDERATION_DANGEROUSLY_ALLOW_LOOPBACK`; compiled out of release, so
-/// production never reads it and the SSRF guard always applies. Exists solely
-/// to make local two-relay federation testable (ADR-052).
-#[cfg(debug_assertions)]
-fn federation_allow_loopback_peers() -> bool {
-    std::env::var("RELAY_FEDERATION_DANGEROUSLY_ALLOW_LOOPBACK").is_ok()
-}
-
-#[cfg(not(debug_assertions))]
-fn federation_allow_loopback_peers() -> bool {
-    false
 }
