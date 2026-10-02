@@ -209,12 +209,14 @@ fn parse_boot_time(proc_stat: &str) -> Option<i64> {
 
 fn ticks_per_second() -> u64 {
     // SAFETY: sysconf is thread-safe and returns a long.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage — libc FFI; std has no clock-tick query
     let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
     if ticks <= 0 { 100 } else { ticks as u64 }
 }
 
 fn page_size() -> u64 {
     // SAFETY: sysconf is thread-safe and returns a long.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage — libc FFI; std has no page-size query
     let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     if size <= 0 { 4096 } else { size as u64 }
 }
