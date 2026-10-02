@@ -29,4 +29,5 @@ mod relay_integration_test;
 mod relay_load_test;
 mod security_auth_tests;
 mod security_resource_tests;
+mod startup_tests;
 mod version_policy_tests;
