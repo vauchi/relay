@@ -412,9 +412,17 @@ async fn main() {
             );
             let gossip_relay_id = config.federation.relay_id.clone();
             let gossip_registry = peer_registry.clone();
-            let gossip_config = config.clone();
+            let gossip_interval =
+                std::time::Duration::from_secs(config.federation.gossip_interval_secs);
+            let peer_ttl_secs = config.federation.peer_ttl_secs;
             tokio::spawn(async move {
-                gossip::run_gossip_task(gossip_relay_id, gossip_registry, gossip_config).await;
+                gossip::run_gossip_task(
+                    gossip_relay_id,
+                    gossip_registry,
+                    gossip_interval,
+                    peer_ttl_secs,
+                )
+                .await;
             });
         }
     }

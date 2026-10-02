@@ -556,101 +556,132 @@ pub mod gossip {
 
     use tracing::{debug, info, warn};
 
-    use super::PeerRegistry;
-    use crate::config::RelayConfig;
+    use super::{PeerInfo, PeerRegistry};
     use crate::federation_protocol::{
         AdvertisedPeer, FederationPayload, create_federation_envelope, encode_federation_message,
     };
 
-    /// Runs the periodic gossip advertisement task.
-    ///
-    /// On each tick:
-    /// 1. Builds a list of all known peers (excluding self)
-    /// 2. Sends a `PeerAdvertisement` to all connected peers
-    /// 3. Removes stale discovered peers
+    /// What one gossip round did.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct GossipRound {
+        /// Peers named in the advertisement.
+        pub advertised: usize,
+        /// Connected peers the advertisement was handed to.
+        pub sent: usize,
+        /// Stale discovered peers dropped from the registry.
+        pub removed_stale: usize,
+    }
+
+    /// Runs a gossip round every `interval`, forever.
     pub async fn run_gossip_task(
         own_relay_id: String,
         peer_registry: Arc<PeerRegistry>,
-        config: Arc<RelayConfig>,
+        interval: Duration,
+        peer_ttl_secs: u64,
     ) {
-        let interval = Duration::from_secs(config.federation.gossip_interval_secs);
-        let peer_ttl = config.federation.peer_ttl_secs;
-
         info!(
             "Gossip task started: interval={}s, peer_ttl={}s",
-            config.federation.gossip_interval_secs, peer_ttl
+            interval.as_secs(),
+            peer_ttl_secs
         );
 
         loop {
             tokio::time::sleep(interval).await;
 
-            // Build advertisement from all known peers (exclude self)
-            let peers = peer_registry.all_peers();
-            let advertised: Vec<AdvertisedPeer> = peers
-                .iter()
-                .filter(|p| p.relay_id != own_relay_id)
-                .map(|p| {
-                    let capacity_pct = if p.capacity_max_bytes > 0 {
-                        ((p.capacity_used_bytes as f64 / p.capacity_max_bytes as f64) * 100.0) as u8
-                    } else {
-                        0
-                    };
-                    AdvertisedPeer {
-                        relay_id: p.relay_id.clone(),
-                        url: p.url.clone(),
-                        capacity_pct,
-                        last_seen_secs: p.last_seen_secs,
-                    }
-                })
-                .collect();
-
-            if advertised.is_empty() {
-                debug!("Gossip tick: no peers to advertise");
-            } else {
-                // Send to all connected peers
-                let connected = peer_registry.connected_peers();
-                let envelope = create_federation_envelope(FederationPayload::PeerAdvertisement {
-                    peers: advertised.clone(),
-                });
-
-                match encode_federation_message(&envelope) {
-                    Ok(encoded) => {
-                        let mut sent_count = 0;
-                        for peer in &connected {
-                            if peer.relay_id == own_relay_id {
-                                continue;
-                            }
-                            if let Some(sender) = &peer.sender {
-                                match sender.try_send(encoded.clone()) {
-                                    Ok(_) => sent_count += 1,
-                                    Err(e) => {
-                                        warn!("Failed to send gossip to {}: {}", peer.relay_id, e);
-                                    }
-                                }
-                            }
-                        }
-                        debug!(
-                            "Gossip tick: advertised {} peers to {} connected peers",
-                            advertised.len(),
-                            sent_count
-                        );
-                    }
-                    Err(e) => {
-                        warn!("Failed to encode gossip advertisement: {}", e);
-                    }
-                }
-            }
-
-            // Clean up stale discovered peers
             let now_secs = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            let removed = peer_registry.remove_stale_peers(now_secs, peer_ttl);
-            if removed > 0 {
-                info!("Gossip cleanup: removed {} stale discovered peers", removed);
+            let round = run_gossip_round(&own_relay_id, &peer_registry, peer_ttl_secs, now_secs);
+
+            debug!(
+                "Gossip tick: advertised {} peers to {} connected peers",
+                round.advertised, round.sent
+            );
+            if round.removed_stale > 0 {
+                info!(
+                    "Gossip cleanup: removed {} stale discovered peers",
+                    round.removed_stale
+                );
             }
         }
+    }
+
+    /// Runs one gossip round as of `now_secs`: advertises every known peer
+    /// except ourselves to each connected peer, then drops discovered peers
+    /// not seen within `peer_ttl_secs`.
+    pub fn run_gossip_round(
+        own_relay_id: &str,
+        peer_registry: &PeerRegistry,
+        peer_ttl_secs: u64,
+        now_secs: u64,
+    ) -> GossipRound {
+        let advertised: Vec<AdvertisedPeer> = peer_registry
+            .all_peers()
+            .iter()
+            .filter(|p| p.relay_id != own_relay_id)
+            .map(|p| AdvertisedPeer {
+                relay_id: p.relay_id.clone(),
+                url: p.url.clone(),
+                capacity_pct: capacity_pct(p),
+                last_seen_secs: p.last_seen_secs,
+            })
+            .collect();
+
+        let sent = if advertised.is_empty() {
+            0
+        } else {
+            send_advertisement(own_relay_id, peer_registry, &advertised)
+        };
+
+        GossipRound {
+            advertised: advertised.len(),
+            sent,
+            removed_stale: peer_registry.remove_stale_peers(now_secs, peer_ttl_secs),
+        }
+    }
+
+    fn capacity_pct(peer: &PeerInfo) -> u8 {
+        if peer.capacity_max_bytes > 0 {
+            ((peer.capacity_used_bytes as f64 / peer.capacity_max_bytes as f64) * 100.0) as u8
+        } else {
+            0
+        }
+    }
+
+    /// Hands the advertisement to every connected peer but ourselves;
+    /// returns how many accepted it.
+    fn send_advertisement(
+        own_relay_id: &str,
+        peer_registry: &PeerRegistry,
+        advertised: &[AdvertisedPeer],
+    ) -> usize {
+        let envelope = create_federation_envelope(FederationPayload::PeerAdvertisement {
+            peers: advertised.to_vec(),
+        });
+        let encoded = match encode_federation_message(&envelope) {
+            Ok(encoded) => encoded,
+            Err(e) => {
+                warn!("Failed to encode gossip advertisement: {}", e);
+                return 0;
+            }
+        };
+
+        let mut sent = 0;
+        for peer in peer_registry.connected_peers() {
+            if peer.relay_id == own_relay_id {
+                continue;
+            }
+            if let Some(sender) = &peer.sender {
+                match sender.try_send(encoded.clone()) {
+                    Ok(_) => sent += 1,
+                    Err(e) => {
+                        warn!("Failed to send gossip to {}: {}", peer.relay_id, e);
+                    }
+                }
+            }
+        }
+        sent
     }
 
     /// Processes an incoming peer advertisement from a peer.
