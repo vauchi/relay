@@ -291,8 +291,13 @@ perf:binary-size:
 # Mutation Stage (uses shared template from vauchi/scripts)
 # ============================================================
 
+# Linux only: metrics/process.rs is cfg(target_os = "linux"), so on the
+# macOS runner its mutants are never compiled and all read as missed.
 mutation:nightly:
-  extends: [.mutation-nightly, .rust-runner]
+  extends: [.mutation-nightly, .linux-runner]
+  before_script:
+    - !reference [.self-hosted, before_script]
+    - !reference [.git-credentials, before_script]
   timeout: 12h
   variables:
     # 120s accommodates test_connect_with_tls_invalid_host (~60s TCP timeout to non-routable IP)
