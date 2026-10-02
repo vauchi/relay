@@ -35,6 +35,27 @@ fn test_nonce_tracker_accepts_different_nonces() {
     assert!(tracker.check_and_insert(b"nonce2"));
 }
 
+// Pins the amortised sweep as documented (OHTTP-10): an expired nonce is
+// forgotten at the CLEANUP_INTERVAL-th insertion, not before, and the
+// sweep keeps every nonce still inside its TTL.
+// @internal
+#[test]
+fn test_nonce_tracker_sweeps_expired_nonces_every_cleanup_interval() {
+    let tracker = NonceTracker::new();
+    let start = std::time::Instant::now();
+    let at_ttl = start + nonce::NONCE_TTL;
+    assert!(tracker.check_and_insert_at(b"old", start));
+    for i in 2..nonce::CLEANUP_INTERVAL as u32 {
+        assert!(tracker.check_and_insert_at(&i.to_be_bytes(), at_ttl));
+    }
+    assert!(!tracker.check_and_insert_at(b"old", at_ttl));
+
+    assert!(tracker.check_and_insert_at(b"interval-th insertion", at_ttl));
+
+    assert!(tracker.check_and_insert_at(b"old", at_ttl));
+    assert!(!tracker.check_and_insert_at(&2u32.to_be_bytes(), at_ttl));
+}
+
 // ================================================================
 // Purge signature verification tests (SP-2)
 // ================================================================

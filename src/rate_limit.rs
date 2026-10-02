@@ -153,7 +153,6 @@ impl RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
     use std::time::Duration;
 
     #[test]
@@ -179,33 +178,21 @@ mod tests {
         assert!(!limiter.consume("client-1"));
     }
 
+    // @internal
     #[test]
-    fn test_rate_limiter_refills_over_time() {
-        let limiter = RateLimiter::new(60); // 1 per second
-
-        // Use up all tokens
-        for _ in 0..60 {
-            limiter.consume("client-1");
+    fn test_rate_limiter_refills_at_the_per_minute_rate() {
+        let limiter = RateLimiter::new(120); // 2 tokens per second
+        let start = Instant::now();
+        for _ in 0..120 {
+            assert!(limiter.consume_at("client-1", start));
         }
+        assert!(!limiter.consume_at("client-1", start));
 
-        // Should be blocked
-        assert!(!limiter.consume("client-1"));
+        let one_second_later = start + Duration::from_secs(1);
 
-        // Poll until a token refills (CC-06: no bare sleeps for synchronization)
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            if limiter.check("client-1") {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "Timed out waiting for token refill"
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
-
-        // Token should be available after refill
-        assert!(limiter.consume("client-1"));
+        assert!(limiter.consume_at("client-1", one_second_later));
+        assert!(limiter.consume_at("client-1", one_second_later));
+        assert!(!limiter.consume_at("client-1", one_second_later));
     }
 
     #[test]
@@ -237,37 +224,20 @@ mod tests {
         assert!(!limiter.check("client-1"));
     }
 
+    // @internal
     #[test]
-    fn test_cleanup_inactive_removes_stale_buckets() {
+    fn test_cleanup_inactive_removes_buckets_idle_for_the_threshold() {
         let limiter = RateLimiter::new(10);
+        let max_idle = Duration::from_secs(30);
+        let start = Instant::now();
+        limiter.consume_at("idle-for-threshold", start);
+        limiter.consume_at("idle-just-under", start + Duration::from_secs(1));
 
-        // Create some client buckets
-        limiter.consume("client-1");
-        limiter.consume("client-2");
-        limiter.consume("client-3");
+        let removed = limiter.cleanup_inactive_at(max_idle, start + max_idle);
 
-        assert_eq!(limiter.client_count(), 3);
-
-        // Poll: refresh client-1 then cleanup until stale clients are removed (CC-06)
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        let idle_threshold = Duration::from_millis(5);
-        loop {
-            limiter.consume("client-1");
-            let removed = limiter.cleanup_inactive(idle_threshold);
-            if removed >= 2 {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "Timed out waiting for stale bucket cleanup"
-            );
-            thread::sleep(Duration::from_millis(5));
-        }
-
+        assert_eq!(removed, 1);
+        limiter.consume_at("idle-just-under", start + max_idle);
         assert_eq!(limiter.client_count(), 1);
-
-        // client-1 should still be there
-        assert!(limiter.consume("client-1"));
     }
 
     #[test]
