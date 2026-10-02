@@ -53,4 +53,10 @@ exclude_re = [
     # body and is rejected either way: as "Frame too short" with `<=`, as
     # a JSON parse error with `<`.
     "replace < with <= in decode_federation_message",
+
+    # Equivalent on the test host. Each sysconf fallback (100 ticks per
+    # second, 4096-byte pages) is taken only when sysconf fails, which it
+    # does not, and equals what sysconf returns on x86_64 Linux: swapping
+    # the branches yields the same number.
+    "replace <= with > in (ticks_per_second|page_size)",
 ]
