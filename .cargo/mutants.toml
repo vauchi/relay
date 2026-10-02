@@ -38,4 +38,14 @@ exclude_re = [
     # MAX_FETCH_RESPONSE_BYTES; both keep the page within the budget, and
     # a test for it would pin the estimate's constants, not behaviour.
     "replace > with >= in handle_fetch_logic",
+
+    # Log-only. `sent > 0` in check_and_offload decides whether the
+    # "Offloaded N blobs" line is logged; the count itself is returned and
+    # asserted.
+    "replace > with (==|<|>=) in OffloadManager::check_and_offload",
+
+    # Message-only. A frame of exactly the header length has an empty JSON
+    # body and is rejected either way: as "Frame too short" with `<=`, as
+    # a JSON parse error with `<`.
+    "replace < with <= in decode_federation_message",
 ]
