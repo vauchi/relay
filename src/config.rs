@@ -137,7 +137,7 @@ impl Default for FederationConfig {
         FederationConfig {
             enabled: false,
             peers: Vec::new(),
-            relay_id: String::new(), // Populated in from_env() or load_relay_id()
+            relay_id: String::new(), // Populated in from_map() or load_relay_id()
             offload_threshold: 0.80,
             offload_refuse: 0.95,
             drain_timeout_secs: 300,
@@ -648,19 +648,11 @@ impl RelayConfig {
         (config, warnings)
     }
 
-    /// Loads configuration from environment variables.
-    ///
-    /// Parse warnings for invalid numeric/address fields are silently discarded.
-    /// Use [`from_env_with_warnings`](Self::from_env_with_warnings) to capture them.
+    /// Loads configuration from environment variables, returning it with a
+    /// warning for each invalid numeric/address field (which keeps its default).
     pub fn from_env_with_warnings() -> (Self, Vec<String>) {
         let vars: HashMap<String, String> = std::env::vars().collect();
         Self::from_map(&vars)
-    }
-
-    /// Loads configuration from environment variables, discarding parse warnings.
-    pub fn from_env() -> Self {
-        let (config, _warnings) = Self::from_env_with_warnings();
-        config
     }
 
     /// Returns the idle timeout as a Duration.
