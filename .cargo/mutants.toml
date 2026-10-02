@@ -22,5 +22,5 @@ exclude_re = [
     # Log-only. The one comparison in run_gossip_task decides whether a
     # cleanup line is logged; the count it guards is asserted through
     # run_gossip_round's GossipRound.
-    "replace > with (==|<|>=) in gossip::run_gossip_task",
+    "replace > with (==|<|>=) in run_gossip_task",
 ]
