@@ -216,6 +216,42 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
 mod tests {
     use super::*;
 
+    fn proof_expiring_at(key_byte: u8, expires_at_secs: u64) -> StoredRecoveryProof {
+        StoredRecoveryProof {
+            expires_at_secs,
+            ..StoredRecoveryProof::new([key_byte; 32], vec![1, 2, 3])
+        }
+    }
+
+    fn unix_now() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    // @internal
+    #[test]
+    fn test_proof_is_expired_once_its_expiry_time_has_passed() {
+        assert!(proof_expiring_at(1, unix_now() - 100).is_expired());
+        assert!(!proof_expiring_at(1, unix_now() + 1000).is_expired());
+    }
+
+    // @internal
+    #[test]
+    fn test_cleanup_expired_counts_and_removes_only_expired_proofs() {
+        let store = SqliteRecoveryProofStore::in_memory().unwrap();
+        store.store(proof_expiring_at(1, unix_now() - 100));
+        store.store(proof_expiring_at(2, unix_now() - 100));
+        store.store(proof_expiring_at(3, unix_now() + 1000));
+
+        let removed = store.cleanup_expired();
+
+        assert_eq!(removed, 2);
+        assert!(store.get(&[1; 32]).is_none());
+        assert!(store.get(&[3; 32]).is_some());
+    }
+
     fn test_store_and_get_impl(store: &dyn RecoveryProofStore) {
         let key_hash = [0x01u8; 32];
         let proof_data = vec![1, 2, 3, 4, 5];

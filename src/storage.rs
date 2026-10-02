@@ -512,6 +512,40 @@ pub fn create_blob_store(backend: StorageBackend, data_dir: Option<&Path>) -> Bo
 mod tests {
     use super::*;
 
+    fn unix_now() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    // @internal
+    #[test]
+    fn test_blob_is_expired_once_its_age_reaches_the_ttl() {
+        let blob = StoredBlob::with_metadata(vec![1], unix_now() - 100, 0);
+
+        assert!(blob.is_expired(Duration::from_secs(50)));
+        assert!(!blob.is_expired(Duration::from_secs(1000)));
+    }
+
+    // @internal
+    #[test]
+    fn test_shutdown_checkpoints_the_wal_into_the_database_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteBlobStore::open(dir.path().join("blobs.db")).unwrap();
+        store.store("recipient-1", StoredBlob::new(vec![1, 2, 3]));
+        let wal_len = || {
+            std::fs::metadata(dir.path().join("blobs.db-wal"))
+                .unwrap()
+                .len()
+        };
+        assert!(wal_len() > 0, "the write should sit in the WAL first");
+
+        store.shutdown();
+
+        assert_eq!(wal_len(), 0);
+    }
+
     fn test_store_impl(store: &dyn BlobStore) {
         let blob = StoredBlob::new(vec![1, 2, 3]);
         let blob_id = blob.id.clone();

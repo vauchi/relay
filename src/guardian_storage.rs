@@ -228,6 +228,21 @@ impl GuardianStore for SqliteGuardianStore {
 mod tests {
     use super::*;
 
+    // @internal
+    #[test]
+    fn test_set_is_expired_once_its_expiry_time_has_passed() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let set = StoredGuardianSet {
+            expires_at_secs: now - 100,
+            ..StoredGuardianSet::new([0x09; 32], vec![vec![1]])
+        };
+
+        assert!(set.is_expired());
+    }
+
     fn make_entries(count: usize) -> Vec<Vec<u8>> {
         (0..count).map(|i| vec![i as u8; 32]).collect()
     }
