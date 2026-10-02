@@ -23,4 +23,19 @@ exclude_re = [
     # cleanup line is logged; the count it guards is asserted through
     # run_gossip_round's GossipRound.
     "replace > with (==|<|>=) in run_gossip_task",
+
+    # Equivalent. handle_exchange_offer_logic takes one token from the
+    # global offer bucket and one from the per-payload bucket of the same
+    # limiter, so both have the same size and refill rate and the global
+    # one always runs out first. With a constant hash every payload shares
+    # one bucket, which empties in step with the global one: no request is
+    # decided differently. (The per-payload limit itself adds nothing;
+    # vauchi/private#471.)
+    "replace rate_limit_hash -> u64 with (0|1)",
+
+    # Boundary of a deliberately conservative size estimate. `>` and `>=`
+    # differ only when the estimated page lands exactly on
+    # MAX_FETCH_RESPONSE_BYTES; both keep the page within the budget, and
+    # a test for it would pin the estimate's constants, not behaviour.
+    "replace > with >= in handle_fetch_logic",
 ]
