@@ -59,4 +59,10 @@ exclude_re = [
     # does not, and equals what sysconf returns on x86_64 Linux: swapping
     # the branches yields the same number.
     "replace <= with > in (ticks_per_second|page_size)",
+
+    # Log-only. log_removed writes one line when a sweep removed something
+    # and nothing otherwise; the counts it reports are returned by the
+    # sweeps and asserted there.
+    "in log_removed$",
+    "replace log_removed with \\(\\)",
 ]
