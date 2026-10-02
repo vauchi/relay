@@ -49,21 +49,26 @@ impl EscrowStore {
         }
     }
 
-    // TODO(PFC): Escrow methods embed Instant::now() — see 2026-07-06-relay-pfc-violations R17
     /// Handle an escrow message and return the appropriate response.
     pub fn handle(&self, msg: EscrowMessage) -> EscrowResponse {
+        self.handle_at(msg, Instant::now())
+    }
+
+    /// [`Self::handle`] as of `now`, so each decision is a pure function of
+    /// its inputs (relay-pfc-violations R17).
+    pub fn handle_at(&self, msg: EscrowMessage, now: Instant) -> EscrowResponse {
         match msg {
             EscrowMessage::Put {
                 gate_hash,
                 slot_hash,
                 blob,
                 ttl_seconds,
-            } => self.put(&gate_hash, &slot_hash, blob, ttl_seconds),
+            } => self.put(&gate_hash, &slot_hash, blob, ttl_seconds, now),
             EscrowMessage::Get {
                 gate_hash,
                 slot_hash,
-            } => self.get(&gate_hash, &slot_hash),
-            EscrowMessage::Count { gate_hash } => self.count(&gate_hash),
+            } => self.get(&gate_hash, &slot_hash, now),
+            EscrowMessage::Count { gate_hash } => self.count(&gate_hash, now),
         }
     }
 
@@ -73,6 +78,7 @@ impl EscrowStore {
         slot_hash_hex: &str,
         blob: String,
         ttl_seconds: u32,
+        now: Instant,
     ) -> EscrowResponse {
         // Validate blob size (base64 decoded upper bound).
         let decoded_upper_bound = blob.len() * 3 / 4;
@@ -96,7 +102,6 @@ impl EscrowStore {
         };
 
         let mut gates = self.gates.write();
-        let now = Instant::now();
         let expires_at = now + Duration::from_secs(u64::from(ttl_seconds));
 
         if let Some(gate) = gates.get_mut(&gate_hash) {
@@ -133,7 +138,7 @@ impl EscrowStore {
         EscrowResponse::Stored
     }
 
-    fn get(&self, gate_hash_hex: &str, slot_hash_hex: &str) -> EscrowResponse {
+    fn get(&self, gate_hash_hex: &str, slot_hash_hex: &str, now: Instant) -> EscrowResponse {
         let gate_hash = match hex_to_hash(gate_hash_hex) {
             Some(h) => h,
             None => return EscrowResponse::NotFound,
@@ -145,7 +150,7 @@ impl EscrowStore {
 
         let gates = self.gates.read();
         let gate = match gates.get(&gate_hash) {
-            Some(g) if Instant::now() <= g.expires_at => g,
+            Some(g) if now <= g.expires_at => g,
             _ => return EscrowResponse::NotFound,
         };
 
@@ -171,7 +176,7 @@ impl EscrowStore {
         }
     }
 
-    fn count(&self, gate_hash_hex: &str) -> EscrowResponse {
+    fn count(&self, gate_hash_hex: &str, now: Instant) -> EscrowResponse {
         let gate_hash = match hex_to_hash(gate_hash_hex) {
             Some(h) => h,
             None => return EscrowResponse::NotFound,
@@ -179,7 +184,7 @@ impl EscrowStore {
 
         let gates = self.gates.read();
         match gates.get(&gate_hash) {
-            Some(gate) if Instant::now() <= gate.expires_at => EscrowResponse::Count {
+            Some(gate) if now <= gate.expires_at => EscrowResponse::Count {
                 count: gate.slots.len() as u8,
             },
             _ => EscrowResponse::NotFound,
@@ -190,9 +195,13 @@ impl EscrowStore {
     ///
     /// Returns the number of gates removed.
     pub fn cleanup_expired(&self) -> usize {
+        self.cleanup_expired_at(Instant::now())
+    }
+
+    /// [`Self::cleanup_expired`] as of `now`.
+    pub fn cleanup_expired_at(&self, now: Instant) -> usize {
         let mut gates = self.gates.write();
         let before = gates.len();
-        let now = Instant::now();
         gates.retain(|_, gate| now <= gate.expires_at);
         before - gates.len()
     }

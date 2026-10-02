@@ -142,11 +142,21 @@ impl ExchangeBroker {
     /// Store an offer and return a 6-digit code.
     ///
     /// The optional `ttl_secs` overrides the broker's default TTL.
-    // TODO(PFC): Instant::now() embedded — see 2026-07-06-relay-pfc-violations R8
     pub fn create_offer(
         &self,
         payload: String,
         ttl_secs: Option<u64>,
+    ) -> Result<String, ExchangeError> {
+        self.create_offer_at(payload, ttl_secs, Instant::now())
+    }
+
+    /// [`Self::create_offer`] as of `now`. Each `_at` method takes the time
+    /// as input so expiry is a pure decision (relay-pfc-violations R8).
+    pub fn create_offer_at(
+        &self,
+        payload: String,
+        ttl_secs: Option<u64>,
+        now: Instant,
     ) -> Result<String, ExchangeError> {
         // S4: Reject oversized payloads before acquiring the lock.
         if payload.len() > MAX_EXCHANGE_PAYLOAD_BYTES {
@@ -168,7 +178,6 @@ impl ExchangeBroker {
 
         let code = Self::generate_code_inner(&offers)?;
         let ttl = ttl_secs.map_or(self.default_ttl, Duration::from_secs);
-        let now = Instant::now();
 
         let offer = ExchangeOffer {
             payload,
@@ -188,6 +197,16 @@ impl ExchangeBroker {
     /// The responder provides their `response` payload which is stored
     /// for the initiator to retrieve via [`complete_offer`].
     pub fn claim_offer(&self, code: &str, response: String) -> Result<String, ExchangeError> {
+        self.claim_offer_at(code, response, Instant::now())
+    }
+
+    /// [`Self::claim_offer`] as of `now`.
+    pub fn claim_offer_at(
+        &self,
+        code: &str,
+        response: String,
+        now: Instant,
+    ) -> Result<String, ExchangeError> {
         // S4: Reject oversized response payloads before acquiring the lock.
         if response.len() > MAX_EXCHANGE_PAYLOAD_BYTES {
             return Err(ExchangeError::PayloadTooLarge);
@@ -196,7 +215,7 @@ impl ExchangeBroker {
         let mut offers = self.offers.write();
         let offer = offers.get_mut(code).ok_or(ExchangeError::CodeNotFound)?;
 
-        if Instant::now() > offer.expires_at {
+        if now > offer.expires_at {
             return Err(ExchangeError::CodeExpired);
         }
         if offer.claimed {
@@ -212,10 +231,15 @@ impl ExchangeBroker {
     ///
     /// The offer is removed after completion.
     pub fn complete_offer(&self, code: &str) -> Result<String, ExchangeError> {
+        self.complete_offer_at(code, Instant::now())
+    }
+
+    /// [`Self::complete_offer`] as of `now`.
+    pub fn complete_offer_at(&self, code: &str, now: Instant) -> Result<String, ExchangeError> {
         let mut offers = self.offers.write();
         let offer = offers.get(code).ok_or(ExchangeError::CodeNotFound)?;
 
-        if Instant::now() > offer.expires_at {
+        if now > offer.expires_at {
             return Err(ExchangeError::CodeExpired);
         }
         if !offer.claimed {
@@ -235,9 +259,13 @@ impl ExchangeBroker {
     ///
     /// Returns the number of offers removed.
     pub fn cleanup_expired(&self) -> usize {
+        self.cleanup_expired_at(Instant::now())
+    }
+
+    /// [`Self::cleanup_expired`] as of `now`.
+    pub fn cleanup_expired_at(&self, now: Instant) -> usize {
         let mut offers = self.offers.write();
         let before = offers.len();
-        let now = Instant::now();
         offers.retain(|_, offer| now < offer.expires_at);
         before - offers.len()
     }
