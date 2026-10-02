@@ -313,6 +313,54 @@ mod tests {
     use super::*;
     use ohttp::{ClientRequest, KeyConfig};
 
+    // @internal
+    #[test]
+    fn test_io_error_displays_its_cause() {
+        let error = OhttpGatewayError::Io("disk full".to_string());
+
+        assert_eq!(error.to_string(), "io error: disk full");
+    }
+
+    // Debug must describe the gateway without printing key material.
+    // @internal
+    #[test]
+    fn test_debug_shows_config_length_and_rotation_only() {
+        let gw = OhttpGateway::with_rotation_secs(60).unwrap();
+        let config_len = gw.encoded_key_config().len();
+
+        assert_eq!(
+            format!("{gw:?}"),
+            format!(
+                "OhttpGateway {{ encoded_config_len: {config_len}, rotation_interval: 60s, .. }}"
+            )
+        );
+    }
+
+    // @internal
+    #[test]
+    fn test_from_key_file_persists_a_32_byte_seed_and_reloads_the_same_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ohttp.seed");
+
+        let first = OhttpGateway::from_key_file(&path, 3600).unwrap();
+        let second = OhttpGateway::from_key_file(&path, 3600).unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap().len(), 32);
+        assert_eq!(first.encoded_key_config(), second.encoded_key_config());
+    }
+
+    // @internal
+    #[test]
+    fn test_from_key_file_replaces_a_seed_of_the_wrong_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ohttp.seed");
+        std::fs::write(&path, [7u8; 10]).unwrap();
+
+        OhttpGateway::from_key_file(&path, 3600).unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap().len(), 32);
+    }
+
     #[test]
     fn test_gateway_new_produces_encoded_config() {
         let gw = OhttpGateway::new().expect("gateway construction must succeed");

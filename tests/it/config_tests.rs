@@ -566,13 +566,10 @@ fn test_parse_warnings_multiple_invalid_vars() {
     );
 }
 
-/// from_env() (thin wrapper) still works and returns config without panicking.
+/// A value that fails to parse leaves the field at its default.
 // @internal
 #[test]
-fn test_from_env_wrapper_still_works() {
-    // Even with a bad value, from_env() must not panic — it discards warnings silently.
-    // We can't control the real process environment here, so we exercise the pure
-    // from_map path with a bad value to prove the fallback logic.
+fn test_from_map_falls_back_to_default_on_parse_failure() {
     let mut vars = HashMap::new();
     vars.insert(
         "RELAY_MAX_CONNECTIONS".to_string(),
@@ -583,7 +580,7 @@ fn test_from_env_wrapper_still_works() {
     assert_eq!(
         config.network.max_connections,
         RelayConfig::default().network.max_connections,
-        "from_env() wrapper must fall back to default on parse failure"
+        "an unparsable value must leave the default in place"
     );
 }
 
@@ -661,4 +658,24 @@ fn test_from_map_ignores_real_environment() {
         !warnings.iter().any(|w| w.contains("RELAY_MAX_CONNECTIONS")),
         "No warning expected when map provides a valid value"
     );
+}
+
+/// Boolean flags are on for exactly "true" and "1".
+// @internal
+#[rstest]
+#[case::federation("RELAY_FEDERATION_ENABLED", |c: &RelayConfig| c.federation.enabled)]
+#[case::gossip("RELAY_FEDERATION_GOSSIP_ENABLED", |c: &RelayConfig| c.federation.gossip_enabled)]
+#[case::http_api("RELAY_HTTP_API_ENABLED", |c: &RelayConfig| c.http_api.enabled)]
+#[case::ohttp("RELAY_OHTTP_ENABLED", |c: &RelayConfig| c.http_api.ohttp_enabled)]
+fn test_boolean_flags_are_on_for_true_and_1_only(
+    #[case] env_var: &str,
+    #[case] flag: fn(&RelayConfig) -> bool,
+) {
+    for (value, expected) in [("true", true), ("1", true), ("false", false), ("0", false)] {
+        let vars = HashMap::from([(env_var.to_string(), value.to_string())]);
+
+        let (config, _warnings) = RelayConfig::from_map(&vars);
+
+        assert_eq!(flag(&config), expected, "{env_var}={value}");
+    }
 }

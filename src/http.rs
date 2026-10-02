@@ -261,6 +261,15 @@ mod tests {
         assert_eq!(classify_connection(req), ConnectionRoute::RejectWebSocket);
     }
 
+    // A browser's Upgrade-Insecure-Requests header contains the word
+    // "upgrade" but is not a WebSocket upgrade.
+    // @internal
+    #[test]
+    fn test_classify_plain_get_mentioning_upgrade_is_not_a_websocket_upgrade() {
+        let req = b"GET / HTTP/1.1\r\nHost: relay\r\nUpgrade-Insecure-Requests: 1\r\nConnection: keep-alive\r\n\r\n";
+        assert_eq!(classify_connection(req), ConnectionRoute::NotFound);
+    }
+
     // @internal
     #[test]
     fn test_classify_non_federation_websocket_rejected() {

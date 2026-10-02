@@ -323,6 +323,31 @@ mod tests {
         assert_eq!(store.hint_count(), 2);
     }
 
+    // @internal
+    #[test]
+    fn test_sqlite_get_hints_many_returns_hints_for_exactly_the_given_routes() {
+        let store = SqliteForwardingHintStore::in_memory().unwrap();
+        for route in ["route-1", "route-2", "route-3"] {
+            store.store_hint(ForwardingHint {
+                routing_id: route.to_string(),
+                blob_id: format!("blob-of-{route}"),
+                target_relay: "https://peer-a:8080".to_string(),
+                created_at_secs: 1000,
+                expires_at_secs: 9999999999,
+            });
+        }
+
+        let mut found: Vec<String> = store
+            .get_hints_many(&["route-1", "route-3"])
+            .into_iter()
+            .map(|hint| hint.routing_id)
+            .collect();
+        found.sort();
+
+        assert_eq!(found, vec!["route-1".to_string(), "route-3".to_string()]);
+        assert!(store.get_hints_many(&[]).is_empty());
+    }
+
     // SQLite tests (using in-memory SQLite)
     #[test]
     fn test_sqlite_store_and_retrieve() {
