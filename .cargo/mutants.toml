@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# cargo-mutants configuration for vauchi-relay
+# See: https://mutants.rs/config-file.html
+
+# Mutants no test can catch.
+#
+# Each entry is a regex matched against cargo-mutants' textual mutant
+# description (`path:LINE:COL: replace X with Y in fn`). Entries anchor on
+# the function and operator, not the line, so they survive edits above
+# them. Add one only with the reason it cannot be observed; a mutant a
+# test could catch gets the test instead (vauchi/private#440).
+exclude_re = [
+    # Equivalent. With capacity_max_bytes == 0 the ratio on the next line
+    # is 0/0 = NaN or n/0 = inf, and neither is below any threshold, so
+    # the peer is refused with or without this guard. The guard stays
+    # because it says so without leaning on float semantics.
+    "replace > with >= in PeerRegistry::get_peer_with_capacity",
+
+    # Log-only. The one comparison in run_gossip_task decides whether a
+    # cleanup line is logged; the count it guards is asserted through
+    # run_gossip_round's GossipRound.
+    "replace > with (==|<|>=) in gossip::run_gossip_task",
+]

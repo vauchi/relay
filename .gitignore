@@ -1,6 +1,7 @@
 # Rust
 /target/
-.cargo/
+.cargo/*
+!.cargo/mutants.toml
 
 # IDE
 .idea/
