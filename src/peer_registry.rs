@@ -885,5 +885,133 @@ pub mod gossip {
             assert_eq!(removed, 1);
             assert_eq!(registry.peer_count(), 2);
         }
+
+        fn connected_peer_with_inbox(
+            relay_id: &str,
+        ) -> (PeerInfo, tokio::sync::mpsc::Receiver<Vec<u8>>) {
+            let (sender, inbox) = tokio::sync::mpsc::channel(4);
+            let mut peer = make_configured_peer(relay_id);
+            peer.sender = Some(sender);
+            (peer, inbox)
+        }
+
+        /// `(relay_id, capacity_pct, last_seen_secs)` of each advertised peer, by id.
+        fn advertised_in(message: &[u8]) -> Vec<(String, u8, u64)> {
+            let envelope = crate::federation_protocol::decode_federation_message(message).unwrap();
+            let FederationPayload::PeerAdvertisement { peers } = envelope.payload else {
+                panic!("expected a PeerAdvertisement, got {:?}", envelope.payload);
+            };
+            let mut advertised: Vec<(String, u8, u64)> = peers
+                .into_iter()
+                .map(|p| (p.relay_id, p.capacity_pct, p.last_seen_secs))
+                .collect();
+            advertised.sort();
+            advertised
+        }
+
+        // @internal
+        #[test]
+        fn test_gossip_round_advertises_every_peer_but_ourselves_to_connected_peers() {
+            let registry = PeerRegistry::new(0.95);
+            let (ourselves, mut our_inbox) = connected_peer_with_inbox("my-relay");
+            registry.register_peer(ourselves);
+            let (mut quarter_full, mut peer_inbox) = connected_peer_with_inbox("peer-a");
+            quarter_full.capacity_used_bytes = 250;
+            registry.register_peer(quarter_full);
+            let mut unknown_capacity = make_configured_peer("peer-b");
+            unknown_capacity.capacity_used_bytes = 5;
+            unknown_capacity.capacity_max_bytes = 0;
+            unknown_capacity.status = PeerStatus::Disconnected;
+            registry.register_peer(unknown_capacity);
+
+            let round = run_gossip_round("my-relay", &registry, 3600, 1000);
+
+            assert_eq!(
+                round,
+                GossipRound {
+                    advertised: 2,
+                    sent: 1,
+                    removed_stale: 0
+                }
+            );
+            assert_eq!(
+                advertised_in(&peer_inbox.try_recv().unwrap()),
+                vec![
+                    ("peer-a".to_string(), 25, 1000),
+                    ("peer-b".to_string(), 0, 1000)
+                ]
+            );
+            assert!(our_inbox.try_recv().is_err());
+        }
+
+        // @internal
+        #[test]
+        fn test_gossip_round_with_nothing_to_advertise_sends_nothing() {
+            let registry = PeerRegistry::new(0.95);
+            let (ourselves, mut our_inbox) = connected_peer_with_inbox("my-relay");
+            registry.register_peer(ourselves);
+
+            let round = run_gossip_round("my-relay", &registry, 3600, 1000);
+
+            assert_eq!(
+                round,
+                GossipRound {
+                    advertised: 0,
+                    sent: 0,
+                    removed_stale: 0
+                }
+            );
+            assert!(our_inbox.try_recv().is_err());
+        }
+
+        // @internal
+        #[test]
+        fn test_gossip_round_drops_stale_discovered_peers() {
+            let registry = PeerRegistry::new(0.95);
+            registry.add_discovered_peer("stale", "https://stale:8080", 50, 100);
+
+            let round = run_gossip_round("my-relay", &registry, 3600, 5000);
+
+            assert_eq!(
+                round,
+                GossipRound {
+                    advertised: 1,
+                    sent: 0,
+                    removed_stale: 1
+                }
+            );
+            assert_eq!(registry.peer_count(), 0);
+        }
+
+        // Paused clock: the runtime jumps to the task's next timer as soon
+        // as everything is idle, so the interval costs no real time (CC-06).
+        // @internal
+        #[tokio::test(start_paused = true)]
+        async fn test_gossip_task_runs_a_round_each_interval() {
+            let registry = Arc::new(PeerRegistry::new(0.95));
+            let (peer, mut peer_inbox) = connected_peer_with_inbox("peer-a");
+            registry.register_peer(peer);
+            let task = tokio::spawn(run_gossip_task(
+                "my-relay".to_string(),
+                registry,
+                Duration::from_secs(120),
+                3600,
+            ));
+
+            // Bounded in virtual time, so a task that never sends fails the
+            // test instead of hanging it.
+            let two_rounds = tokio::time::timeout(Duration::from_secs(600), async {
+                let first = peer_inbox.recv().await.unwrap();
+                let second = peer_inbox.recv().await.unwrap();
+                (first, second)
+            })
+            .await;
+            task.abort();
+            let (first, second) = two_rounds.unwrap();
+
+            let expected = vec![("peer-a".to_string(), 10, 1000)];
+            assert_eq!(advertised_in(&first), expected);
+            assert_eq!(advertised_in(&second), expected);
+        }
     }
 }

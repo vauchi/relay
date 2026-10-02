@@ -91,6 +91,8 @@ tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]
 tempfile = "3.0"
+# Paused clock for tests of interval-driven tasks (CC-06: no real-time waits)
+tokio = { version = "1", features = ["test-util"] }
 # Certificate generation for tests — use aws_lc_rs to reuse the production crypto provider
 rcgen = { version = "0.14.7", default-features = false, features = ["aws_lc_rs", "pem"] }
 # OHTTP client API used only by unit tests
