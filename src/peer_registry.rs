@@ -335,6 +335,17 @@ mod tests {
         assert!(registry.get_peer_with_capacity().is_none());
     }
 
+    // @internal
+    #[test]
+    fn test_get_peer_with_capacity_none_at_exactly_the_threshold() {
+        let registry = PeerRegistry::new(0.5);
+        registry.register_peer(make_peer("peer-a", 500, 1000));
+        let (tx, _rx) = mpsc::channel(16);
+        registry.set_sender("peer-a", tx);
+
+        assert!(registry.get_peer_with_capacity().is_none());
+    }
+
     #[test]
     fn test_set_status_draining() {
         let registry = PeerRegistry::new(0.95);
@@ -397,6 +408,57 @@ mod tests {
 
         let peers = registry.all_peers();
         assert_eq!(peers[0].last_seen_secs, 2000); // unchanged
+    }
+
+    // @internal
+    #[test]
+    fn test_add_discovered_peer_fresher_gossip_updates_capacity_estimate() {
+        let registry = PeerRegistry::new(0.95);
+        registry.register_peer(make_peer("peer-a", 100, 1000));
+
+        registry.add_discovered_peer("peer-a", "https://peer-a:8080", 80, 1001);
+
+        assert_eq!(registry.all_peers()[0].capacity_used_bytes, 800);
+    }
+
+    // @internal
+    #[test]
+    fn test_add_discovered_peer_same_timestamp_leaves_capacity_estimate() {
+        let registry = PeerRegistry::new(0.95);
+        registry.register_peer(make_peer("peer-a", 100, 1000));
+
+        registry.add_discovered_peer("peer-a", "https://peer-a:8080", 80, 1000);
+
+        assert_eq!(registry.all_peers()[0].capacity_used_bytes, 100);
+    }
+
+    // @internal
+    #[test]
+    fn test_add_discovered_peer_keeps_usage_when_max_capacity_is_unknown() {
+        let registry = PeerRegistry::new(0.95);
+        registry.register_peer(make_peer("peer-a", 7, 0));
+
+        registry.add_discovered_peer("peer-a", "https://peer-a:8080", 80, 1001);
+
+        assert_eq!(registry.all_peers()[0].capacity_used_bytes, 7);
+    }
+
+    // @internal
+    #[test]
+    fn test_remove_stale_removes_peers_aged_exactly_the_ttl() {
+        let registry = PeerRegistry::new(0.95);
+        registry.add_discovered_peer("aged-ttl", "https://aged:8080", 50, 1400);
+        registry.add_discovered_peer("younger", "https://younger:8080", 50, 1401);
+
+        let removed = registry.remove_stale_peers(5000, 3600);
+
+        assert_eq!(removed, 1);
+        let remaining: Vec<String> = registry
+            .all_peers()
+            .into_iter()
+            .map(|p| p.relay_id)
+            .collect();
+        assert_eq!(remaining, vec!["younger".to_string()]);
     }
 
     #[test]
