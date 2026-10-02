@@ -24,20 +24,18 @@ struct TokenBucket {
     last_update: Instant,
 }
 
-// TODO(PFC): TokenBucket embeds Instant::now() — see 2026-07-06-relay-pfc-violations R18
 impl TokenBucket {
-    fn new(max_tokens: u32, refill_rate: f64) -> Self {
+    fn new(max_tokens: u32, refill_rate: f64, now: Instant) -> Self {
         TokenBucket {
             tokens: max_tokens as f64,
             max_tokens: max_tokens as f64,
             refill_rate,
-            last_update: Instant::now(),
+            last_update: now,
         }
     }
 
-    /// Refills tokens based on elapsed time.
-    fn refill(&mut self) {
-        let now = Instant::now();
+    /// Refills tokens based on the time elapsed up to `now`.
+    fn refill(&mut self, now: Instant) {
         let elapsed = now.duration_since(self.last_update).as_secs_f64();
         self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.max_tokens);
         self.last_update = now;
@@ -46,8 +44,8 @@ impl TokenBucket {
     /// Tries to consume one token.
     ///
     /// Returns true if successful, false if rate limited.
-    fn try_consume(&mut self) -> bool {
-        self.refill();
+    fn try_consume(&mut self, now: Instant) -> bool {
+        self.refill(now);
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
             true
@@ -57,14 +55,17 @@ impl TokenBucket {
     }
 
     /// Checks if a token is available without consuming.
-    #[allow(dead_code)]
-    fn can_consume(&mut self) -> bool {
-        self.refill();
+    fn can_consume(&mut self, now: Instant) -> bool {
+        self.refill(now);
         self.tokens >= 1.0
     }
 }
 
 /// Rate limiter for multiple clients.
+///
+/// Each time-dependent operation has an `_at` form taking `now`, so the
+/// decision is a pure function of its inputs; the plain form reads the
+/// clock and delegates (relay-pfc-violations R18).
 pub struct RateLimiter {
     /// Per-client token buckets.
     buckets: RwLock<HashMap<String, TokenBucket>>,
@@ -83,27 +84,42 @@ impl RateLimiter {
         }
     }
 
+    fn new_bucket(&self, now: Instant) -> TokenBucket {
+        TokenBucket::new(self.max_per_minute, self.max_per_minute as f64 / 60.0, now)
+    }
+
     /// Checks if a request from this client would be rate limited.
     ///
     /// Does not consume a token.
     #[allow(dead_code)]
     pub fn check(&self, client_id: &str) -> bool {
+        self.check_at(client_id, Instant::now())
+    }
+
+    /// [`Self::check`] as of `now`.
+    #[allow(dead_code)]
+    pub fn check_at(&self, client_id: &str, now: Instant) -> bool {
         let mut buckets = self.buckets.write();
-        let bucket = buckets.entry(client_id.to_string()).or_insert_with(|| {
-            TokenBucket::new(self.max_per_minute, self.max_per_minute as f64 / 60.0)
-        });
-        bucket.can_consume()
+        let bucket = buckets
+            .entry(client_id.to_string())
+            .or_insert_with(|| self.new_bucket(now));
+        bucket.can_consume(now)
     }
 
     /// Tries to consume a token for this client.
     ///
     /// Returns true if allowed, false if rate limited.
     pub fn consume(&self, client_id: &str) -> bool {
+        self.consume_at(client_id, Instant::now())
+    }
+
+    /// [`Self::consume`] as of `now`.
+    pub fn consume_at(&self, client_id: &str, now: Instant) -> bool {
         let mut buckets = self.buckets.write();
-        let bucket = buckets.entry(client_id.to_string()).or_insert_with(|| {
-            TokenBucket::new(self.max_per_minute, self.max_per_minute as f64 / 60.0)
-        });
-        bucket.try_consume()
+        let bucket = buckets
+            .entry(client_id.to_string())
+            .or_insert_with(|| self.new_bucket(now));
+        bucket.try_consume(now)
     }
 
     /// Removes inactive client buckets (for memory cleanup).
@@ -111,8 +127,12 @@ impl RateLimiter {
     /// Removes buckets that haven't been accessed for the given duration.
     /// Returns the number of buckets removed.
     pub fn cleanup_inactive(&self, max_idle: std::time::Duration) -> usize {
+        self.cleanup_inactive_at(max_idle, Instant::now())
+    }
+
+    /// [`Self::cleanup_inactive`] as of `now`.
+    pub fn cleanup_inactive_at(&self, max_idle: std::time::Duration, now: Instant) -> usize {
         let mut buckets = self.buckets.write();
-        let now = Instant::now();
         let initial_count = buckets.len();
 
         buckets.retain(|_, bucket| now.duration_since(bucket.last_update) < max_idle);

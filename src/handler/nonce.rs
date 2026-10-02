@@ -15,7 +15,7 @@ pub(super) const NONCE_TTL: Duration = Duration::from_secs(120);
 const DEFAULT_NONCE_CAPACITY: usize = 200_000;
 
 /// Cleanup interval: only run `retain` every N insertions to amortize cost.
-const CLEANUP_INTERVAL: usize = 1000;
+pub(super) const CLEANUP_INTERVAL: usize = 1000;
 
 /// Tracks recently seen nonces to prevent replay attacks.
 ///
@@ -63,6 +63,12 @@ impl NonceTracker {
     /// OHTTP-10: Eviction runs every `CLEANUP_INTERVAL` insertions instead of
     /// on every call, amortizing the O(n) retain cost.
     pub fn check_and_insert(&self, nonce: &[u8]) -> bool {
+        self.check_and_insert_at(nonce, Instant::now())
+    }
+
+    /// [`Self::check_and_insert`] as of `now`, so the decision is a pure
+    /// function of its inputs (relay-pfc-violations).
+    pub fn check_and_insert_at(&self, nonce: &[u8], now: Instant) -> bool {
         let mut nonces = self.nonces.lock();
 
         // Check for replay first (O(1) lookup) — always checked
@@ -74,7 +80,7 @@ impl NonceTracker {
         let mut ops = self.ops_since_cleanup.lock();
         *ops += 1;
         if *ops >= CLEANUP_INTERVAL {
-            let cutoff = Instant::now() - NONCE_TTL;
+            let cutoff = now - NONCE_TTL;
             nonces.retain(|_, ts| *ts > cutoff);
             *ops = 0;
         }
@@ -85,7 +91,7 @@ impl NonceTracker {
         }
 
         // Insert new nonce (O(1) amortized)
-        nonces.insert(nonce.to_vec(), Instant::now());
+        nonces.insert(nonce.to_vec(), now);
         true
     }
 
