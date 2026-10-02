@@ -5,6 +5,11 @@
 # cargo-mutants configuration for vauchi-relay
 # See: https://mutants.rs/config-file.html
 
+# flame.rs is compiled only with the `flame` profiling feature, which the
+# mutation build does not enable: its mutants are never built, so every
+# one of them reads as missed.
+exclude_globs = ["src/flame.rs"]
+
 # Mutants no test can catch.
 #
 # Each entry is a regex matched against cargo-mutants' textual mutant
