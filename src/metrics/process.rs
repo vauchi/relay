@@ -170,7 +170,8 @@ struct ProcStat {
 fn parse_proc_self_stat(contents: &str) -> Option<ProcStat> {
     let after_comm = contents.rfind(')')?;
     let fields: Vec<&str> = contents[after_comm + 2..].split_whitespace().collect();
-    if fields.len() < 20 {
+    // rss, the last field read below, is the 22nd after the command name.
+    if fields.len() < 22 {
         return None;
     }
     Some(ProcStat {
@@ -183,14 +184,16 @@ fn parse_proc_self_stat(contents: &str) -> Option<ProcStat> {
     })
 }
 
-/// Parses the open-files limit out of the contents of `/proc/<pid>/limits`.
+/// Parses the soft open-files limit out of the contents of
+/// `/proc/<pid>/limits`; `None` when the line is missing or not a number.
 fn parse_max_open_files(limits: &str) -> Option<i64> {
-    for line in limits.lines() {
-        if let Some(rest) = line.strip_prefix("Max open files") {
-            return rest.split_whitespace().nth(2).and_then(|s| s.parse().ok());
-        }
-    }
-    None
+    limits
+        .lines()
+        .find_map(|line| line.strip_prefix("Max open files"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// Parses the boot time (seconds since the epoch) out of `/proc/stat`.
@@ -254,6 +257,43 @@ mod tests {
     #[test]
     fn stat_line_cut_off_after_a_few_fields_is_rejected() {
         assert_eq!(parse_proc_self_stat("4242 (relay) S 1 4242 4242"), None);
+    }
+
+    // rss is the 22nd field after the command name; a line that stops one
+    // short of it used to index out of bounds.
+    // @internal
+    #[test]
+    fn stat_line_is_accepted_only_once_it_reaches_the_last_exported_field() {
+        let fields = "S 1 2 3 4 5 6 7 8 9 10 150 50 13 14 15 16 7 18 9000 123456789 2500";
+        let complete = format!("4242 (relay) {fields}");
+        let one_field_short = complete.rsplit_once(' ').unwrap().0;
+
+        assert_eq!(parse_proc_self_stat(&complete), Some(parsed_stat()));
+        assert_eq!(parse_proc_self_stat(one_field_short), None);
+    }
+
+    // @internal
+    #[test]
+    fn max_open_files_is_the_soft_limit() {
+        let limits = "Limit                     Soft Limit           Hard Limit           Units     \n\
+                      Max cpu time              unlimited            unlimited            seconds   \n\
+                      Max open files            1024                 524288               files     \n\
+                      Max locked memory         8388608              8388608              bytes     \n";
+
+        assert_eq!(parse_max_open_files(limits), Some(1024));
+    }
+
+    // @internal
+    #[test]
+    fn max_open_files_is_absent_when_not_a_number_or_not_listed() {
+        let unlimited =
+            "Max open files            unlimited            unlimited            files     \n";
+
+        assert_eq!(parse_max_open_files(unlimited), None);
+        assert_eq!(
+            parse_max_open_files("Max cpu time  unlimited  unlimited  seconds\n"),
+            None
+        );
     }
 
     // @internal
@@ -367,6 +407,11 @@ mod tests {
         let snapshot = ProcessSnapshot::read();
 
         assert!(snapshot.open_fds >= 3, "open fds: {}", snapshot.open_fds);
+        assert!(
+            snapshot.max_fds.is_some_and(|max| max >= snapshot.open_fds),
+            "max fds: {:?}",
+            snapshot.max_fds
+        );
         assert!(snapshot.threads >= 1, "threads: {}", snapshot.threads);
         assert!(
             snapshot.resident_memory_bytes >= 1 << 20,
