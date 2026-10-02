@@ -157,6 +157,16 @@ pub fn create_federation_envelope(payload: FederationPayload) -> FederationEnvel
 mod tests {
     use super::*;
 
+    // @internal
+    #[test]
+    fn test_decode_rejects_a_frame_shorter_than_its_length_header() {
+        let two_byte_frame = padding::pad(&[0u8; 2]);
+
+        let result = decode_federation_message(&two_byte_frame);
+
+        assert_eq!(result.unwrap_err(), "Frame too short");
+    }
+
     #[test]
     fn test_peer_handshake_roundtrip() {
         let envelope = FederationEnvelope {

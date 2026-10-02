@@ -434,3 +434,126 @@ async fn unknown_payload_type_is_counted_not_erred() {
         "the ignored payload must be observable"
     );
 }
+
+// ── Control messages and request limits ────────────────────────────
+
+fn connected_peer(relay_id: &str) -> vauchi_relay::peer_registry::PeerInfo {
+    vauchi_relay::peer_registry::PeerInfo {
+        relay_id: relay_id.to_string(),
+        url: format!("https://{relay_id}:8443"),
+        capacity_used_bytes: 0,
+        capacity_max_bytes: 0,
+        status: vauchi_relay::peer_registry::PeerStatus::Connected,
+        sender: None,
+        origin: vauchi_relay::peer_registry::PeerOrigin::Configured,
+        last_seen_secs: 1000,
+    }
+}
+
+// @internal
+#[tokio::test]
+async fn capacity_report_updates_the_reporting_peers_capacity() {
+    let (state, _storage) = fed_state();
+    let registry = state.peer_registry.clone();
+    registry.register_peer(connected_peer("peer-1"));
+    let app = create_federation_router(state);
+    let env = serde_json::to_value(create_federation_envelope(
+        FederationPayload::CapacityReport {
+            used_bytes: 750,
+            max_bytes: 1000,
+            blob_count: 3,
+        },
+    ))
+    .unwrap();
+
+    let resp = post_msg(&app, Some("peer-1"), &env).await;
+
+    assert_eq!(resp.status(), 204);
+    let peer = &registry.all_peers()[0];
+    assert_eq!(
+        (peer.capacity_used_bytes, peer.capacity_max_bytes),
+        (750, 1000)
+    );
+}
+
+// @internal
+#[tokio::test]
+async fn peer_advertisement_merges_new_peers_and_acks_when_gossip_enabled() {
+    let (mut state, _storage) = fed_state();
+    state.config = Arc::new(RelayConfig {
+        federation: FederationConfig {
+            gossip_enabled: true,
+            relay_id: "self".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let registry = state.peer_registry.clone();
+    let app = create_federation_router(state);
+    let env = serde_json::to_value(create_federation_envelope(
+        FederationPayload::PeerAdvertisement {
+            peers: vec![vauchi_relay::federation_protocol::AdvertisedPeer {
+                relay_id: "new-peer".to_string(),
+                url: "https://new-peer.example:8443".to_string(),
+                capacity_pct: 10,
+                last_seen_secs: 1000,
+            }],
+        },
+    ))
+    .unwrap();
+
+    let resp = post_msg(&app, Some("peer-1"), &env).await;
+
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["payload"]["type"], "PeerAdvertisementAck");
+    assert_eq!(body["payload"]["new_peers_count"], 1);
+    assert_eq!(registry.all_peers()[0].relay_id, "new-peer");
+}
+
+// @internal
+#[tokio::test]
+async fn message_with_empty_relay_id_header_is_rejected() {
+    let (state, _storage) = fed_state();
+    let app = create_federation_router(state);
+    let env = serde_json::to_value(create_federation_envelope(FederationPayload::DrainNotice {
+        drain_timeout_secs: 60,
+    }))
+    .unwrap();
+
+    let resp = post_msg(&app, Some(""), &env).await;
+
+    assert_eq!(resp.status(), 400);
+}
+
+async fn post_body_of_len(app: &axum::Router, len: usize) -> ax_response::Response {
+    let req = ax_http::Request::builder()
+        .method("POST")
+        .uri("/v2/federation/message")
+        .header("content-type", "application/json")
+        .header("X-Federation-Relay-Id", "peer-1")
+        .body(ax_body::Body::from(vec![b'x'; len]))
+        .unwrap();
+    app.clone().oneshot(req).await.unwrap()
+}
+
+// The limit is max_message_size plus 4096 bytes of framing headroom.
+// @internal
+#[tokio::test]
+async fn body_limit_is_the_max_message_size_plus_framing_headroom() {
+    let (mut state, _storage) = fed_state();
+    let mut config = RelayConfig::default();
+    config.network.max_message_size = 8192;
+    state.config = Arc::new(config);
+    let app = create_federation_router(state);
+
+    let at_limit = post_body_of_len(&app, 8192 + 4096).await;
+    let over_limit = post_body_of_len(&app, 8192 + 4097).await;
+
+    assert_eq!(
+        at_limit.status(),
+        400,
+        "an at-limit body reaches the decoder"
+    );
+    assert_eq!(over_limit.status(), 413);
+}

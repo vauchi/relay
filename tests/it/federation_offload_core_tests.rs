@@ -149,3 +149,31 @@ fn apply_offload_rejects_at_capacity() {
         "rejected blob not stored"
     );
 }
+
+// @internal
+#[test]
+fn apply_offload_accepts_while_a_non_empty_store_is_below_the_refuse_ratio() {
+    let store = SqliteBlobStore::in_memory().expect("in-memory store");
+    store.store(
+        "already-here",
+        vauchi_relay::storage::StoredBlob::new(vec![0u8; 100]),
+    );
+    let padded = padding::pad(b"z");
+    let hash = integrity::compute_integrity_hash(&padded);
+
+    // 100 of 1000 bytes used: a ratio of 0.1, well under 0.95.
+    let outcome = apply_offload(
+        &store,
+        1000,
+        REFUSE,
+        "blob-5".to_string(),
+        "routing-mno",
+        padded,
+        1_700_000_000,
+        &hash,
+        0,
+    );
+
+    assert_eq!(unwrap_ack(&outcome), ("blob-5", true, None));
+    assert_eq!(store.take("routing-mno").len(), 1);
+}

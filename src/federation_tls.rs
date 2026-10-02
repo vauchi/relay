@@ -179,6 +179,19 @@ mod tests {
         assert!(!is_mtls_configured(&config));
     }
 
+    // @internal
+    #[test]
+    fn test_is_mtls_configured_needs_more_than_the_ca() {
+        let config = RelayConfig {
+            federation: crate::config::FederationConfig {
+                tls_ca_path: Some("/path/to/ca.pem".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(!is_mtls_configured(&config));
+    }
+
     #[test]
     fn test_load_federation_tls_not_configured() {
         let config = RelayConfig::default();

@@ -147,16 +147,27 @@ fn offload_manager_over_threshold(
     peer_addr: std::net::SocketAddr,
     client_config: Arc<tokio_rustls::rustls::ClientConfig>,
 ) -> vauchi_relay::federation_connector::OffloadManager {
+    offload_manager_with(peer_addr, client_config, 0.01, 100)
+}
+
+/// A manager holding one 50-byte blob, which the store counts as 94 bytes
+/// used (data + 36-byte id + 8 bytes of bookkeeping).
+fn offload_manager_with(
+    peer_addr: std::net::SocketAddr,
+    client_config: Arc<tokio_rustls::rustls::ClientConfig>,
+    offload_threshold: f64,
+    max_storage_bytes: usize,
+) -> vauchi_relay::federation_connector::OffloadManager {
     use vauchi_relay::config::StorageConfig;
     use vauchi_relay::forwarding_hints::SqliteForwardingHintStore;
 
     let config = Arc::new(RelayConfig {
         storage: StorageConfig {
-            max_storage_bytes: 100,
+            max_storage_bytes,
             ..Default::default()
         },
         federation: FederationConfig {
-            offload_threshold: 0.01,
+            offload_threshold,
             offload_refuse: 0.95,
             relay_id: "self".to_string(),
             peers: vec![format!("https://localhost:{}", peer_addr.port())],
@@ -251,4 +262,171 @@ async fn connector_offloads_after_accepted_version_handshake() {
         1,
         "blob must arrive on the peer"
     );
+}
+
+fn real_peer_router() -> axum::Router {
+    create_federation_router(FederationHttpState {
+        storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
+        config: Arc::new(RelayConfig::default()),
+        peer_registry: Arc::new(PeerRegistry::new(0.95)),
+        metrics: RelayMetrics::new(),
+        rate_limiter: Arc::new(RateLimiter::new(100_000)),
+    })
+}
+
+// @internal
+#[tokio::test]
+async fn connector_offloads_when_usage_is_exactly_at_the_threshold() {
+    let (addr, client_config) = spawn_mtls_peer(real_peer_router()).await;
+    // 94 of 188 bytes used: a ratio of exactly 0.5.
+    let manager = offload_manager_with(addr, client_config, 0.5, 188);
+
+    let sent = manager.check_and_offload().await;
+
+    assert_eq!(sent, 1);
+}
+
+// @internal
+#[tokio::test]
+async fn connector_keeps_blobs_while_usage_is_below_the_threshold() {
+    let (addr, client_config) = spawn_mtls_peer(real_peer_router()).await;
+    // 94 of 188 bytes used: a ratio of 0.5, under 0.9.
+    let manager = offload_manager_with(addr, client_config, 0.9, 188);
+
+    let sent = manager.check_and_offload().await;
+
+    assert_eq!(sent, 0);
+    assert_eq!(manager.storage.get_oldest_blobs(10).len(), 1);
+}
+
+// @internal
+#[tokio::test]
+async fn connector_records_a_forwarding_hint_that_expires_with_the_blob() {
+    let (addr, client_config) = spawn_mtls_peer(real_peer_router()).await;
+    let manager = offload_manager_over_threshold(addr, client_config);
+
+    manager.check_and_offload().await;
+
+    let hints = manager.hint_store.get_hints("gate-route");
+    assert_eq!(hints.len(), 1);
+    assert_eq!(
+        hints[0].target_relay,
+        format!("https://localhost:{}", addr.port())
+    );
+    assert_eq!(
+        hints[0].expires_at_secs - hints[0].created_at_secs,
+        manager.config.storage.blob_ttl_secs
+    );
+}
+
+// @internal
+#[tokio::test]
+async fn connector_skips_offload_when_peer_accepts_at_another_version() {
+    use axum::{Json, Router, routing::post};
+
+    let version_skewed = Router::new().route(
+        "/v2/federation/message",
+        post(|| async {
+            Json(create_federation_envelope(
+                FederationPayload::PeerHandshakeAck {
+                    relay_id: "peer-B".to_string(),
+                    version: 99,
+                    accepted: true,
+                    capacity_used_bytes: 0,
+                    capacity_max_bytes: 0,
+                },
+            ))
+        }),
+    );
+    let (addr, client_config) = spawn_mtls_peer(version_skewed).await;
+    let manager = offload_manager_over_threshold(addr, client_config);
+
+    let sent = manager.check_and_offload().await;
+
+    assert_eq!(sent, 0);
+    assert_eq!(manager.storage.get_oldest_blobs(10).len(), 1);
+    assert!(
+        manager
+            .metrics
+            .encode()
+            .contains("relay_federation_peer_connection_errors_total 1"),
+        "a version-skewed accept must count as a refused handshake"
+    );
+}
+
+/// A peer that accepts everything — a handshake ack to the first request,
+/// offload acks after — and records each request's content type.
+fn recording_peer(relay_id: String) -> (axum::Router, Arc<std::sync::Mutex<Vec<String>>>) {
+    use axum::{Json, Router, http::HeaderMap, routing::post};
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorder = seen.clone();
+    let router = Router::new().route(
+        "/v2/federation/message",
+        post(move |headers: HeaderMap| {
+            let recorder = recorder.clone();
+            let relay_id = relay_id.clone();
+            async move {
+                let content_type = headers
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                let is_first_request = {
+                    let mut seen = recorder.lock().unwrap();
+                    seen.push(content_type);
+                    seen.len() == 1
+                };
+                Json(create_federation_envelope(if is_first_request {
+                    FederationPayload::PeerHandshakeAck {
+                        relay_id,
+                        version: vauchi_relay::federation_protocol::FEDERATION_PROTOCOL_VERSION,
+                        accepted: true,
+                        capacity_used_bytes: 0,
+                        capacity_max_bytes: 0,
+                    }
+                } else {
+                    FederationPayload::OffloadAck {
+                        blob_id: "recorded".to_string(),
+                        accepted: true,
+                        reason: None,
+                    }
+                }))
+            }
+        }),
+    );
+    (router, seen)
+}
+
+// @internal
+#[tokio::test]
+async fn connector_sends_the_handshake_as_json_and_the_blob_as_raw_binary() {
+    let (peer, seen) = recording_peer("peer-B".to_string());
+    let (addr, client_config) = spawn_mtls_peer(peer).await;
+    let manager = offload_manager_over_threshold(addr, client_config);
+
+    let sent = manager.check_and_offload().await;
+
+    assert_eq!(sent, 1);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![
+            "application/json".to_string(),
+            vauchi_relay::federation_http::OFFLOAD_CONTENT_TYPE.to_string()
+        ]
+    );
+}
+
+// The response cap must leave room for more than a bare ack: relay ids
+// are free-form strings.
+// @internal
+#[tokio::test]
+async fn connector_accepts_a_handshake_ack_larger_than_a_kibibyte() {
+    let (peer, _seen) = recording_peer("p".repeat(2000));
+    let (addr, client_config) = spawn_mtls_peer(peer).await;
+    let manager = offload_manager_over_threshold(addr, client_config);
+
+    let sent = manager.check_and_offload().await;
+
+    assert_eq!(sent, 1);
 }
