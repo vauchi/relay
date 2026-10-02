@@ -516,6 +516,12 @@ security:deny:
 # CI_JOB_TOKEN allowlist. On main, remaining unvetted deps are auto-fixed and pushed.
 security:vet:
   extends: [.rust-runner-readonly, .security-vet-autofix-job, .verified-fetch-script]
+  # .verified-fetch-script defines before_script and, extended last, would
+  # replace the runner template's: without it the job takes whatever rustc
+  # is on the runner's PATH (Homebrew's on nell — vauchi/private#484).
+  before_script:
+    - !reference [.rust-runner-readonly, before_script]
+    - !reference [.verified-fetch-script, before_script]
   variables:
     FETCH_SCRIPT_PATH: "scripts/ci/vet-autofix.sh"
     FETCH_SCRIPT_OUTPUT: "vet-autofix.sh"
