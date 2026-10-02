@@ -551,6 +551,44 @@ mod tests {
 
     // @internal
     #[test]
+    fn gauge_inc_dec_and_sub_move_the_value() {
+        let gauge = Gauge::new("test_gauge", "A test gauge");
+        gauge.set(5);
+        gauge.inc();
+        gauge.inc();
+        gauge.dec();
+        gauge.sub(2);
+
+        let mut writer = String::new();
+        gauge.encode(&mut writer);
+
+        assert!(writer.contains("test_gauge 4"), "got: {writer}");
+    }
+
+    // @internal
+    #[test]
+    fn histogram_labels_buckets_with_their_bounds_as_written() {
+        let hist = Histogram::new("test_hist", "A test histogram");
+
+        let mut writer = String::new();
+        hist.encode(&mut writer);
+
+        assert!(
+            writer.contains("test_hist_bucket{le=\"0.005\"} 0"),
+            "got: {writer}"
+        );
+        assert!(
+            writer.contains("test_hist_bucket{le=\"1\"} 0"),
+            "got: {writer}"
+        );
+        assert!(
+            writer.contains("test_hist_bucket{le=\"2.5\"} 0"),
+            "got: {writer}"
+        );
+    }
+
+    // @internal
+    #[test]
     fn histogram_observes_sum_count_and_buckets() {
         let hist = Histogram::new("test_hist", "A test histogram");
         hist.observe(0.01); // in first bucket (0.005? no, 0.01 <= 0.01)

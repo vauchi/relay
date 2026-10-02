@@ -221,3 +221,163 @@ fn count_open_fds() -> i64 {
         .map(|entries| entries.filter_map(|e| e.ok()).count() as i64)
         .unwrap_or(0)
 }
+
+// INLINE_TEST_REQUIRED: the parsers and ProcessSnapshot are private to
+// this module; only the encoded text leaves it.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The command name holds spaces and parentheses on purpose: fields
+    // are counted from the LAST ')'.
+    const STAT: &str = "4242 (relay (test) x) S 1 4242 4242 0 -1 4194304 500 0 0 0 150 50 0 0 \
+                        20 0 7 0 9000 123456789 2500 18446744073709551615 1 1 0 0 0 0 0\n";
+
+    fn parsed_stat() -> ProcStat {
+        ProcStat {
+            utime: 150,
+            stime: 50,
+            starttime: 9000,
+            vsize: 123_456_789,
+            rss: 2500,
+            num_threads: 7,
+        }
+    }
+
+    // @internal
+    #[test]
+    fn stat_line_yields_the_exported_fields_whatever_the_command_name() {
+        assert_eq!(parse_proc_self_stat(STAT), Some(parsed_stat()));
+    }
+
+    // @internal
+    #[test]
+    fn stat_line_cut_off_after_a_few_fields_is_rejected() {
+        assert_eq!(parse_proc_self_stat("4242 (relay) S 1 4242 4242"), None);
+    }
+
+    // @internal
+    #[test]
+    fn boot_time_is_read_from_the_btime_line() {
+        let proc_stat = "cpu  1 2 3 4\nbtime 1700000000\nprocesses 5\n";
+
+        assert_eq!(parse_boot_time(proc_stat), Some(1_700_000_000));
+        assert_eq!(parse_boot_time("cpu  1 2 3 4\n"), None);
+    }
+
+    // @internal
+    #[test]
+    fn snapshot_converts_ticks_to_seconds_and_pages_to_bytes() {
+        let snapshot = ProcessSnapshot::from_parts(
+            Some(&parsed_stat()),
+            100,
+            4096,
+            12,
+            Some(1024),
+            Some(1_700_000_000),
+        );
+
+        assert_eq!(
+            snapshot,
+            ProcessSnapshot {
+                cpu_seconds: 2.0,
+                open_fds: 12,
+                max_fds: Some(1024),
+                virtual_memory_bytes: 123_456_789,
+                resident_memory_bytes: 10_240_000,
+                threads: 7,
+                start_time_seconds: Some(1_700_000_090),
+            }
+        );
+    }
+
+    // @internal
+    #[test]
+    fn snapshot_without_a_stat_line_reports_zeros_and_no_start_time() {
+        let snapshot = ProcessSnapshot::from_parts(None, 100, 4096, 12, None, Some(1_700_000_000));
+
+        assert_eq!(
+            snapshot,
+            ProcessSnapshot {
+                cpu_seconds: 0.0,
+                open_fds: 12,
+                max_fds: None,
+                virtual_memory_bytes: 0,
+                resident_memory_bytes: 0,
+                threads: 0,
+                start_time_seconds: None,
+            }
+        );
+    }
+
+    // @internal
+    #[test]
+    fn snapshot_encodes_every_metric_with_its_value() {
+        let snapshot = ProcessSnapshot {
+            cpu_seconds: 2.5,
+            open_fds: 12,
+            max_fds: Some(1024),
+            virtual_memory_bytes: 123_456_789,
+            resident_memory_bytes: 10_240_000,
+            threads: 7,
+            start_time_seconds: Some(1_700_000_090),
+        };
+        let mut text = String::new();
+
+        snapshot.encode(&mut text);
+
+        let values: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+        assert_eq!(
+            values,
+            vec![
+                "process_cpu_seconds_total 2.5",
+                "process_open_fds 12",
+                "process_max_fds 1024",
+                "process_virtual_memory_bytes 123456789",
+                "process_resident_memory_bytes 10240000",
+                "process_threads 7",
+                "process_start_time_seconds 1700000090",
+            ]
+        );
+        assert_eq!(text.lines().filter(|l| l.starts_with("# TYPE")).count(), 7);
+    }
+
+    // @internal
+    #[test]
+    fn snapshot_omits_the_metrics_it_has_no_value_for() {
+        let snapshot = ProcessSnapshot::from_parts(None, 100, 4096, 12, None, None);
+        let mut text = String::new();
+
+        snapshot.encode(&mut text);
+
+        assert!(!text.contains("process_max_fds"));
+        assert!(!text.contains("process_start_time_seconds"));
+    }
+
+    // Reads the real /proc of the test process: this is what pins the
+    // file paths, sysconf calls and fd counting, which no fixture reaches.
+    // @internal
+    #[test]
+    fn snapshot_read_from_proc_describes_this_process() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let snapshot = ProcessSnapshot::read();
+
+        assert!(snapshot.open_fds >= 3, "open fds: {}", snapshot.open_fds);
+        assert!(snapshot.threads >= 1, "threads: {}", snapshot.threads);
+        assert!(
+            snapshot.resident_memory_bytes >= 1 << 20,
+            "resident bytes: {}",
+            snapshot.resident_memory_bytes
+        );
+        assert!(snapshot.virtual_memory_bytes > snapshot.resident_memory_bytes);
+        let started = snapshot.start_time_seconds.unwrap();
+        assert!(
+            (now - 3600..=now + 1).contains(&started),
+            "start time {started} is not within the last hour before {now}"
+        );
+    }
+}
