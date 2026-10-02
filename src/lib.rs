@@ -20,6 +20,7 @@ pub mod http;
 pub mod http_api;
 pub mod integrity;
 pub mod jitter;
+pub mod maintenance;
 pub mod metrics;
 pub mod noise_key;
 pub mod ohttp_gateway;

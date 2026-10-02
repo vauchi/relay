@@ -13,7 +13,7 @@
 //! - Recovery proof storage for contact recovery
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -31,6 +31,7 @@ use vauchi_relay::guardian_storage::{GuardianStore, SqliteGuardianStore};
 use vauchi_relay::handler;
 use vauchi_relay::http::{ConnectionRoute, HttpState, classify_connection, create_router};
 use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
+use vauchi_relay::maintenance;
 use vauchi_relay::metrics::RelayMetrics;
 use vauchi_relay::noise_key;
 use vauchi_relay::ohttp_gateway::OhttpGateway;
@@ -385,26 +386,17 @@ async fn main() {
         });
 
         let cleanup_hints = hint_store.clone();
-        let hints_cleanup_interval = config.cleanup_interval();
         let hints_cleanup_metrics = metrics.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(hints_cleanup_interval).await;
-                let removed = cleanup_hints.cleanup_expired();
-                if removed > 0 {
-                    info!("Cleaned up {} expired forwarding hints", removed);
-                    hints_cleanup_metrics
-                        .federation_hints_expired
-                        .inc_by(removed.try_into().unwrap_or(u64::MAX));
-                    // Note: gauge may transiently go negative due to non-atomic relationship
-                    // between inc() in handle_offload_ack and sub() here. This is a known
-                    // gauge-inaccuracy class in multi-threaded metrics — cosmetic only.
-                    hints_cleanup_metrics
-                        .federation_hints_active
-                        .sub(removed.try_into().unwrap_or(i64::MAX));
-                }
-            }
-        });
+        tokio::spawn(maintenance::run_every(
+            config.cleanup_interval(),
+            move || {
+                let removed = maintenance::sweep_forwarding_hints(
+                    cleanup_hints.as_ref(),
+                    &hints_cleanup_metrics,
+                );
+                maintenance::log_removed("expired forwarding hints", removed);
+            },
+        ));
 
         if config.federation.gossip_enabled {
             info!(
@@ -484,30 +476,25 @@ async fn main() {
 
         // S7: Spawn exchange broker cleanup task
         let cleanup_exchange = exchange_broker.clone();
-        let exchange_cleanup_interval = config.cleanup_interval();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(exchange_cleanup_interval).await;
-                let removed = cleanup_exchange.cleanup_expired();
-                if removed > 0 {
-                    info!("Cleaned up {} expired exchange offers", removed);
-                }
-            }
-        });
+        tokio::spawn(maintenance::run_every(
+            config.cleanup_interval(),
+            move || {
+                maintenance::log_removed(
+                    "expired exchange offers",
+                    cleanup_exchange.cleanup_expired(),
+                );
+            },
+        ));
 
         let escrow_store = Arc::new(EscrowStore::new(escrow::MAX_ACTIVE_GATES));
 
-        // Spawn escrow store cleanup task (60s interval per spec)
         let cleanup_escrow = escrow_store.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                let removed = cleanup_escrow.cleanup_expired();
-                if removed > 0 {
-                    info!("Cleaned up {} expired escrow gates", removed);
-                }
-            }
-        });
+        tokio::spawn(maintenance::run_every(
+            maintenance::ESCROW_SWEEP_INTERVAL,
+            move || {
+                maintenance::log_removed("expired escrow gates", cleanup_escrow.cleanup_expired());
+            },
+        ));
 
         let api_state = HttpApiState {
             storage: storage.clone(),
@@ -548,66 +535,53 @@ async fn main() {
     let cleanup_storage = storage.clone();
     let cleanup_metrics = metrics.clone();
     let blob_ttl = config.blob_ttl();
-    let cleanup_interval = config.cleanup_interval();
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(cleanup_interval).await;
-            let removed = cleanup_storage.cleanup_expired(blob_ttl);
-            if removed > 0 {
-                info!("Cleaned up {} expired blobs", removed);
-                cleanup_metrics.blobs_expired.inc_by(removed as u64);
-            }
-        }
-    });
+    tokio::spawn(maintenance::run_every(
+        config.cleanup_interval(),
+        move || {
+            let removed =
+                maintenance::sweep_blobs(cleanup_storage.as_ref(), blob_ttl, &cleanup_metrics);
+            maintenance::log_removed("expired blobs", removed);
+        },
+    ));
 
     let cleanup_recovery = recovery_storage.clone();
     let cleanup_recovery_metrics = metrics.clone();
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
-            let removed = cleanup_recovery.cleanup_expired();
-            if removed > 0 {
-                cleanup_recovery_metrics
-                    .recovery_proofs_active
-                    .sub(removed as i64);
-                info!("Cleaned up {} expired recovery proofs", removed);
-            }
-        }
-    });
+    tokio::spawn(maintenance::run_every(
+        maintenance::RECOVERY_SWEEP_INTERVAL,
+        move || {
+            let removed = maintenance::sweep_recovery_proofs(
+                cleanup_recovery.as_ref(),
+                &cleanup_recovery_metrics,
+            );
+            maintenance::log_removed("expired recovery proofs", removed);
+        },
+    ));
 
     let cleanup_guardian = guardian_storage.clone();
-    tokio::spawn(async move {
-        loop {
-            // Check every 6 hours (guardian sets expire yearly, no rush)
-            tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
-            let removed = cleanup_guardian.cleanup_expired();
-            if removed > 0 {
-                info!("Cleaned up {} expired guardian sets", removed);
-            }
-        }
-    });
+    tokio::spawn(maintenance::run_every(
+        maintenance::GUARDIAN_SWEEP_INTERVAL,
+        move || {
+            maintenance::log_removed("expired guardian sets", cleanup_guardian.cleanup_expired());
+        },
+    ));
 
     let cleanup_rate_limiter = rate_limiter.clone();
     let cleanup_recovery_rate_limiter = recovery_rate_limiter.clone();
     let cleanup_federation_rate_limiter = federation_rate_limiter.clone();
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(600)).await;
-            let removed =
-                cleanup_rate_limiter.cleanup_inactive(std::time::Duration::from_secs(1800));
-            let recovery_removed = cleanup_recovery_rate_limiter
-                .cleanup_inactive(std::time::Duration::from_secs(1800));
-            let federation_removed = cleanup_federation_rate_limiter
-                .cleanup_inactive(std::time::Duration::from_secs(1800));
-            let total = removed + recovery_removed + federation_removed;
-            if total > 0 {
-                info!(
-                    "Cleaned up {} stale rate limiter entries ({} recovery, {} federation)",
-                    total, recovery_removed, federation_removed
-                );
-            }
-        }
-    });
+    tokio::spawn(maintenance::run_every(
+        maintenance::RATE_LIMITER_SWEEP_INTERVAL,
+        move || {
+            let removed = maintenance::sweep_rate_limiters(
+                &[
+                    &cleanup_rate_limiter,
+                    &cleanup_recovery_rate_limiter,
+                    &cleanup_federation_rate_limiter,
+                ],
+                maintenance::RATE_LIMITER_MAX_IDLE,
+            );
+            maintenance::log_removed("stale rate limiter entries", removed);
+        },
+    ));
 
     // Start TCP listener (federation WebSocket + main-port health checks)
     let listener = TcpListener::bind(&config.network.listen_addr)
@@ -745,32 +719,7 @@ async fn main() {
         });
     }
 
-    let drain_timeout = Duration::from_secs(30);
-    let active = connection_limiter.active_count();
-    if active > 0 {
-        info!(
-            "Draining {} active connections ({}s timeout)...",
-            active,
-            drain_timeout.as_secs()
-        );
-        let deadline = tokio::time::sleep(drain_timeout);
-        tokio::pin!(deadline);
-        loop {
-            let current = connection_limiter.active_count();
-            if current == 0 {
-                info!("All connections drained");
-                break;
-            }
-            tokio::select! {
-                _ = &mut deadline => {
-                    tracing::warn!("{} connections still active after drain timeout", current);
-                    break;
-                }
-                _ = tokio::time::sleep(Duration::from_millis(250)) => {
-                }
-            }
-        }
-    }
+    maintenance::drain_connections(&connection_limiter, maintenance::DRAIN_TIMEOUT).await;
 
     info!("Running WAL checkpoint on databases...");
     storage.shutdown();
