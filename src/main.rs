@@ -440,8 +440,24 @@ async fn main() {
                 config.http_api.ohttp_key_rotation_secs,
                 config.http_api.ohttp_key_rotation_hours,
             );
+            // Windowed keys (#288) need a key file and fixed 24 h UTC windows;
+            // RELAY_OHTTP_KEY_ROTATION_SECS keeps the interval mode that the
+            // e2e rotation tests drive.
+            let windowed = config.http_api.ohttp_key_rotation_secs.is_none();
             let result = if let Some(ref key_path) = config.http_api.ohttp_key_file_path {
-                OhttpGateway::from_key_file(std::path::Path::new(key_path), rotation_secs)
+                if windowed {
+                    OhttpGateway::windowed(
+                        std::path::Path::new(key_path),
+                        Arc::new(|| {
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0)
+                        }),
+                    )
+                } else {
+                    OhttpGateway::from_key_file(std::path::Path::new(key_path), rotation_secs)
+                }
             } else {
                 OhttpGateway::with_rotation_secs(rotation_secs)
             };

@@ -7,13 +7,17 @@
 //! Manages OHTTP server keypair lifecycle, encapsulation/decapsulation,
 //! and periodic key rotation. Thread-safe for concurrent access.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use ohttp::{KeyConfig, Server, SymmetricSuite, hpke};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
+use vauchi_protocol::ohttp_key::{WINDOW_SECONDS, key_id_for_window, window_of};
+
+use crate::ohttp_window_keys::WindowSeeds;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
@@ -76,6 +80,18 @@ pub struct OhttpGateway {
     /// Incrementing key ID for RFC 9458 compliance. Wraps at 256.
     /// Lets clients distinguish key configs without trial decryption.
     next_key_id: AtomicU8,
+    /// Windowed mode (#288): keys for n-1, n and n+1 from per-window seeds.
+    windowed: Option<WindowedSource>,
+}
+
+/// Unix seconds, injectable so tests can cross window boundaries.
+pub type UnixClock = Arc<dyn Fn() -> u64 + Send + Sync>;
+
+struct WindowedSource {
+    path: PathBuf,
+    seeds: Mutex<WindowSeeds>,
+    clock: UnixClock,
+    states: RwLock<BTreeMap<u64, Arc<GatewayState>>>,
 }
 
 impl OhttpGateway {
@@ -101,6 +117,7 @@ impl OhttpGateway {
             previous_state: RwLock::new(None),
             rotation_interval: Duration::from_secs(secs),
             next_key_id: AtomicU8::new(1),
+            windowed: None,
         })
     }
 
@@ -153,7 +170,89 @@ impl OhttpGateway {
             previous_state: RwLock::new(None),
             rotation_interval: Duration::from_secs(rotation_secs),
             next_key_id: AtomicU8::new(1),
+            windowed: None,
         })
+    }
+
+    /// Windowed gateway (#288, ADR-037 addendum 2026-10-05): one key per
+    /// 24 h UTC window, each from its own random seed in `path`, with key
+    /// id `window mod 256`. The previous, current and next window are
+    /// accepted and survive a restart; [`Self::advance_window`] moves on.
+    pub fn windowed(path: &Path, clock: UnixClock) -> Result<Self, OhttpGatewayError> {
+        let current = window_of(clock());
+        let seeds = WindowSeeds::load_or_create(path, current)?;
+        let states = Self::window_states(&seeds)?;
+        let (state, previous) = Self::current_and_previous(&states, current)?;
+        Ok(Self {
+            state: RwLock::new(state),
+            previous_state: RwLock::new(previous),
+            rotation_interval: Duration::from_secs(WINDOW_SECONDS),
+            next_key_id: AtomicU8::new(0),
+            windowed: Some(WindowedSource {
+                path: path.to_path_buf(),
+                seeds: Mutex::new(seeds),
+                clock,
+                states: RwLock::new(states),
+            }),
+        })
+    }
+
+    /// Windowed mode: move to the window the clock is in. A no-op within the
+    /// same window and in interval mode.
+    pub fn advance_window(&self) -> Result<(), OhttpGatewayError> {
+        let Some(source) = &self.windowed else {
+            return Ok(());
+        };
+        let current = window_of((source.clock)());
+        let mut seeds = source.seeds.lock();
+        if !seeds.advance(&source.path, current)? {
+            return Ok(());
+        }
+        let states = Self::window_states(&seeds)?;
+        let (state, previous) = Self::current_and_previous(&states, current)?;
+        *source.states.write() = states;
+        *self.state.write() = state;
+        *self.previous_state.write() = previous;
+        Ok(())
+    }
+
+    /// Windowed mode: the encoded key config for `window`, if held.
+    pub fn window_key_config(&self, window: u64) -> Option<Vec<u8>> {
+        let source = self.windowed.as_ref()?;
+        let states = source.states.read();
+        states
+            .get(&window)
+            .map(|state| (*state.encoded_config).clone())
+    }
+
+    fn window_states(
+        seeds: &WindowSeeds,
+    ) -> Result<BTreeMap<u64, Arc<GatewayState>>, OhttpGatewayError> {
+        seeds
+            .windows()
+            .into_iter()
+            .map(|window| {
+                let seed = seeds.seed(window).ok_or_else(|| {
+                    OhttpGatewayError::Io(format!("window {window} listed without a seed"))
+                })?;
+                let state = Self::state_from_seed(key_id_for_window(window), seed)?;
+                Ok((window, Arc::new(state)))
+            })
+            .collect()
+    }
+
+    fn current_and_previous(
+        states: &BTreeMap<u64, Arc<GatewayState>>,
+        current: u64,
+    ) -> Result<(Arc<GatewayState>, Option<Arc<GatewayState>>), OhttpGatewayError> {
+        let state = states
+            .get(&current)
+            .cloned()
+            .ok_or_else(|| OhttpGatewayError::Io(format!("no key for window {current}")))?;
+        let previous = current
+            .checked_sub(1)
+            .and_then(|window| states.get(&window).cloned());
+        Ok((state, previous))
     }
 
     // TODO(PFC): Gateway generates random keys internally — see 2026-07-06-relay-pfc-violations R19
@@ -214,6 +313,9 @@ impl OhttpGateway {
         &self,
         encrypted: &[u8],
     ) -> Result<(Vec<u8>, ohttp::ServerResponse), OhttpGatewayError> {
+        if let Some(source) = &self.windowed {
+            return Self::decapsulate_windowed(source, encrypted);
+        }
         let state = self.state.read().clone();
         match state.server.decapsulate(encrypted) {
             Ok((plaintext, srv_response)) => Ok((plaintext, srv_response)),
@@ -228,6 +330,29 @@ impl OhttpGateway {
                 Err(current_err.into())
             }
         }
+    }
+
+    /// RFC 9458 §4.3: the request's first byte is the key id, which names
+    /// the window; any held window is tried if it names none.
+    fn decapsulate_windowed(
+        source: &WindowedSource,
+        encrypted: &[u8],
+    ) -> Result<(Vec<u8>, ohttp::ServerResponse), OhttpGatewayError> {
+        let states = source.states.read().clone();
+        let key_id = encrypted.first().copied();
+        let named = states
+            .iter()
+            .filter(|(window, _)| Some(key_id_for_window(**window)) == key_id);
+        let mut last_err = None;
+        for (_, state) in named {
+            match state.server.decapsulate(encrypted) {
+                Ok(decapsulated) => return Ok(decapsulated),
+                Err(e) => last_err = Some(e),
+            }
+        }
+        Err(last_err
+            .map(OhttpGatewayError::from)
+            .unwrap_or_else(|| OhttpGatewayError::Io("request names no held window".into())))
     }
 
     /// Rotate the keypair. Generates a new key and atomically swaps it in.
@@ -255,6 +380,20 @@ impl OhttpGateway {
     /// Spawn a background task that rotates the key periodically.
     /// Runs until the returned handle is dropped.
     pub fn spawn_rotation_task(gateway: Arc<Self>) -> tokio::task::JoinHandle<()> {
+        if let Some(source) = &gateway.windowed {
+            let clock = source.clock.clone();
+            return tokio::spawn(async move {
+                loop {
+                    // Wake just past the next UTC boundary.
+                    let now = clock();
+                    let wait = WINDOW_SECONDS - now % WINDOW_SECONDS + 1;
+                    tokio::time::sleep(Duration::from_secs(wait)).await;
+                    if let Err(e) = gateway.advance_window() {
+                        warn!("OHTTP window advance failed: {e}");
+                    }
+                }
+            });
+        }
         let interval = gateway.rotation_interval;
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
