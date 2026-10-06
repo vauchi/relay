@@ -122,20 +122,7 @@ impl OhttpSigner {
         now: u64,
     ) -> Result<Self, OhttpSignerError> {
         let key = random_signing_key();
-        let public_key = key.verifying_key().to_bytes();
-        let certs: Vec<IntermediateCert> = [now, now + STANDBY_STARTS_DAY * DAY]
-            .into_iter()
-            .map(|not_before| {
-                let not_after = not_before + CERT_DAYS * DAY;
-                let message = IntermediateCert::signing_message(&public_key, not_before, not_after);
-                IntermediateCert {
-                    public_key,
-                    not_before,
-                    not_after,
-                    anchor_signature: anchor.sign(&message).to_bytes(),
-                }
-            })
-            .collect();
+        let certs = certify(anchor, &key.verifying_key().to_bytes(), now);
         let encoded: Vec<u8> = certs.iter().flat_map(IntermediateCert::encode).collect();
         write_owner_only(key_path, &Zeroizing::new(key.to_bytes())[..])
             .map_err(|_| OhttpSignerError::UnreadableKey)?;
@@ -182,6 +169,24 @@ impl std::fmt::Debug for OhttpSigner {
             .field("not_after", &self.not_after())
             .finish()
     }
+}
+
+/// The two overlapping certificates one ceremony issues for an
+/// intermediate key (plan decision 0.11).
+fn certify(anchor: &SigningKey, public_key: &[u8; 32], now: u64) -> Vec<IntermediateCert> {
+    [now, now + STANDBY_STARTS_DAY * DAY]
+        .into_iter()
+        .map(|not_before| {
+            let not_after = not_before + CERT_DAYS * DAY;
+            let message = IntermediateCert::signing_message(public_key, not_before, not_after);
+            IntermediateCert {
+                public_key: *public_key,
+                not_before,
+                not_after,
+                anchor_signature: anchor.sign(&message).to_bytes(),
+            }
+        })
+        .collect()
 }
 
 #[cfg(unix)]
