@@ -24,6 +24,7 @@ pub mod maintenance;
 pub mod metrics;
 pub mod noise_key;
 pub mod ohttp_gateway;
+pub mod ohttp_install;
 pub mod ohttp_signer;
 pub mod ohttp_window_keys;
 pub mod padding;

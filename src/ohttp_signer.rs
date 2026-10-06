@@ -39,6 +39,8 @@ pub enum OhttpSignerError {
     CertificateForAnotherKey,
     FileExists,
     Unwritable,
+    NotSignedByAnchor,
+    NoCertificateValidNow,
 }
 
 impl std::fmt::Display for OhttpSignerError {
@@ -59,6 +61,10 @@ impl std::fmt::Display for OhttpSignerError {
             }
             Self::FileExists => "the output file already exists; refusing to overwrite it",
             Self::Unwritable => "the output file cannot be written",
+            Self::NotSignedByAnchor => {
+                "an OHTTP intermediate certificate is not signed by the given anchor"
+            }
+            Self::NoCertificateValidNow => "no OHTTP intermediate certificate is valid now",
         })
     }
 }
@@ -75,25 +81,11 @@ impl OhttpSigner {
     /// certificates (concatenated 112-byte encodings). Every certificate
     /// must be for this key.
     pub fn load(key_path: &Path, certs_path: &Path) -> Result<Self, OhttpSignerError> {
-        refuse_open_key_file(key_path)?;
-        let seed =
-            Zeroizing::new(std::fs::read(key_path).map_err(|_| OhttpSignerError::UnreadableKey)?);
-        let seed: &[u8; 32] = seed
-            .as_slice()
-            .try_into()
-            .map_err(|_| OhttpSignerError::UnreadableKey)?;
-        let key = SigningKey::from_bytes(seed);
+        let key = read_key_file(key_path)?;
 
         let bytes =
             std::fs::read(certs_path).map_err(|_| OhttpSignerError::UnreadableCertificates)?;
-        if bytes.is_empty() || bytes.len() % INTERMEDIATE_CERT_BYTES != 0 {
-            return Err(OhttpSignerError::MalformedCertificates);
-        }
-        let certs = bytes
-            .chunks_exact(INTERMEDIATE_CERT_BYTES)
-            .map(IntermediateCert::decode)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| OhttpSignerError::MalformedCertificates)?;
+        let certs = decode_certificates(&bytes)?;
         let public_key = key.verifying_key().to_bytes();
         if certs.iter().any(|cert| cert.public_key != public_key) {
             return Err(OhttpSignerError::CertificateForAnotherKey);
@@ -236,6 +228,18 @@ fn certify(anchor: &SigningKey, public_key: &[u8; 32], now: u64) -> Vec<Intermed
         .collect()
 }
 
+/// A certificate file: one or more whole 112-byte encodings, nothing else.
+pub(crate) fn decode_certificates(bytes: &[u8]) -> Result<Vec<IntermediateCert>, OhttpSignerError> {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(INTERMEDIATE_CERT_BYTES) {
+        return Err(OhttpSignerError::MalformedCertificates);
+    }
+    bytes
+        .chunks_exact(INTERMEDIATE_CERT_BYTES)
+        .map(IntermediateCert::decode)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| OhttpSignerError::MalformedCertificates)
+}
+
 #[cfg(unix)]
 fn refuse_open_key_file(path: &Path) -> Result<(), OhttpSignerError> {
     use std::os::unix::fs::PermissionsExt;
@@ -261,6 +265,11 @@ fn load_or_create_anchor(path: &Path) -> Result<SigningKey, OhttpSignerError> {
             .map_err(|_| OhttpSignerError::UnreadableKey)?;
         return Ok(anchor);
     }
+    read_key_file(path)
+}
+
+/// A 32-byte Ed25519 seed in an owner-only file.
+pub(crate) fn read_key_file(path: &Path) -> Result<SigningKey, OhttpSignerError> {
     refuse_open_key_file(path)?;
     let bytes = Zeroizing::new(std::fs::read(path).map_err(|_| OhttpSignerError::UnreadableKey)?);
     let seed: &[u8; 32] = bytes
