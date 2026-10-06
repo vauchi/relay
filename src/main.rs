@@ -485,6 +485,11 @@ async fn main() {
                                 }
                             }
                         }
+                        (None, None) if windowed => {
+                            let mut gw = gw;
+                            self_anchor(&mut gw, config.http_api.ohttp_key_file_path.as_deref());
+                            gw
+                        }
                         _ => gw,
                     };
                     metrics
@@ -500,6 +505,23 @@ async fn main() {
                             .unwrap_or("ephemeral"),
                     );
                     let gw = Arc::new(gw);
+                    // A self-anchored gateway renews its intermediate in the
+                    // window task, so the expiry gauge follows it here.
+                    {
+                        let gw = gw.clone();
+                        let gauge = metrics.ohttp_intermediate_not_after.clone();
+                        tokio::spawn(async move {
+                            let mut tick =
+                                tokio::time::interval(std::time::Duration::from_secs(3600));
+                            loop {
+                                tick.tick().await;
+                                gauge.set(
+                                    i64::try_from(gw.signer_not_after().unwrap_or(0))
+                                        .unwrap_or(i64::MAX),
+                                );
+                            }
+                        });
+                    }
                     let _rotation_handle = OhttpGateway::spawn_rotation_task(gw.clone());
                     Some(gw)
                 }
@@ -767,4 +789,29 @@ async fn main() {
     info!("Running WAL checkpoint on databases...");
     storage.shutdown();
     info!("Shutdown complete");
+}
+
+/// ADR-074: with no configured anchor, a windowed gateway keeps its own next
+/// to its key file. Never reached when intermediate paths are configured, so
+/// a deployment with an offline anchor cannot silently sign under another.
+fn self_anchor(gw: &mut OhttpGateway, key_file: Option<&str>) {
+    let Some(dir) = key_file.and_then(|path| std::path::Path::new(path).parent()) else {
+        return;
+    };
+    match gw.self_anchored(dir) {
+        Ok(anchor) => {
+            info!(
+                "OHTTP self-anchored; clients pin anchor {}",
+                hex::encode(anchor)
+            );
+            if !dir.join("ohttp-anchor.backed-up").exists() {
+                warn!(
+                    "Back up ohttp-anchor.key from the OHTTP key directory, then create \
+                     ohttp-anchor.backed-up there: losing the anchor strands every client \
+                     and contact that pinned it"
+                );
+            }
+        }
+        Err(e) => error!("OHTTP self-anchoring failed: {e}; /v2/ohttp-key-signed answers 503"),
+    }
 }

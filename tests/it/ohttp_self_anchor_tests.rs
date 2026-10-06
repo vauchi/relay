@@ -139,12 +139,12 @@ fn a_running_self_anchored_gateway_renews_without_a_restart() {
     let dir = tempfile::tempdir().unwrap();
     let now = Arc::new(AtomicU64::new(NOW));
     let clock_now = now.clone();
-    let gateway = OhttpGateway::windowed(
+    let mut gateway = OhttpGateway::windowed(
         &dir.path().join("seeds.bin"),
         Arc::new(move || clock_now.load(Ordering::SeqCst)),
     )
     .unwrap();
-    let (gateway, anchor) = gateway.self_anchored(dir.path()).unwrap();
+    let anchor = gateway.self_anchored(dir.path()).unwrap();
     let first = SignedKeyConfig::decode(&gateway.signed_key_record().unwrap()).unwrap();
 
     now.store(NOW + 61 * DAY, Ordering::SeqCst);

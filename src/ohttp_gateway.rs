@@ -83,8 +83,11 @@ pub struct OhttpGateway {
     next_key_id: AtomicU8,
     /// Windowed mode (#288): keys for n-1, n and n+1 from per-window seeds.
     windowed: Option<WindowedSource>,
-    /// Signs each window's KeyConfig under the anchor chain (#288).
-    signer: Option<OhttpSigner>,
+    /// Signs each window's KeyConfig under the anchor chain (#288). Behind a
+    /// lock so a self-anchored gateway can renew it from the window task.
+    signer: RwLock<Option<OhttpSigner>>,
+    /// Self-anchored mode (ADR-074): where the anchor and intermediate live.
+    self_anchor_dir: Option<PathBuf>,
 }
 
 /// Unix seconds, injectable so tests can cross window boundaries.
@@ -121,7 +124,8 @@ impl OhttpGateway {
             rotation_interval: Duration::from_secs(secs),
             next_key_id: AtomicU8::new(1),
             windowed: None,
-            signer: None,
+            signer: RwLock::new(None),
+            self_anchor_dir: None,
         })
     }
 
@@ -175,7 +179,8 @@ impl OhttpGateway {
             rotation_interval: Duration::from_secs(rotation_secs),
             next_key_id: AtomicU8::new(1),
             windowed: None,
-            signer: None,
+            signer: RwLock::new(None),
+            self_anchor_dir: None,
         })
     }
 
@@ -199,13 +204,15 @@ impl OhttpGateway {
                 clock,
                 states: RwLock::new(states),
             }),
-            signer: None,
+            signer: RwLock::new(None),
+            self_anchor_dir: None,
         })
     }
 
     /// Windowed mode: move to the window the clock is in. A no-op within the
     /// same window and in interval mode.
     pub fn advance_window(&self) -> Result<(), OhttpGatewayError> {
+        self.renew_self_anchored();
         let Some(source) = &self.windowed else {
             return Ok(());
         };
@@ -224,8 +231,34 @@ impl OhttpGateway {
 
     /// Sign each window's key with this intermediate signer.
     pub fn with_signer(mut self, signer: OhttpSigner) -> Self {
-        self.signer = Some(signer);
+        *self.signer.get_mut() = Some(signer);
         self
+    }
+
+    /// Self-anchored mode (ADR-074): keep an anchor and intermediate in
+    /// `dir`, created on first start and renewed from the window task.
+    /// Returns the anchor public key clients pin. Windowed mode only.
+    pub fn self_anchored(&mut self, dir: &Path) -> Result<[u8; 32], OhttpGatewayError> {
+        let now = self
+            .windowed
+            .as_ref()
+            .map(|source| (source.clock)())
+            .ok_or_else(|| OhttpGatewayError::Io("self-anchoring needs windowed keys".into()))?;
+        let (signer, anchor) = OhttpSigner::self_anchored(dir, now)
+            .map_err(|e| OhttpGatewayError::Io(e.to_string()))?;
+        *self.signer.get_mut() = Some(signer);
+        self.self_anchor_dir = Some(dir.to_path_buf());
+        Ok(anchor)
+    }
+
+    fn renew_self_anchored(&self) {
+        let (Some(dir), Some(source)) = (&self.self_anchor_dir, &self.windowed) else {
+            return;
+        };
+        match OhttpSigner::self_anchored(dir, (source.clock)()) {
+            Ok((signer, _)) => *self.signer.write() = Some(signer),
+            Err(e) => warn!("OHTTP self-anchored renewal failed: {e}"),
+        }
     }
 
     /// The current window's encoded, signed record. `None` in interval mode,
@@ -233,7 +266,8 @@ impl OhttpGateway {
     /// stand-in.
     pub fn signed_key_record(&self) -> Option<Vec<u8>> {
         let source = self.windowed.as_ref()?;
-        let signer = self.signer.as_ref()?;
+        let signer = self.signer.read();
+        let signer = signer.as_ref()?;
         let now = (source.clock)();
         let window = window_of(now);
         let key_config = self.window_key_config(window)?;
@@ -243,7 +277,7 @@ impl OhttpGateway {
 
     /// When the signer's last certificate ends, for the expiry alert.
     pub fn signer_not_after(&self) -> Option<u64> {
-        self.signer.as_ref().map(OhttpSigner::not_after)
+        self.signer.read().as_ref().map(OhttpSigner::not_after)
     }
 
     /// Windowed mode: the encoded key config for `window`, if held.
