@@ -4,6 +4,7 @@
 
 //! Common test utilities for relay integration tests.
 
+pub mod anchor_cli;
 pub mod http_helpers;
 pub mod mtls;
 

@@ -6,66 +6,15 @@
 //! 0.11, 0.12): the anchor seed arrives on stdin and leaves no trace; the
 //! intermediate's private key is made on the gateway host and never moves.
 
-use std::io::Write;
-use std::path::Path;
-use std::process::{Command, Output, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use vauchi_protocol::ohttp_key::{INTERMEDIATE_CERT_BYTES, IntermediateCert, SignedKeyConfig};
+use vauchi_protocol::ohttp_key::{IntermediateCert, SignedKeyConfig};
 use vauchi_relay::ohttp_signer::OhttpSigner;
 
+use crate::common::anchor_cli::{
+    anchor_cli, create_anchor, intermediate_key, read_certs, stderr_of, stdout_of, unix_now,
+};
+
 const DAY: u64 = 86_400;
-
-fn anchor_cli(args: &[&str], stdin: &[u8]) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_vauchi-ohttp-anchor"))
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn vauchi-ohttp-anchor");
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
-    child.wait_with_output().unwrap()
-}
-
-fn stdout_of(output: &Output) -> String {
-    String::from_utf8(output.stdout.clone()).unwrap()
-}
-
-fn stderr_of(output: &Output) -> String {
-    String::from_utf8(output.stderr.clone()).unwrap()
-}
-
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-fn create_anchor() -> (String, String) {
-    let created = anchor_cli(&["create"], b"");
-    assert_eq!(created.status.code(), Some(0), "{}", stderr_of(&created));
-    let seed = stdout_of(&created).trim().to_string();
-    let public_key = anchor_cli(&["public-key"], seed.as_bytes());
-    assert_eq!(public_key.status.code(), Some(0));
-    (seed, stdout_of(&public_key).trim().to_string())
-}
-
-fn intermediate_key(path: &Path) -> String {
-    let made = anchor_cli(&["intermediate-key", path.to_str().unwrap()], b"");
-    assert_eq!(made.status.code(), Some(0), "{}", stderr_of(&made));
-    stdout_of(&made).trim().to_string()
-}
-
-fn read_certs(path: &Path) -> Vec<IntermediateCert> {
-    std::fs::read(path)
-        .unwrap()
-        .chunks_exact(INTERMEDIATE_CERT_BYTES)
-        .map(|chunk| IntermediateCert::decode(chunk).unwrap())
-        .collect()
-}
 
 /// The whole ceremony, as the runbook runs it: the relay then signs window
 /// keys that verify from the anchor down.
