@@ -18,6 +18,7 @@ mod federation_http_tests;
 mod federation_offload_core_tests;
 mod federation_two_process_e2e;
 mod http_api_exchange_tests;
+mod http_api_gateway_listener_tests;
 mod http_api_guardian_tests;
 mod http_api_limits_tests;
 mod http_api_ohttp_exchange_tests;

@@ -728,3 +728,43 @@ fn half_an_ohttp_intermediate_configuration_warns(#[case] only: &str) {
         "got {warnings:?}"
     );
 }
+
+/// The gateway-only listener (#30) is off unless an address is given.
+// @internal
+#[test]
+fn the_gateway_listener_address_is_read_and_off_by_default() {
+    let set = HashMap::from([(
+        "RELAY_OHTTP_GATEWAY_ADDR".to_string(),
+        "10.77.0.1:8082".to_string(),
+    )]);
+
+    let (config, _) = RelayConfig::from_map(&set);
+    let (default, _) = RelayConfig::from_map(&HashMap::new());
+
+    assert_eq!(
+        config.http_api.ohttp_gateway_addr,
+        Some("10.77.0.1:8082".parse().unwrap())
+    );
+    assert_eq!(default.http_api.ohttp_gateway_addr, None);
+}
+
+/// A malformed address is named and binds nothing, rather than binding
+/// somewhere unintended.
+// @internal
+#[test]
+fn a_malformed_gateway_listener_address_is_refused_with_a_warning() {
+    let vars = HashMap::from([(
+        "RELAY_OHTTP_GATEWAY_ADDR".to_string(),
+        "10.77.0.1".to_string(),
+    )]);
+
+    let (config, warnings) = RelayConfig::from_map(&vars);
+
+    assert_eq!(config.http_api.ohttp_gateway_addr, None);
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("RELAY_OHTTP_GATEWAY_ADDR")),
+        "{warnings:?}"
+    );
+}
