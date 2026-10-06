@@ -6,7 +6,11 @@
 //! zero ceremony for self-hosters, same signature chain for clients.
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use vauchi_protocol::ohttp_key::{IntermediateCert, SignedKeyConfig};
+
+use vauchi_relay::ohttp_gateway::OhttpGateway;
 use vauchi_relay::ohttp_signer::{OhttpSigner, OhttpSignerError};
 
 const DAY: u64 = 86_400;
@@ -125,4 +129,29 @@ fn a_damaged_anchor_file_is_refused_not_replaced() {
         Some(OhttpSignerError::UnreadableKey)
     );
     assert_eq!(std::fs::read(&anchor_path).unwrap(), b"short");
+}
+
+/// A relay running for months renews from its daily window task, not only
+/// at startup: past day 150 an unrenewed relay would stop OHTTP.
+// @internal
+#[test]
+fn a_running_self_anchored_gateway_renews_without_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = Arc::new(AtomicU64::new(NOW));
+    let clock_now = now.clone();
+    let gateway = OhttpGateway::windowed(
+        &dir.path().join("seeds.bin"),
+        Arc::new(move || clock_now.load(Ordering::SeqCst)),
+    )
+    .unwrap();
+    let (gateway, anchor) = gateway.self_anchored(dir.path()).unwrap();
+    let first = SignedKeyConfig::decode(&gateway.signed_key_record().unwrap()).unwrap();
+
+    now.store(NOW + 61 * DAY, Ordering::SeqCst);
+    gateway.advance_window().unwrap();
+    let later = SignedKeyConfig::decode(&gateway.signed_key_record().unwrap()).unwrap();
+
+    assert_ne!(later.intermediate.public_key, first.intermediate.public_key);
+    assert!(verifies(&anchor, &later));
+    assert_eq!(gateway.signer_not_after(), Some(NOW + 61 * DAY + 150 * DAY));
 }
