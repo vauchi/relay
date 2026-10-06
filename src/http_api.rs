@@ -111,6 +111,7 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .route("/v2/guardian/query", post(guardian_query_handler))
         .route("/v2/guardian/delete", post(guardian_delete_handler))
         .route("/v2/ohttp-key", get(ohttp_key_handler))
+        .route("/v2/ohttp-key-signed", get(ohttp_key_signed_handler))
         .route("/v2/ohttp", post(ohttp_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -496,6 +497,30 @@ async fn ohttp_key_handler(State(state): State<HttpApiState>) -> axum::response:
             ),
         ],
         bytes,
+    )
+        .into_response()
+}
+
+/// The current window's KeyConfig with its anchor signature chain (#288).
+///
+/// The relay's `no-store` policy still applies; an outer relay derives its
+/// cache lifetime from the window inside the record. Fails closed with 503
+/// when no signed record exists: clients accept nothing unsigned, so nothing
+/// unsigned is offered in its place.
+async fn ohttp_key_signed_handler(State(state): State<HttpApiState>) -> axum::response::Response {
+    let Some(gw) = &state.ohttp_gateway else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(record) = gw.signed_key_record() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "application/vnd.vauchi.ohttp-key-signed",
+        )],
+        record,
     )
         .into_response()
 }

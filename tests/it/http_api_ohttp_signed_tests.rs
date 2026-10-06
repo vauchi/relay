@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! `GET /v2/ohttp-key-signed` (#288): the current window's KeyConfig with
-//! its signature chain, cacheable until the window ends, and never served
-//! unsigned.
+//! its signature chain, never served unsigned.
 
 use std::sync::Arc;
 
@@ -12,7 +11,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier};
 use tower::ServiceExt;
-use vauchi_protocol::ohttp_key::{IntermediateCert, SignedKeyConfig, WINDOW_SECONDS, window_of};
+use vauchi_protocol::ohttp_key::{IntermediateCert, SignedKeyConfig, window_of};
 use vauchi_relay::http_api::create_v2_router;
 use vauchi_relay::ohttp_gateway::OhttpGateway;
 use vauchi_relay::ohttp_signer::OhttpSigner;
@@ -86,11 +85,9 @@ async fn the_current_windows_key_is_served_with_its_signature_chain() {
         response.headers()[header::CONTENT_TYPE],
         "application/vnd.vauchi.ohttp-key-signed"
     );
-    let until_window_end = WINDOW_SECONDS - NOW % WINDOW_SECONDS;
-    assert_eq!(
-        response.headers()[header::CACHE_CONTROL],
-        format!("public, max-age={until_window_end}").as_str()
-    );
+    // The relay's no-store policy holds here too; the outer relay derives
+    // its cache lifetime from the record's window.
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
     let body = axum::body::to_bytes(response.into_body(), 4096)
         .await
         .unwrap();

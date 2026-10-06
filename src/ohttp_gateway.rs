@@ -17,6 +17,7 @@ use ohttp::{KeyConfig, Server, SymmetricSuite, hpke};
 use parking_lot::{Mutex, RwLock};
 use vauchi_protocol::ohttp_key::{WINDOW_SECONDS, key_id_for_window, window_of};
 
+use crate::ohttp_signer::OhttpSigner;
 use crate::ohttp_window_keys::WindowSeeds;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
@@ -82,6 +83,8 @@ pub struct OhttpGateway {
     next_key_id: AtomicU8,
     /// Windowed mode (#288): keys for n-1, n and n+1 from per-window seeds.
     windowed: Option<WindowedSource>,
+    /// Signs each window's KeyConfig under the anchor chain (#288).
+    signer: Option<OhttpSigner>,
 }
 
 /// Unix seconds, injectable so tests can cross window boundaries.
@@ -118,6 +121,7 @@ impl OhttpGateway {
             rotation_interval: Duration::from_secs(secs),
             next_key_id: AtomicU8::new(1),
             windowed: None,
+            signer: None,
         })
     }
 
@@ -171,6 +175,7 @@ impl OhttpGateway {
             rotation_interval: Duration::from_secs(rotation_secs),
             next_key_id: AtomicU8::new(1),
             windowed: None,
+            signer: None,
         })
     }
 
@@ -194,6 +199,7 @@ impl OhttpGateway {
                 clock,
                 states: RwLock::new(states),
             }),
+            signer: None,
         })
     }
 
@@ -214,6 +220,30 @@ impl OhttpGateway {
         *self.state.write() = state;
         *self.previous_state.write() = previous;
         Ok(())
+    }
+
+    /// Sign each window's key with this intermediate signer.
+    pub fn with_signer(mut self, signer: OhttpSigner) -> Self {
+        self.signer = Some(signer);
+        self
+    }
+
+    /// The current window's encoded, signed record. `None` in interval mode,
+    /// without a signer, or once no certificate is valid — never an unsigned
+    /// stand-in.
+    pub fn signed_key_record(&self) -> Option<Vec<u8>> {
+        let source = self.windowed.as_ref()?;
+        let signer = self.signer.as_ref()?;
+        let now = (source.clock)();
+        let window = window_of(now);
+        let key_config = self.window_key_config(window)?;
+        let record = signer.sign(window, &key_config, now)?;
+        Some(record.encode())
+    }
+
+    /// When the signer's last certificate ends, for the expiry alert.
+    pub fn signer_not_after(&self) -> Option<u64> {
+        self.signer.as_ref().map(OhttpSigner::not_after)
     }
 
     /// Windowed mode: the encoded key config for `window`, if held.
