@@ -78,7 +78,7 @@ fn verify_chain(record: &SignedKeyConfig) -> bool {
 fn a_signed_record_verifies_through_the_anchor_chain() {
     let dir = tempfile::tempdir().unwrap();
     let issued = cert(&intermediate(), NOW - DAY, NOW + 89 * DAY);
-    let (key, certs) = write_material(&dir, &intermediate(), &[issued.clone()]);
+    let (key, certs) = write_material(&dir, &intermediate(), std::slice::from_ref(&issued));
     let signer = OhttpSigner::load(&key, &certs).unwrap();
 
     let record = signer.sign(20_366, &[0x4e, 0x00, 0x20], NOW).unwrap();
