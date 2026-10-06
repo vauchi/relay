@@ -205,3 +205,24 @@ fn debug_names_validity_not_the_key() {
         "OhttpSigner { certificates: 1, not_after: 20 }"
     );
 }
+
+/// A missed renewal is a full outage by design, so the expiry is scraped
+/// and alerted on 21 days ahead (plan item 2.6).
+// @internal
+#[test]
+fn the_signers_expiry_is_exported_as_a_gauge() {
+    let metrics = vauchi_relay::metrics::RelayMetrics::new();
+    let unset = metrics.encode();
+
+    metrics.ohttp_intermediate_not_after.set(1_767_398_400);
+    let set = metrics.encode();
+
+    assert!(
+        unset.contains("\nrelay_ohttp_intermediate_not_after_seconds 0\n"),
+        "{unset}"
+    );
+    assert!(
+        set.contains("\nrelay_ohttp_intermediate_not_after_seconds 1767398400\n"),
+        "{set}"
+    );
+}
