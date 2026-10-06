@@ -496,6 +496,28 @@ async fn main() {
                         }
                         _ => gw,
                     };
+                    // A broken chain is not offered: every client would refuse
+                    // it, and the operator should see the mistake here.
+                    let gw = match config.http_api.ohttp_anchor_rollover_path.as_deref() {
+                        Some(path) => {
+                            match vauchi_relay::ohttp_rollover::load_rollover_chain(
+                                std::path::Path::new(path),
+                            ) {
+                                Ok(chain) => {
+                                    info!(
+                                        "OHTTP anchor rollover chain served ({} step(s))",
+                                        chain.len()
+                                    );
+                                    gw.with_anchor_rollover(chain)
+                                }
+                                Err(e) => {
+                                    error!("OHTTP anchor rollover chain not served: {e}");
+                                    gw
+                                }
+                            }
+                        }
+                        None => gw,
+                    };
                     metrics
                         .ohttp_intermediate_not_after
                         .set(i64::try_from(gw.signer_not_after().unwrap_or(0)).unwrap_or(i64::MAX));

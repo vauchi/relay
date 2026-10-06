@@ -208,6 +208,9 @@ pub struct HttpApiConfig {
     /// Address of the gateway-only listener (#30): the OHTTP routes alone,
     /// for an OHTTP relay on another host. `None` binds nothing.
     pub ohttp_gateway_addr: Option<std::net::SocketAddr>,
+    /// The anchor rollover chain the ceremony CLI writes (#288, 0.13);
+    /// served at `/v2/ohttp-anchor-rollover` when set.
+    pub ohttp_anchor_rollover_path: Option<String>,
     /// OHTTP exchange rate limit (requests per minute, shared across all clients).
     /// Applies to OHTTP-wrapped exchange broker endpoints.  Default 300/min
     /// for production; set higher for E2E tests via `RELAY_OHTTP_EXCHANGE_RATE_LIMIT`.
@@ -229,6 +232,7 @@ impl Default for HttpApiConfig {
             ohttp_intermediate_key_path: None,
             ohttp_intermediate_certs_path: None,
             ohttp_gateway_addr: None,
+            ohttp_anchor_rollover_path: None,
             ohttp_exchange_rate_limit_per_min: 300,
             exchange_max_offers: 10_000,
             exchange_default_ttl_secs: 300, // 5 minutes
@@ -576,6 +580,8 @@ impl RelayConfig {
 
         config.http_api.ohttp_intermediate_key_path =
             vars.get("RELAY_OHTTP_INTERMEDIATE_KEY_PATH").cloned();
+        config.http_api.ohttp_anchor_rollover_path =
+            vars.get("RELAY_OHTTP_ANCHOR_ROLLOVER_PATH").cloned();
         config.http_api.ohttp_intermediate_certs_path =
             vars.get("RELAY_OHTTP_INTERMEDIATE_CERTS_PATH").cloned();
         if config.http_api.ohttp_intermediate_key_path.is_some()

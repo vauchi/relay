@@ -112,6 +112,10 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .route("/v2/guardian/delete", post(guardian_delete_handler))
         .route("/v2/ohttp-key", get(ohttp_key_handler))
         .route("/v2/ohttp-key-signed", get(ohttp_key_signed_handler))
+        .route(
+            "/v2/ohttp-anchor-rollover",
+            get(ohttp_anchor_rollover_handler),
+        )
         .route("/v2/ohttp", post(ohttp_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -539,6 +543,29 @@ async fn ohttp_key_signed_handler(State(state): State<HttpApiState>) -> axum::re
             "application/vnd.vauchi.ohttp-key-signed",
         )],
         record,
+    )
+        .into_response()
+}
+
+/// `GET /v2/ohttp-anchor-rollover` (#288): the anchor rollover chain, or
+/// 404 while the relay's anchor has never been replaced.
+async fn ohttp_anchor_rollover_handler(
+    State(state): State<HttpApiState>,
+) -> axum::response::Response {
+    let Some(chain) = state
+        .ohttp_gateway
+        .as_ref()
+        .and_then(|gw| gw.anchor_rollover_record())
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "application/vnd.vauchi.ohttp-anchor-rollover",
+        )],
+        chain,
     )
         .into_response()
 }

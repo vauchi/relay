@@ -15,7 +15,9 @@ use std::time::Duration;
 
 use ohttp::{KeyConfig, Server, SymmetricSuite, hpke};
 use parking_lot::{Mutex, RwLock};
-use vauchi_protocol::ohttp_key::{WINDOW_SECONDS, key_id_for_window, window_of};
+use vauchi_protocol::ohttp_key::{
+    AnchorRollover, WINDOW_SECONDS, encode_rollover_chain, key_id_for_window, window_of,
+};
 
 use crate::ohttp_signer::OhttpSigner;
 use crate::ohttp_window_keys::WindowSeeds;
@@ -88,6 +90,8 @@ pub struct OhttpGateway {
     signer: RwLock<Option<OhttpSigner>>,
     /// Self-anchored mode (ADR-074): where the anchor and intermediate live.
     self_anchor_dir: Option<PathBuf>,
+    /// The encoded anchor rollover chain, served as written (#288).
+    anchor_rollover: Option<Vec<u8>>,
 }
 
 /// Unix seconds, injectable so tests can cross window boundaries.
@@ -126,6 +130,7 @@ impl OhttpGateway {
             windowed: None,
             signer: RwLock::new(None),
             self_anchor_dir: None,
+            anchor_rollover: None,
         })
     }
 
@@ -181,6 +186,7 @@ impl OhttpGateway {
             windowed: None,
             signer: RwLock::new(None),
             self_anchor_dir: None,
+            anchor_rollover: None,
         })
     }
 
@@ -206,6 +212,7 @@ impl OhttpGateway {
             }),
             signer: RwLock::new(None),
             self_anchor_dir: None,
+            anchor_rollover: None,
         })
     }
 
@@ -273,6 +280,18 @@ impl OhttpGateway {
         let key_config = self.window_key_config(window)?;
         let record = signer.sign(window, &key_config, now)?;
         Some(record.encode())
+    }
+
+    /// Serve `chain` at `/v2/ohttp-anchor-rollover`; its links are checked
+    /// by [`crate::ohttp_rollover::load_rollover_chain`] before it gets here.
+    pub fn with_anchor_rollover(mut self, chain: Vec<AnchorRollover>) -> Self {
+        self.anchor_rollover = Some(encode_rollover_chain(&chain));
+        self
+    }
+
+    /// The encoded rollover chain, if the relay has one.
+    pub fn anchor_rollover_record(&self) -> Option<Vec<u8>> {
+        self.anchor_rollover.clone()
     }
 
     /// When the signer's last certificate ends, for the expiry alert.

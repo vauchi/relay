@@ -12,6 +12,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ed25519_dalek::{SigningKey, VerifyingKey};
+use vauchi_relay::ohttp_rollover::{append_rollover, backup_commitment, sign_rollover};
 use vauchi_relay::ohttp_signer::{create_intermediate_key, random_signing_key, write_certificates};
 use zeroize::Zeroizing;
 
@@ -34,8 +35,17 @@ usage: vauchi-ohttp-anchor <command>
       the next key, signed by the anchor and valid now, replace the live
       certificates and move the next key over the live one. Otherwise
       change nothing.
+  create-backup
+      Print a new backup anchor seed on stdout, to keep apart from the
+      anchor (offline); its commitment, which clients hold, goes to stderr.
+  commitment
+      Read a backup seed on stdin; print the commitment clients hold.
+  rollover <next-backup-commitment> <chain-path>
+      Read the backup seed on stdin: it takes over as the anchor, signs
+      that, and commits to the next backup. Appends to the chain the
+      relay serves (created if absent), only if the chain still links.
 
-Seeds and keys are 64 hex characters. Only install replaces files, and
+Seeds, keys and commitments are 64 hex characters. Only install replaces files, and
 only after every check passes.
 ";
 
@@ -52,6 +62,11 @@ fn main() -> ExitCode {
         ["public-key"] => public_key(),
         ["intermediate-key", key_path] => intermediate_key(Path::new(key_path)),
         ["sign", intermediate, certs_path] => sign(intermediate, Path::new(certs_path)),
+        ["create-backup"] => create_backup(),
+        ["commitment"] => commitment(),
+        ["rollover", next_commitment, chain_path] => {
+            rollover(next_commitment, Path::new(chain_path))
+        }
         ["install", anchor, next_key, key, certs] => install(
             anchor,
             Path::new(next_key),
@@ -133,6 +148,40 @@ fn install(anchor: &str, next_key: &Path, key: &Path, certs_path: &Path) -> Resu
     )
     .map_err(|e| e.to_string())?;
     println!("installed; signing until {not_after} (unix seconds) — restart the relay to load it");
+    Ok(())
+}
+
+fn create_backup() -> Result<(), String> {
+    let backup = random_signing_key();
+    println!("{}", *Zeroizing::new(hex::encode(backup.to_bytes())));
+    eprintln!(
+        "backup commitment (clients hold this): {}\n\
+         Keep the seed above apart from the anchor, offline; it replaces the\n\
+         anchor if the anchor is lost or stolen.",
+        hex::encode(backup_commitment(&backup.verifying_key().to_bytes()))
+    );
+    Ok(())
+}
+
+fn commitment() -> Result<(), String> {
+    let backup = read_anchor_from_stdin()?;
+    println!(
+        "{}",
+        hex::encode(backup_commitment(&backup.verifying_key().to_bytes()))
+    );
+    Ok(())
+}
+
+fn rollover(next_commitment: &str, chain_path: &Path) -> Result<(), String> {
+    let mut next = [0u8; 32];
+    hex::decode_to_slice(next_commitment, &mut next)
+        .map_err(|_| "the next backup commitment is not 64 hex characters".to_string())?;
+    let backup = read_anchor_from_stdin()?;
+    append_rollover(chain_path, sign_rollover(&backup, next)).map_err(|e| e.to_string())?;
+    println!(
+        "rollover appended: new anchor {}",
+        hex::encode(backup.verifying_key().to_bytes())
+    );
     Ok(())
 }
 
