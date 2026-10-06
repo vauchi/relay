@@ -127,14 +127,12 @@ fn a_restart_after_a_long_gap_starts_fresh_windows() {
     }
 }
 
-fn replaced_file_starts_fresh(path: &Path) {
-    let store = WindowSeeds::load_or_create(path, CURRENT).unwrap();
-
-    assert_eq!(store.windows(), vec![CURRENT - 1, CURRENT, CURRENT + 1]);
-    assert_eq!(
-        seeds_of(&WindowSeeds::load_or_create(path, CURRENT).unwrap()),
-        seeds_of(&store)
-    );
+/// Loads the store twice: a replaced file must start fresh windows and
+/// persist them, so the second load sees the first load's seeds.
+fn load_twice(path: &Path) -> (WindowSeeds, WindowSeeds) {
+    let first = WindowSeeds::load_or_create(path, CURRENT).unwrap();
+    let again = WindowSeeds::load_or_create(path, CURRENT).unwrap();
+    (first, again)
 }
 
 /// Today's single-seed file (32 bytes) migrates to the window store.
@@ -143,9 +141,18 @@ fn replaced_file_starts_fresh(path: &Path) {
 fn a_legacy_single_seed_file_is_replaced() {
     let dir = tempfile::tempdir().unwrap();
     let path = store_in(&dir);
-    std::fs::write(&path, [0x42u8; 32]).unwrap();
+    let legacy_seed = [0x42u8; 32];
+    std::fs::write(&path, legacy_seed).unwrap();
 
-    replaced_file_starts_fresh(&path);
+    let (store, reloaded) = load_twice(&path);
+
+    assert_eq!(store.windows(), vec![CURRENT - 1, CURRENT, CURRENT + 1]);
+    assert!(
+        seeds_of(&store)
+            .iter()
+            .all(|(_, seed)| *seed != legacy_seed)
+    );
+    assert_eq!(seeds_of(&reloaded), seeds_of(&store));
 }
 
 // @internal
@@ -155,7 +162,10 @@ fn a_corrupt_file_is_replaced() {
     let path = store_in(&dir);
     std::fs::write(&path, b"VOW1\x09not-a-seed-file").unwrap();
 
-    replaced_file_starts_fresh(&path);
+    let (store, reloaded) = load_twice(&path);
+
+    assert_eq!(store.windows(), vec![CURRENT - 1, CURRENT, CURRENT + 1]);
+    assert_eq!(seeds_of(&reloaded), seeds_of(&store));
 }
 
 /// DC-05: seeds never reach logs.
