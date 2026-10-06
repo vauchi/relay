@@ -679,3 +679,52 @@ fn test_boolean_flags_are_on_for_true_and_1_only(
         assert_eq!(flag(&config), expected, "{env_var}={value}");
     }
 }
+
+/// The OHTTP intermediate signer (#288) is configured by two paths.
+// @internal
+#[test]
+fn ohttp_intermediate_paths_are_read_from_the_environment() {
+    let vars = HashMap::from([
+        (
+            "RELAY_OHTTP_INTERMEDIATE_KEY_PATH".to_string(),
+            "/data/ohttp-intermediate.key".to_string(),
+        ),
+        (
+            "RELAY_OHTTP_INTERMEDIATE_CERTS_PATH".to_string(),
+            "/data/ohttp-intermediate.certs".to_string(),
+        ),
+    ]);
+
+    let (config, warnings) = RelayConfig::from_map(&vars);
+
+    assert_eq!(
+        config.http_api.ohttp_intermediate_key_path.as_deref(),
+        Some("/data/ohttp-intermediate.key")
+    );
+    assert_eq!(
+        config.http_api.ohttp_intermediate_certs_path.as_deref(),
+        Some("/data/ohttp-intermediate.certs")
+    );
+    assert!(
+        !warnings.iter().any(|w| w.contains("OHTTP_INTERMEDIATE")),
+        "a complete pair warns about nothing: {warnings:?}"
+    );
+}
+
+/// Half a signer configuration would silently serve 503; it is named.
+// @internal
+#[rstest]
+#[case::key_only("RELAY_OHTTP_INTERMEDIATE_KEY_PATH")]
+#[case::certs_only("RELAY_OHTTP_INTERMEDIATE_CERTS_PATH")]
+fn half_an_ohttp_intermediate_configuration_warns(#[case] only: &str) {
+    let vars = HashMap::from([(only.to_string(), "/data/x".to_string())]);
+
+    let (_config, warnings) = RelayConfig::from_map(&vars);
+
+    assert!(
+        warnings.iter().any(|w| w
+            == "RELAY_OHTTP_INTERMEDIATE_KEY_PATH and RELAY_OHTTP_INTERMEDIATE_CERTS_PATH \
+                must be set together; the signed OHTTP key endpoint stays unavailable"),
+        "got {warnings:?}"
+    );
+}
