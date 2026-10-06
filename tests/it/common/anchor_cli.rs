@@ -19,7 +19,11 @@ pub fn anchor_cli(args: &[&str], stdin: &[u8]) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn vauchi-ohttp-anchor");
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    // The CLI refuses a bad argument before reading stdin and may already
+    // have exited; its exit status, not the write, is the answer.
+    if let Err(e) = child.stdin.take().unwrap().write_all(stdin) {
+        assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
+    }
     child.wait_with_output().unwrap()
 }
 
