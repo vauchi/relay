@@ -27,6 +27,7 @@ mod http_api_tests;
 mod installer_contract_tests;
 mod maintenance_tests;
 mod ohttp_anchor_cli_tests;
+mod ohttp_anchor_install_tests;
 mod ohttp_self_anchor_tests;
 mod ohttp_signer_tests;
 mod ohttp_window_keys_tests;
