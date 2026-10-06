@@ -260,6 +260,9 @@ pub struct RelayMetrics {
     // Storage metrics
     /// Current number of stored blobs.
     pub blobs_stored: Gauge,
+    /// When the OHTTP signer's last certificate ends (Unix seconds; 0 with
+    /// no signer). Alerted on 21 days ahead (#288).
+    pub ohttp_intermediate_not_after: Gauge,
     /// Total blobs created.
     pub blobs_created: Counter,
     /// Total blobs delivered (taken).
@@ -345,6 +348,10 @@ impl RelayMetrics {
         );
 
         let blobs_stored = Gauge::new("relay_blobs_stored", "Current number of stored blobs");
+        let ohttp_intermediate_not_after = Gauge::new(
+            "relay_ohttp_intermediate_not_after_seconds",
+            "Unix time the OHTTP signer's last certificate ends; 0 without a signer",
+        );
         let blobs_created = Counter::new("relay_blobs_created_total", "Total blobs created");
         let blobs_delivered = Counter::new("relay_blobs_delivered_total", "Total blobs delivered");
         let blobs_expired = Counter::new(
@@ -442,6 +449,7 @@ impl RelayMetrics {
         registry.register(Box::new(messages_rejected.clone()));
         registry.register(Box::new(message_duration.clone()));
         registry.register(Box::new(blobs_stored.clone()));
+        registry.register(Box::new(ohttp_intermediate_not_after.clone()));
         registry.register(Box::new(blobs_created.clone()));
         registry.register(Box::new(blobs_delivered.clone()));
         registry.register(Box::new(blobs_expired.clone()));
@@ -476,6 +484,7 @@ impl RelayMetrics {
             messages_rejected,
             message_duration,
             blobs_stored,
+            ohttp_intermediate_not_after,
             blobs_created,
             blobs_delivered,
             blobs_expired,

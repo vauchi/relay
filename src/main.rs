@@ -487,6 +487,9 @@ async fn main() {
                         }
                         _ => gw,
                     };
+                    metrics
+                        .ohttp_intermediate_not_after
+                        .set(i64::try_from(gw.signer_not_after().unwrap_or(0)).unwrap_or(i64::MAX));
                     info!(
                         "OHTTP gateway enabled (key rotation: {}s, key file: {})",
                         rotation_secs,
