@@ -25,6 +25,7 @@ mod http_api_recovery_tests;
 mod http_api_tests;
 mod installer_contract_tests;
 mod maintenance_tests;
+mod ohttp_signer_tests;
 mod ohttp_window_keys_tests;
 mod ohttp_windowed_gateway_tests;
 mod rate_limit_ux;
