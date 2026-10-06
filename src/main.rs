@@ -463,6 +463,30 @@ async fn main() {
             };
             match result {
                 Ok(gw) => {
+                    let gw = match (
+                        config.http_api.ohttp_intermediate_key_path.as_deref(),
+                        config.http_api.ohttp_intermediate_certs_path.as_deref(),
+                    ) {
+                        (Some(key), Some(certs)) => {
+                            match vauchi_relay::ohttp_signer::OhttpSigner::load(
+                                std::path::Path::new(key),
+                                std::path::Path::new(certs),
+                            ) {
+                                Ok(signer) => {
+                                    info!("OHTTP key signing enabled: {signer:?}");
+                                    gw.with_signer(signer)
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "OHTTP intermediate signer refused: {e}; \
+                                         /v2/ohttp-key-signed answers 503"
+                                    );
+                                    gw
+                                }
+                            }
+                        }
+                        _ => gw,
+                    };
                     info!(
                         "OHTTP gateway enabled (key rotation: {}s, key file: {})",
                         rotation_secs,

@@ -201,6 +201,10 @@ pub struct HttpApiConfig {
     /// is stable across restarts so clients can bundle it at compile time.
     /// When `None`, the gateway generates an ephemeral key on each startup.
     pub ohttp_key_file_path: Option<String>,
+    /// The OHTTP intermediate signing key (#288): 32 raw bytes, owner-only.
+    pub ohttp_intermediate_key_path: Option<String>,
+    /// The intermediate's anchor certificates, concatenated (#288).
+    pub ohttp_intermediate_certs_path: Option<String>,
     /// OHTTP exchange rate limit (requests per minute, shared across all clients).
     /// Applies to OHTTP-wrapped exchange broker endpoints.  Default 300/min
     /// for production; set higher for E2E tests via `RELAY_OHTTP_EXCHANGE_RATE_LIMIT`.
@@ -219,6 +223,8 @@ impl Default for HttpApiConfig {
             ohttp_key_rotation_hours: 24,
             ohttp_key_rotation_secs: None,
             ohttp_key_file_path: None,
+            ohttp_intermediate_key_path: None,
+            ohttp_intermediate_certs_path: None,
             ohttp_exchange_rate_limit_per_min: 300,
             exchange_max_offers: 10_000,
             exchange_default_ttl_secs: 300, // 5 minutes
@@ -562,6 +568,20 @@ impl RelayConfig {
 
         if let Some(val) = vars.get("RELAY_OHTTP_KEY_FILE_PATH") {
             config.http_api.ohttp_key_file_path = Some(val.to_string());
+        }
+
+        config.http_api.ohttp_intermediate_key_path =
+            vars.get("RELAY_OHTTP_INTERMEDIATE_KEY_PATH").cloned();
+        config.http_api.ohttp_intermediate_certs_path =
+            vars.get("RELAY_OHTTP_INTERMEDIATE_CERTS_PATH").cloned();
+        if config.http_api.ohttp_intermediate_key_path.is_some()
+            != config.http_api.ohttp_intermediate_certs_path.is_some()
+        {
+            warnings.push(
+                "RELAY_OHTTP_INTERMEDIATE_KEY_PATH and RELAY_OHTTP_INTERMEDIATE_CERTS_PATH \
+                 must be set together; the signed OHTTP key endpoint stays unavailable"
+                    .to_string(),
+            );
         }
 
         if let Some(val) = vars.get("RELAY_OHTTP_EXCHANGE_RATE_LIMIT") {
