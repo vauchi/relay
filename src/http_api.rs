@@ -122,6 +122,24 @@ pub fn create_v2_router(state: HttpApiState) -> Router {
         .with_state(state)
 }
 
+/// The OHTTP gateway's routes alone, for the listener an OHTTP relay on
+/// another host reaches (#30): the main HTTP listener also serves
+/// `/metrics` and the rest of `/v2`, which must stay inside this host.
+/// Same layers as [`create_v2_router`].
+pub fn create_gateway_router(state: HttpApiState) -> Router {
+    Router::new()
+        .route("/v2/ohttp-key", get(ohttp_key_handler))
+        .route("/v2/ohttp-key-signed", get(ohttp_key_signed_handler))
+        .route("/v2/ohttp", post(ohttp_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            version_check_middleware,
+        ))
+        .layer(middleware::from_fn(security_headers_middleware))
+        .layer(DefaultBodyLimit::max(128 * 1024))
+        .with_state(state)
+}
+
 async fn version_check_middleware(
     State(state): State<HttpApiState>,
     request: axum::http::Request<Body>,

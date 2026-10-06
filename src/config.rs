@@ -205,6 +205,9 @@ pub struct HttpApiConfig {
     pub ohttp_intermediate_key_path: Option<String>,
     /// The intermediate's anchor certificates, concatenated (#288).
     pub ohttp_intermediate_certs_path: Option<String>,
+    /// Address of the gateway-only listener (#30): the OHTTP routes alone,
+    /// for an OHTTP relay on another host. `None` binds nothing.
+    pub ohttp_gateway_addr: Option<std::net::SocketAddr>,
     /// OHTTP exchange rate limit (requests per minute, shared across all clients).
     /// Applies to OHTTP-wrapped exchange broker endpoints.  Default 300/min
     /// for production; set higher for E2E tests via `RELAY_OHTTP_EXCHANGE_RATE_LIMIT`.
@@ -225,6 +228,7 @@ impl Default for HttpApiConfig {
             ohttp_key_file_path: None,
             ohttp_intermediate_key_path: None,
             ohttp_intermediate_certs_path: None,
+            ohttp_gateway_addr: None,
             ohttp_exchange_rate_limit_per_min: 300,
             exchange_max_offers: 10_000,
             exchange_default_ttl_secs: 300, // 5 minutes
@@ -582,6 +586,15 @@ impl RelayConfig {
                  must be set together; the signed OHTTP key endpoint stays unavailable"
                     .to_string(),
             );
+        }
+
+        if let Some(val) = vars.get("RELAY_OHTTP_GATEWAY_ADDR") {
+            match val.parse() {
+                Ok(parsed) => config.http_api.ohttp_gateway_addr = Some(parsed),
+                Err(_) => warnings.push(format!(
+                    "RELAY_OHTTP_GATEWAY_ADDR: invalid address '{val}', no gateway listener"
+                )),
+            }
         }
 
         if let Some(val) = vars.get("RELAY_OHTTP_EXCHANGE_RATE_LIMIT") {

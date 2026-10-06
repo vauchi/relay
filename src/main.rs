@@ -593,6 +593,16 @@ async fn main() {
                 api_state.ohttp_gateway.clone(),
             ));
         }
+        if let Some(gateway_addr) = config.http_api.ohttp_gateway_addr {
+            let gateway_listener = TcpListener::bind(gateway_addr)
+                .await
+                .expect("Failed to bind the OHTTP gateway listener");
+            let gateway_router = vauchi_relay::http_api::create_gateway_router(api_state.clone());
+            tokio::spawn(async move {
+                info!("OHTTP gateway listener on {gateway_addr} (OHTTP routes only)");
+                axum::serve(gateway_listener, gateway_router).await.unwrap();
+            });
+        }
         http_router = http_router.merge(create_v2_router(api_state));
         info!(
             "HTTP API v2 enabled (exchange: max_offers={}, ttl={}s)",
