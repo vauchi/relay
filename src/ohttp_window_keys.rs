@@ -36,31 +36,42 @@ impl WindowSeeds {
     /// missing ones and persist the result. A missing, legacy or corrupt
     /// file starts fresh.
     pub fn load_or_create(path: &Path, current_window: u64) -> Result<Self, OhttpGatewayError> {
-        let seeds = match std::fs::read(path) {
-            Ok(bytes) => parse(&bytes).unwrap_or_else(|| {
-                warn!(
-                    "OHTTP window seed file {} is not a window store (legacy or corrupt); starting fresh",
-                    path.display()
-                );
-                BTreeMap::new()
-            }),
-            Err(_) => BTreeMap::new(),
-        };
-        let mut store = Self { seeds };
-        store.retain_and_fill(current_window);
-        store.persist(path)?;
-        Ok(store)
+        with_file_lock(path, || {
+            let mut store = Self {
+                seeds: read_seeds(path),
+            };
+            store.retain_and_fill(current_window);
+            store.persist(path)?;
+            Ok(store)
+        })
     }
 
     /// Move to `current_window`: drop windows older than its predecessor and
     /// add the missing ones. Persists and returns `true` if anything changed.
+    ///
+    /// Another gateway sharing the file (a rolling deploy) may have advanced
+    /// first, so the file is re-read under its lock and its seeds win:
+    /// both serve the same key for a window.
     pub fn advance(&mut self, path: &Path, current_window: u64) -> Result<bool, OhttpGatewayError> {
         let before: Vec<u64> = self.windows();
-        self.retain_and_fill(current_window);
-        if self.windows() == before {
+        if before.contains(&current_window.saturating_add(1))
+            && before.first() == Some(&current_window.saturating_sub(1))
+        {
             return Ok(false);
         }
-        self.persist(path)?;
+        with_file_lock(path, || {
+            let mut on_disk = read_seeds(path);
+            on_disk.retain(|window, _| {
+                (current_window.saturating_sub(1)..=current_window.saturating_add(1))
+                    .contains(window)
+            });
+            for (window, seed) in std::mem::take(&mut self.seeds) {
+                on_disk.entry(window).or_insert(seed);
+            }
+            self.seeds = on_disk;
+            self.retain_and_fill(current_window);
+            self.persist(path)
+        })?;
         info!(current_window, "OHTTP window keys advanced");
         Ok(true)
     }
@@ -101,6 +112,41 @@ impl std::fmt::Debug for WindowSeeds {
             .field("windows", &self.windows())
             .finish()
     }
+}
+
+fn read_seeds(path: &Path) -> BTreeMap<u64, Zeroizing<[u8; SEED_BYTES]>> {
+    match std::fs::read(path) {
+        Ok(bytes) => parse(&bytes).unwrap_or_else(|| {
+            warn!(
+                "OHTTP window seed file {} is not a window store (legacy or corrupt); starting fresh",
+                path.display()
+            );
+            BTreeMap::new()
+        }),
+        Err(_) => BTreeMap::new(),
+    }
+}
+
+/// Hold an exclusive lock on `<path>.lock` for the duration of `f`, so two
+/// gateways sharing the seed file never interleave read-fill-write.
+fn with_file_lock<T>(
+    path: &Path,
+    f: impl FnOnce() -> Result<T, OhttpGatewayError>,
+) -> Result<T, OhttpGatewayError> {
+    let io = |e: std::io::Error| OhttpGatewayError::Io(format!("OHTTP window seed lock: {e}"));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(io)?;
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path.with_extension("lock"))
+        .map_err(io)?;
+    lock.lock().map_err(io)?;
+    let result = f();
+    lock.unlock().map_err(io)?;
+    result
 }
 
 // TODO(PFC): random key material generated internally — see 2026-07-06-relay-pfc-violations R19
