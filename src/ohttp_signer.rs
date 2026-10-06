@@ -37,6 +37,8 @@ pub enum OhttpSignerError {
     UnreadableCertificates,
     MalformedCertificates,
     CertificateForAnotherKey,
+    FileExists,
+    Unwritable,
 }
 
 impl std::fmt::Display for OhttpSignerError {
@@ -55,6 +57,8 @@ impl std::fmt::Display for OhttpSignerError {
             Self::CertificateForAnotherKey => {
                 "an OHTTP intermediate certificate is for another key"
             }
+            Self::FileExists => "the output file already exists; refusing to overwrite it",
+            Self::Unwritable => "the output file cannot be written",
         })
     }
 }
@@ -171,6 +175,49 @@ impl std::fmt::Debug for OhttpSigner {
     }
 }
 
+/// Ceremony, gateway side: a new intermediate key in a new owner-only file
+/// at `path`, so its private half never leaves the gateway host. Returns
+/// the public key the anchor holder signs.
+pub fn create_intermediate_key(path: &Path) -> Result<[u8; 32], OhttpSignerError> {
+    let key = random_signing_key();
+    create_new_owner_only(path, &Zeroizing::new(key.to_bytes())[..])?;
+    Ok(key.verifying_key().to_bytes())
+}
+
+/// Ceremony, anchor side: the two overlapping certificates for
+/// `intermediate_public_key`, written to a new file at `certs_path`.
+pub fn write_certificates(
+    anchor: &SigningKey,
+    intermediate_public_key: &[u8; 32],
+    certs_path: &Path,
+    now: u64,
+) -> Result<Vec<IntermediateCert>, OhttpSignerError> {
+    let certs = certify(anchor, intermediate_public_key, now);
+    let encoded: Vec<u8> = certs.iter().flat_map(IntermediateCert::encode).collect();
+    create_new_owner_only(certs_path, &encoded)?;
+    Ok(certs)
+}
+
+/// Overwriting a live key or certificate file stops signing at the relay's
+/// next restart, so ceremony output only ever goes to a new file.
+fn create_new_owner_only(path: &Path, bytes: &[u8]) -> Result<(), OhttpSignerError> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => OhttpSignerError::FileExists,
+        _ => OhttpSignerError::Unwritable,
+    })?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| OhttpSignerError::Unwritable)
+}
+
 /// The two overlapping certificates one ceremony issues for an
 /// intermediate key (plan decision 0.11).
 fn certify(anchor: &SigningKey, public_key: &[u8; 32], now: u64) -> Vec<IntermediateCert> {
@@ -224,7 +271,7 @@ fn load_or_create_anchor(path: &Path) -> Result<SigningKey, OhttpSignerError> {
 }
 
 // TODO(PFC): random key material generated internally — see 2026-07-06-relay-pfc-violations R19
-fn random_signing_key() -> SigningKey {
+pub fn random_signing_key() -> SigningKey {
     let mut seed = Zeroizing::new([0u8; 32]);
     rand::rngs::OsRng.fill_bytes(&mut seed[..]);
     SigningKey::from_bytes(&seed)

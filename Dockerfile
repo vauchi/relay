@@ -66,6 +66,9 @@ FROM gcr.io/distroless/base-nossl-debian13@sha256:af5cb8dd589b8520b8c06bebb9efb7
 COPY --from=builder /staging/ /
 
 COPY --from=builder /app/target/release/vauchi-relay /usr/local/bin/
+# The gateway half of the OHTTP anchor ceremony (`intermediate-key`) runs on
+# the gateway host, so the intermediate's private key never leaves it (#288).
+COPY --from=builder /app/target/release/vauchi-ohttp-anchor /usr/local/bin/
 COPY --from=builder /tmp/build-info.json /usr/share/build-info.json
 COPY --chown=nonroot:nonroot --from=builder /tmp/data /data
 
