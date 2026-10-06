@@ -435,6 +435,18 @@ async fn main() {
     let mut http_router = create_router(http_state);
 
     if config.http_api.enabled {
+        let system_now = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        };
+        #[cfg(feature = "e2e-test-clock")]
+        let test_clock = vauchi_relay::e2e_test_clock::TestClock::starting_at(system_now());
+        #[cfg(feature = "e2e-test-clock")]
+        let gateway_clock = test_clock.unix_clock();
+        #[cfg(not(feature = "e2e-test-clock"))]
+        let gateway_clock: vauchi_relay::ohttp_gateway::UnixClock = Arc::new(system_now);
         let ohttp_gateway = if config.http_api.ohttp_enabled {
             let rotation_secs = startup::ohttp_rotation_secs(
                 config.http_api.ohttp_key_rotation_secs,
@@ -446,15 +458,7 @@ async fn main() {
             let windowed = config.http_api.ohttp_key_rotation_secs.is_none();
             let result = if let Some(ref key_path) = config.http_api.ohttp_key_file_path {
                 if windowed {
-                    OhttpGateway::windowed(
-                        std::path::Path::new(key_path),
-                        Arc::new(|| {
-                            std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0)
-                        }),
-                    )
+                    OhttpGateway::windowed(std::path::Path::new(key_path), gateway_clock.clone())
                 } else {
                     OhttpGateway::from_key_file(std::path::Path::new(key_path), rotation_secs)
                 }
@@ -581,6 +585,14 @@ async fn main() {
             guardian_storage: guardian_storage.clone(),
         };
 
+        #[cfg(feature = "e2e-test-clock")]
+        {
+            warn!("e2e-test-clock build: POST /__e2e/clock moves the OHTTP gateway's clock");
+            http_router = http_router.merge(vauchi_relay::e2e_test_clock::router(
+                test_clock,
+                api_state.ohttp_gateway.clone(),
+            ));
+        }
         http_router = http_router.merge(create_v2_router(api_state));
         info!(
             "HTTP API v2 enabled (exchange: max_offers={}, ttl={}s)",

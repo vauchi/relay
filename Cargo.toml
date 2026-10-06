@@ -15,6 +15,9 @@ default = []
 # trace file to `$VAUCHI_FLAME_OUT` (default: `relay/artifacts/flame/`).
 # Render with `inferno-flamegraph` or `just flame-render`.
 flame = ["dep:tracing-flame"]
+# E2E only: mounts POST /__e2e/clock so e2e can move the windowed OHTTP
+# gateway across 24 h windows (#288 plan 2.8). Shipping builds omit it.
+e2e-test-clock = []
 
 [dependencies]
 # Async runtime (minimal features: excludes fs, process, io-std, parking_lot)
