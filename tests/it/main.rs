@@ -8,6 +8,7 @@
 mod common;
 mod config_tests;
 mod contract_protocol_tests;
+mod e2e_test_clock_tests;
 mod escrow_store_tests;
 mod exchange_adversarial_tests;
 mod exchange_broker_tests;
