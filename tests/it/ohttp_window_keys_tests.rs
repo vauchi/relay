@@ -184,3 +184,24 @@ fn debug_shows_windows_not_seeds() {
     );
     assert!(!debug.contains(&seed_hex[..8]));
 }
+
+/// Two containers overlap during a rolling deploy and share the seed file;
+/// both crossing a boundary must end up serving the same new window key,
+/// so the second adopts the first's seed instead of minting its own.
+// @internal
+#[test]
+fn two_stores_on_one_file_agree_after_both_advance() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store_in(&dir);
+    let mut old_container = WindowSeeds::load_or_create(&path, CURRENT).unwrap();
+    let mut new_container = WindowSeeds::load_or_create(&path, CURRENT).unwrap();
+
+    old_container.advance(&path, CURRENT + 1).unwrap();
+    new_container.advance(&path, CURRENT + 1).unwrap();
+
+    assert_eq!(seeds_of(&new_container), seeds_of(&old_container));
+    assert_eq!(
+        seeds_of(&WindowSeeds::load_or_create(&path, CURRENT + 1).unwrap()),
+        seeds_of(&old_container)
+    );
+}
