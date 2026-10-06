@@ -134,6 +134,10 @@ pub fn create_gateway_router(state: HttpApiState) -> Router {
     Router::new()
         .route("/v2/ohttp-key", get(ohttp_key_handler))
         .route("/v2/ohttp-key-signed", get(ohttp_key_signed_handler))
+        .route(
+            "/v2/ohttp-anchor-rollover",
+            get(ohttp_anchor_rollover_handler),
+        )
         .route("/v2/ohttp", post(ohttp_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
