@@ -63,7 +63,6 @@ async fn the_signed_key_route_exists() {
     );
 }
 
-// @internal
 #[rstest]
 #[case(Method::GET, "/metrics")]
 #[case(Method::GET, "/health")]
@@ -81,6 +80,7 @@ async fn the_signed_key_route_exists() {
 #[case(Method::POST, "/v2/guardian/store")]
 #[case(Method::POST, "/v2/guardian/query")]
 #[case(Method::POST, "/v2/guardian/delete")]
+// @internal
 #[tokio::test]
 async fn nothing_but_the_gateway_is_served(#[case] method: Method, #[case] uri: &str) {
     assert_eq!(status_of(method, uri).await, StatusCode::NOT_FOUND, "{uri}");
