@@ -12,8 +12,21 @@
 use std::path::Path;
 
 use ed25519_dalek::{Signer, SigningKey};
+use rand::RngCore;
 use vauchi_protocol::ohttp_key::{INTERMEDIATE_CERT_BYTES, IntermediateCert, SignedKeyConfig};
 use zeroize::Zeroizing;
+
+use crate::ohttp_window_keys::write_owner_only;
+
+const DAY: u64 = 86_400;
+/// Each certificate lasts 90 days; the standby starts at day 60 (plan
+/// decision 0.11), so renewal is due once fewer than 90 days remain.
+const CERT_DAYS: u64 = 90;
+const STANDBY_STARTS_DAY: u64 = 60;
+const RENEW_WHEN_DAYS_LEFT: u64 = 90;
+const ANCHOR_FILE: &str = "ohttp-anchor.key";
+const INTERMEDIATE_KEY_FILE: &str = "ohttp-intermediate.key";
+const INTERMEDIATE_CERTS_FILE: &str = "ohttp-intermediate.certs";
 
 /// Why the intermediate material cannot be used. Messages name no path and
 /// no key bytes (DC-05).
@@ -84,6 +97,53 @@ impl OhttpSigner {
         Ok(Self { key, certs })
     }
 
+    /// Self-anchored mode (ADR-074): a relay with no configured anchor keeps
+    /// its own in `dir`, creating it once, and issues itself an intermediate
+    /// with two overlapping certificates, renewing past day 60. Returns the
+    /// signer and the anchor public key clients pin. A damaged anchor file is
+    /// refused, never replaced: a new anchor strands every client and
+    /// contact that holds the old one.
+    pub fn self_anchored(dir: &Path, now: u64) -> Result<(Self, [u8; 32]), OhttpSignerError> {
+        let anchor = load_or_create_anchor(&dir.join(ANCHOR_FILE))?;
+        let key_path = dir.join(INTERMEDIATE_KEY_FILE);
+        let certs_path = dir.join(INTERMEDIATE_CERTS_FILE);
+        let current = Self::load(&key_path, &certs_path).ok();
+        let signer = match current {
+            Some(signer) if signer.not_after() >= now + RENEW_WHEN_DAYS_LEFT * DAY => signer,
+            _ => Self::issue(&anchor, &key_path, &certs_path, now)?,
+        };
+        Ok((signer, anchor.verifying_key().to_bytes()))
+    }
+
+    fn issue(
+        anchor: &SigningKey,
+        key_path: &Path,
+        certs_path: &Path,
+        now: u64,
+    ) -> Result<Self, OhttpSignerError> {
+        let key = random_signing_key();
+        let public_key = key.verifying_key().to_bytes();
+        let certs: Vec<IntermediateCert> = [now, now + STANDBY_STARTS_DAY * DAY]
+            .into_iter()
+            .map(|not_before| {
+                let not_after = not_before + CERT_DAYS * DAY;
+                let message = IntermediateCert::signing_message(&public_key, not_before, not_after);
+                IntermediateCert {
+                    public_key,
+                    not_before,
+                    not_after,
+                    anchor_signature: anchor.sign(&message).to_bytes(),
+                }
+            })
+            .collect();
+        let encoded: Vec<u8> = certs.iter().flat_map(IntermediateCert::encode).collect();
+        write_owner_only(key_path, &Zeroizing::new(key.to_bytes())[..])
+            .map_err(|_| OhttpSignerError::UnreadableKey)?;
+        write_owner_only(certs_path, &encoded)
+            .map_err(|_| OhttpSignerError::UnreadableCertificates)?;
+        Ok(Self { key, certs })
+    }
+
     /// Sign `window`'s KeyConfig under the certificate valid at `now` that
     /// lasts longest; `None` once no certificate is valid.
     pub fn sign(&self, window: u64, key_config: &[u8], now: u64) -> Option<SignedKeyConfig> {
@@ -140,4 +200,27 @@ fn refuse_open_key_file(path: &Path) -> Result<(), OhttpSignerError> {
 #[cfg(not(unix))]
 fn refuse_open_key_file(_path: &Path) -> Result<(), OhttpSignerError> {
     Ok(())
+}
+
+fn load_or_create_anchor(path: &Path) -> Result<SigningKey, OhttpSignerError> {
+    if !path.exists() {
+        let anchor = random_signing_key();
+        write_owner_only(path, &Zeroizing::new(anchor.to_bytes())[..])
+            .map_err(|_| OhttpSignerError::UnreadableKey)?;
+        return Ok(anchor);
+    }
+    refuse_open_key_file(path)?;
+    let bytes = Zeroizing::new(std::fs::read(path).map_err(|_| OhttpSignerError::UnreadableKey)?);
+    let seed: &[u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| OhttpSignerError::UnreadableKey)?;
+    Ok(SigningKey::from_bytes(seed))
+}
+
+// TODO(PFC): random key material generated internally — see 2026-07-06-relay-pfc-violations R19
+fn random_signing_key() -> SigningKey {
+    let mut seed = Zeroizing::new([0u8; 32]);
+    rand::rngs::OsRng.fill_bytes(&mut seed[..]);
+    SigningKey::from_bytes(&seed)
 }

@@ -128,7 +128,7 @@ fn parse(bytes: &[u8]) -> Option<BTreeMap<u64, Zeroizing<[u8; SEED_BYTES]>>> {
 
 /// Write via a sibling temp file created owner-only, then rename, so the
 /// seeds are never world-readable and never half-written.
-fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), OhttpGatewayError> {
+pub(crate) fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), OhttpGatewayError> {
     let io = |e: std::io::Error| OhttpGatewayError::Io(format!("OHTTP window seed file: {e}"));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(io)?;
