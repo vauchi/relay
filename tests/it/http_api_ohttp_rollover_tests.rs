@@ -16,7 +16,7 @@ use tower::ServiceExt;
 use vauchi_protocol::ohttp_key::{
     AnchorRollover, backup_commitment_message, encode_rollover_chain,
 };
-use vauchi_relay::http_api::create_v2_router;
+use vauchi_relay::http_api::{create_gateway_router, create_v2_router};
 use vauchi_relay::ohttp_gateway::OhttpGateway;
 use vauchi_relay::ohttp_rollover::{RolloverChainError, load_rollover_chain};
 
@@ -57,9 +57,16 @@ fn written(chain: &[AnchorRollover]) -> (tempfile::TempDir, std::path::PathBuf) 
 }
 
 async fn get_rollover(gateway: OhttpGateway) -> axum::response::Response {
+    get_rollover_from(create_v2_router, gateway).await
+}
+
+async fn get_rollover_from(
+    router: fn(vauchi_relay::http_api::HttpApiState) -> axum::Router,
+    gateway: OhttpGateway,
+) -> axum::response::Response {
     let mut state = create_test_state();
     state.ohttp_gateway = Some(Arc::new(gateway));
-    create_v2_router(state)
+    router(state)
         .oneshot(
             Request::builder()
                 .uri("/v2/ohttp-anchor-rollover")
@@ -84,6 +91,28 @@ async fn the_chain_is_served_as_written() {
         response.headers()[header::CONTENT_TYPE],
         "application/vnd.vauchi.ohttp-anchor-rollover"
     );
+    let body = axum::body::to_bytes(response.into_body(), 1 << 16)
+        .await
+        .unwrap();
+    assert_eq!(body.as_ref(), encode_rollover_chain(&chain).as_slice());
+}
+
+/// The OHTTP relay on another host reaches only the gateway listener
+/// (#30), so the chain must be served there too.
+// @internal
+#[tokio::test]
+async fn the_chain_is_served_on_the_gateway_listener() {
+    let chain = vec![rollover(2, 3)];
+    let (_dir, path) = written(&chain);
+    let loaded = load_rollover_chain(&path).expect("a connected chain loads");
+
+    let response = get_rollover_from(
+        create_gateway_router,
+        OhttpGateway::new().unwrap().with_anchor_rollover(loaded),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
     let body = axum::body::to_bytes(response.into_body(), 1 << 16)
         .await
         .unwrap();
