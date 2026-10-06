@@ -216,3 +216,21 @@ fn an_unknown_command_prints_usage_and_exits_2() {
         assert!(stderr_of(&output).contains("usage: vauchi-ohttp-anchor"));
     }
 }
+
+/// The CLI refuses a bad argument before reading stdin, so it may exit
+/// while stdin is still being written; that is a refusal, not a test
+/// failure. More than a pipe buffer of stdin makes the race certain.
+// @internal
+#[test]
+fn a_refusal_before_stdin_is_read_is_still_a_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let certs_path = dir.path().join("refused.certs");
+
+    let refused = anchor_cli(
+        &["sign", "abcd", certs_path.to_str().unwrap()],
+        &[b'\n'; 1 << 20],
+    );
+
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(!certs_path.exists());
+}
