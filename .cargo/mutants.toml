@@ -18,6 +18,10 @@ exclude_globs = ["src/flame.rs"]
 # them. Add one only with the reason it cannot be observed; a mutant a
 # test could catch gets the test instead (vauchi/private#440).
 exclude_re = [
+    # configure_signing's backed-up check only decides whether to warn the
+    # operator to back up the anchor (vauchi/private#552).
+    "src/ohttp_gateway\\.rs:[0-9]+:[0-9]+: delete ! in OhttpGateway::configure_signing$",
+
     # Equivalent. With capacity_max_bytes == 0 the ratio on the next line
     # is 0/0 = NaN or n/0 = inf, and neither is below any threshold, so
     # the peer is refused with or without this guard. The guard stays

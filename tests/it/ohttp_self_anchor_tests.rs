@@ -155,3 +155,94 @@ fn a_running_self_anchored_gateway_renews_without_a_restart() {
     assert!(verifies(&anchor, &later));
     assert_eq!(gateway.signer_not_after(), Some(NOW + 61 * DAY + 150 * DAY));
 }
+
+fn windowed_gateway(dir: &std::path::Path) -> OhttpGateway {
+    OhttpGateway::windowed(&dir.join("seeds.bin"), Arc::new(|| NOW)).unwrap()
+}
+
+/// What start-up gave the gateway: whether it signs, and whether an anchor
+/// of its own now exists beside the key file.
+fn configured(
+    windowed: bool,
+    key: Option<&str>,
+    certs: Option<&str>,
+    with_key_file: bool,
+) -> (bool, bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = if windowed {
+        windowed_gateway(dir.path())
+    } else {
+        OhttpGateway::with_rotation_secs(3_600).unwrap()
+    };
+    let key_file = dir.path().join("seeds.bin");
+    let gateway = gateway.configure_signing(
+        key.map(|name| dir.path().join(name)).as_deref(),
+        certs.map(|name| dir.path().join(name)).as_deref(),
+        windowed,
+        with_key_file.then_some(key_file.as_path()),
+    );
+    (
+        gateway.signer_not_after().is_some(),
+        dir.path().join("ohttp-anchor.key").exists(),
+    )
+}
+
+// With no anchor configured, a windowed gateway anchors itself next to its
+// key file and signs.
+// @internal
+#[test]
+fn start_up_self_anchors_a_windowed_gateway_with_nothing_configured() {
+    assert_eq!(configured(true, None, None, true), (true, true));
+}
+
+// ADR-074: a configured intermediate means an offline anchor; even when it
+// cannot be loaded, the gateway never falls back to an anchor of its own.
+// @internal
+#[test]
+fn start_up_never_self_anchors_when_an_intermediate_is_configured() {
+    for (key, certs) in [
+        (Some("missing.key"), Some("missing.certs")),
+        (Some("missing.key"), None),
+        (None, Some("missing.certs")),
+    ] {
+        assert_eq!(
+            configured(true, key, certs, true),
+            (false, false),
+            "{key:?} {certs:?}"
+        );
+    }
+}
+
+// Interval-mode gateways and ones without a key file stay unsigned.
+// @internal
+#[test]
+fn start_up_leaves_interval_and_keyless_gateways_unsigned() {
+    assert_eq!(configured(false, None, None, true), (false, false));
+    assert_eq!(configured(true, None, None, false), (false, false));
+}
+
+// A loadable configured intermediate is what the gateway signs with, and no
+// anchor of its own is made.
+// @internal
+#[test]
+fn start_up_loads_a_configured_intermediate() {
+    use vauchi_relay::ohttp_signer::{
+        create_intermediate_key, random_signing_key, write_certificates,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let key = dir.path().join("intermediate.key");
+    let certs = dir.path().join("intermediate.certs");
+    let public_key = create_intermediate_key(&key).unwrap();
+    write_certificates(&random_signing_key(), &public_key, &certs, NOW).unwrap();
+
+    let gateway = windowed_gateway(dir.path()).configure_signing(
+        Some(&key),
+        Some(&certs),
+        true,
+        Some(&dir.path().join("seeds.bin")),
+    );
+
+    assert!(gateway.signer_not_after().is_some());
+    assert!(!dir.path().join("ohttp-anchor.key").exists());
+}
