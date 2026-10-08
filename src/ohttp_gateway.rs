@@ -521,9 +521,7 @@ impl OhttpGateway {
             let clock = source.clock.clone();
             return tokio::spawn(async move {
                 loop {
-                    // Wake just past the next UTC boundary.
-                    let now = clock();
-                    let wait = WINDOW_SECONDS - now % WINDOW_SECONDS + 1;
+                    let wait = seconds_until_past_next_window(clock());
                     tokio::time::sleep(Duration::from_secs(wait)).await;
                     if let Err(e) = gateway.advance_window() {
                         warn!("OHTTP window advance failed: {e}");
@@ -580,6 +578,12 @@ impl std::fmt::Debug for OhttpGateway {
             .field("rotation_interval", &self.rotation_interval)
             .finish_non_exhaustive()
     }
+}
+
+/// Seconds from `now` until one second past the next UTC window boundary,
+/// when the window task wakes to advance the keys.
+pub fn seconds_until_past_next_window(now: u64) -> u64 {
+    WINDOW_SECONDS - now % WINDOW_SECONDS + 1
 }
 
 // INLINE_TEST_REQUIRED: tests exercise private construction details and
