@@ -21,7 +21,7 @@ use vauchi_protocol::ohttp_key::{
 
 use crate::ohttp_signer::OhttpSigner;
 use crate::ohttp_window_keys::WindowSeeds;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use zeroize::Zeroizing;
 
 /// Length of the persisted HPKE input-keying-material seed, in bytes.
@@ -256,6 +256,60 @@ impl OhttpGateway {
         *self.signer.get_mut() = Some(signer);
         self.self_anchor_dir = Some(dir.to_path_buf());
         Ok(anchor)
+    }
+
+    /// Give the gateway its start-up signer (ADR-074). A configured
+    /// intermediate key and certificates are loaded and nothing else: a
+    /// deployment with an offline anchor never signs under one of its own.
+    /// With neither configured, a windowed gateway anchors itself next to its
+    /// key file. Any other configuration leaves `/v2/ohttp-key-signed`
+    /// answering 503.
+    #[must_use]
+    pub fn configure_signing(
+        mut self,
+        intermediate_key: Option<&Path>,
+        intermediate_certs: Option<&Path>,
+        windowed: bool,
+        key_file: Option<&Path>,
+    ) -> Self {
+        match (intermediate_key, intermediate_certs) {
+            (Some(key), Some(certs)) => match OhttpSigner::load(key, certs) {
+                Ok(signer) => {
+                    info!("OHTTP key signing enabled: {signer:?}");
+                    self.with_signer(signer)
+                }
+                Err(e) => {
+                    error!(
+                        "OHTTP intermediate signer refused: {e}; /v2/ohttp-key-signed answers 503"
+                    );
+                    self
+                }
+            },
+            (None, None) if windowed => {
+                if let Some(dir) = key_file.and_then(Path::parent) {
+                    match self.self_anchored(dir) {
+                        Ok(anchor) => {
+                            info!(
+                                "OHTTP self-anchored; clients pin anchor {}",
+                                hex::encode(anchor)
+                            );
+                            if !dir.join("ohttp-anchor.backed-up").exists() {
+                                warn!(
+                                    "Back up ohttp-anchor.key from the OHTTP key directory, then \
+                                     create ohttp-anchor.backed-up there: losing the anchor \
+                                     strands every client and contact that pinned it"
+                                );
+                            }
+                        }
+                        Err(e) => error!(
+                            "OHTTP self-anchoring failed: {e}; /v2/ohttp-key-signed answers 503"
+                        ),
+                    }
+                }
+                self
+            }
+            _ => self,
+        }
     }
 
     fn renew_self_anchored(&self) {

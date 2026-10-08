@@ -467,35 +467,24 @@ async fn main() {
             };
             match result {
                 Ok(gw) => {
-                    let gw = match (
-                        config.http_api.ohttp_intermediate_key_path.as_deref(),
-                        config.http_api.ohttp_intermediate_certs_path.as_deref(),
-                    ) {
-                        (Some(key), Some(certs)) => {
-                            match vauchi_relay::ohttp_signer::OhttpSigner::load(
-                                std::path::Path::new(key),
-                                std::path::Path::new(certs),
-                            ) {
-                                Ok(signer) => {
-                                    info!("OHTTP key signing enabled: {signer:?}");
-                                    gw.with_signer(signer)
-                                }
-                                Err(e) => {
-                                    error!(
-                                        "OHTTP intermediate signer refused: {e}; \
-                                         /v2/ohttp-key-signed answers 503"
-                                    );
-                                    gw
-                                }
-                            }
-                        }
-                        (None, None) if windowed => {
-                            let mut gw = gw;
-                            self_anchor(&mut gw, config.http_api.ohttp_key_file_path.as_deref());
-                            gw
-                        }
-                        _ => gw,
-                    };
+                    let gw = gw.configure_signing(
+                        config
+                            .http_api
+                            .ohttp_intermediate_key_path
+                            .as_deref()
+                            .map(std::path::Path::new),
+                        config
+                            .http_api
+                            .ohttp_intermediate_certs_path
+                            .as_deref()
+                            .map(std::path::Path::new),
+                        windowed,
+                        config
+                            .http_api
+                            .ohttp_key_file_path
+                            .as_deref()
+                            .map(std::path::Path::new),
+                    );
                     // A broken chain is not offered: every client would refuse
                     // it, and the operator should see the mistake here.
                     let gw = match config.http_api.ohttp_anchor_rollover_path.as_deref() {
@@ -833,29 +822,4 @@ async fn main() {
     info!("Running WAL checkpoint on databases...");
     storage.shutdown();
     info!("Shutdown complete");
-}
-
-/// ADR-074: with no configured anchor, a windowed gateway keeps its own next
-/// to its key file. Never reached when intermediate paths are configured, so
-/// a deployment with an offline anchor cannot silently sign under another.
-fn self_anchor(gw: &mut OhttpGateway, key_file: Option<&str>) {
-    let Some(dir) = key_file.and_then(|path| std::path::Path::new(path).parent()) else {
-        return;
-    };
-    match gw.self_anchored(dir) {
-        Ok(anchor) => {
-            info!(
-                "OHTTP self-anchored; clients pin anchor {}",
-                hex::encode(anchor)
-            );
-            if !dir.join("ohttp-anchor.backed-up").exists() {
-                warn!(
-                    "Back up ohttp-anchor.key from the OHTTP key directory, then create \
-                     ohttp-anchor.backed-up there: losing the anchor strands every client \
-                     and contact that pinned it"
-                );
-            }
-        }
-        Err(e) => error!("OHTTP self-anchoring failed: {e}; /v2/ohttp-key-signed answers 503"),
-    }
 }
