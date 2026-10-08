@@ -128,3 +128,15 @@ fn advancing_within_a_window_keeps_the_served_key() {
 
     assert_eq!(gw.encoded_key_config(), before);
 }
+
+// The window task wakes one second past each UTC day boundary.
+// @internal
+#[test]
+fn the_window_task_wakes_one_second_past_the_next_boundary() {
+    use vauchi_relay::ohttp_gateway::seconds_until_past_next_window;
+
+    let day = 86_400;
+    assert_eq!(seconds_until_past_next_window(5 * day), day + 1);
+    assert_eq!(seconds_until_past_next_window(5 * day + 10), day - 10 + 1);
+    assert_eq!(seconds_until_past_next_window(6 * day - 1), 2);
+}

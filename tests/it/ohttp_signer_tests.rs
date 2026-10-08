@@ -226,3 +226,37 @@ fn the_signers_expiry_is_exported_as_a_gauge() {
         "{set}"
     );
 }
+
+// An existing key file is refused as existing, not as unwritable, and error
+// messages name what is wrong for the operator (vauchi/private#552).
+// @internal
+#[test]
+fn an_existing_intermediate_key_file_is_reported_as_existing() {
+    use vauchi_relay::ohttp_signer::create_intermediate_key;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("intermediate.key");
+    create_intermediate_key(&path).unwrap();
+
+    let again = create_intermediate_key(&path).unwrap_err();
+
+    assert!(matches!(again, OhttpSignerError::FileExists), "{again:?}");
+    assert_eq!(
+        again.to_string(),
+        "the output file already exists; refusing to overwrite it"
+    );
+}
+
+// @internal
+#[test]
+fn an_unreadable_rollover_chain_says_so() {
+    use vauchi_relay::ohttp_rollover::load_rollover_chain;
+
+    let dir = tempfile::tempdir().unwrap();
+    let missing = load_rollover_chain(&dir.path().join("absent.chain")).unwrap_err();
+
+    assert_eq!(
+        missing.to_string(),
+        "the OHTTP anchor rollover chain cannot be read"
+    );
+}

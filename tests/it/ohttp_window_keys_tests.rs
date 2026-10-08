@@ -215,3 +215,18 @@ fn two_stores_on_one_file_agree_after_both_advance() {
         seeds_of(&old_container)
     );
 }
+
+// A clock stepped back a window (an NTP correction) re-centres the store on
+// the new window instead of keeping the old set (vauchi/private#552).
+// @internal
+#[test]
+fn stepping_back_a_window_re_centres_the_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("seeds.bin");
+    let mut seeds = WindowSeeds::load_or_create(&path, 100).unwrap();
+    assert_eq!(seeds.windows(), [99, 100, 101]);
+
+    assert!(seeds.advance(&path, 99).unwrap());
+
+    assert_eq!(seeds.windows(), [98, 99, 100]);
+}
