@@ -85,3 +85,36 @@ async fn the_signed_key_route_exists() {
 async fn nothing_but_the_gateway_is_served(#[case] method: Method, #[case] uri: &str) {
     assert_eq!(status_of(method, uri).await, StatusCode::NOT_FOUND, "{uri}");
 }
+
+async fn ohttp_status_for_body_of(len: usize) -> StatusCode {
+    let mut state = create_test_state();
+    state.ohttp_gateway = Some(Arc::new(OhttpGateway::new().unwrap()));
+    create_gateway_router(state)
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v2/ohttp")
+                .body(Body::from(vec![0u8; len]))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+/// The gateway accepts request bodies up to 128 KiB; one byte more is
+/// refused before the handler sees it (vauchi/private#552).
+// @internal
+#[tokio::test]
+async fn the_gateway_accepts_bodies_up_to_128_kib() {
+    let limit = 128 * 1024;
+
+    assert_ne!(
+        ohttp_status_for_body_of(limit).await,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    assert_eq!(
+        ohttp_status_for_body_of(limit + 1).await,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+}
