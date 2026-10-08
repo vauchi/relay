@@ -275,3 +275,31 @@ fn install_with_missing_arguments_prints_usage() {
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr_of(&output).contains("install <anchor-public-key>"));
 }
+
+/// Stdin holds at most 16 certificates' worth of bytes. Input at that limit
+/// reaches certificate parsing; one byte more is refused for its size alone,
+/// before anything is parsed (vauchi/private#552).
+// @internal
+#[test]
+fn install_reads_at_most_sixteen_certificates_from_stdin() {
+    let limit = 16 * vauchi_protocol::ohttp_key::INTERMEDIATE_CERT_BYTES;
+    let gateway = Gateway::new();
+    let (_seed, anchor_hex) = create_anchor();
+    let too_big = "more than a ceremony's certificates";
+
+    let at_limit = gateway.install(&anchor_hex, &vec![0xff; limit]);
+    let over_limit = gateway.install(&anchor_hex, &vec![0xff; limit + 1]);
+
+    assert_eq!(at_limit.status.code(), Some(1));
+    assert!(
+        !stderr_of(&at_limit).contains(too_big),
+        "{}",
+        stderr_of(&at_limit)
+    );
+    assert_eq!(over_limit.status.code(), Some(1));
+    assert!(
+        stderr_of(&over_limit).contains(too_big),
+        "{}",
+        stderr_of(&over_limit)
+    );
+}
