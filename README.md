@@ -106,7 +106,8 @@ is base64-encoded. Key hashes are hex-encoded.
 | `/v2/exchange/offer` | POST | Create exchange offer (6-digit code) |
 | `/v2/exchange/claim` | POST | Claim exchange with response |
 | `/v2/exchange/complete` | POST | Complete exchange handshake |
-| `/v2/ohttp-key` | GET | OHTTP public key config |
+| `/v2/ohttp-key-signed` | GET | Current window's OHTTP key config, signed under the relay's anchor |
+| `/v2/ohttp-anchor-rollover` | GET | Anchor rollover chain (404 until the anchor is replaced) |
 | `/v2/ohttp` | POST | OHTTP-encapsulated request |
 
 All endpoints above are also routable via OHTTP for IP privacy.

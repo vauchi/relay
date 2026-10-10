@@ -433,7 +433,8 @@ impl OhttpGateway {
         })
     }
 
-    /// Return the encoded public-key configuration bytes for `GET /v2/ohttp-key`.
+    /// The current encoded KeyConfig, the bytes `GET /v2/ohttp-key-signed`
+    /// signs for the window.
     pub fn encoded_key_config(&self) -> Vec<u8> {
         (*self.state.read().encoded_config).clone()
     }
