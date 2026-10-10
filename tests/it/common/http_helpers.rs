@@ -18,7 +18,6 @@ use vauchi_relay::guardian_storage::SqliteGuardianStore;
 use vauchi_relay::handler::NonceTracker;
 use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits};
 use vauchi_relay::metrics::RelayMetrics;
-use vauchi_relay::ohttp_gateway::OhttpGateway;
 use vauchi_relay::rate_limit::RateLimiter;
 use vauchi_relay::recovery_storage::SqliteRecoveryProofStore;
 use vauchi_relay::storage::SqliteBlobStore;
@@ -28,6 +27,11 @@ use vauchi_relay::version_policy::{VersionPolicyConfig, VersionPolicyState};
 pub use axum::body as ax_body;
 pub use axum::http as ax_http;
 pub use axum::response as ax_response;
+
+pub use super::ohttp_helpers::{
+    get_ohttp_key_signed, ohttp_decrypt, ohttp_encrypt, ohttp_key_bytes, post_ohttp_bytes,
+    send_ohttp_action, signed_test_gateway,
+};
 
 /// Create a test state for API tests.
 #[allow(dead_code)]
@@ -57,7 +61,7 @@ pub fn create_test_state() -> HttpApiState {
 /// Create a test state with OHTTP enabled.
 #[allow(dead_code)]
 pub fn create_test_state_with_ohttp() -> HttpApiState {
-    let gw = OhttpGateway::new().expect("OhttpGateway::new must succeed in tests");
+    let gw = signed_test_gateway();
     HttpApiState {
         storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(100_000)),
@@ -114,85 +118,4 @@ pub async fn response_json_large(response: Response) -> serde_json::Value {
         .await
         .unwrap();
     serde_json::from_slice(&body_bytes).unwrap()
-}
-
-/// Helper: fetch the OHTTP public key from the gateway.
-#[allow(dead_code)]
-pub async fn get_ohttp_key(app: &Router) -> Response {
-    app.clone()
-        .oneshot(
-            Request::builder()
-                .uri("/v2/ohttp-key")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-}
-
-/// Helper: post raw bytes to the OHTTP endpoint.
-#[allow(dead_code)]
-pub async fn post_ohttp_bytes(app: &Router, body: Vec<u8>) -> Response {
-    app.clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v2/ohttp")
-                .header("content-type", "message/ohttp-req")
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-}
-
-/// Helper: encapsulate a JSON message in an OHTTP request.
-#[allow(dead_code)]
-pub fn ohttp_encrypt(
-    encoded_key: &[u8],
-    inner: &serde_json::Value,
-) -> (Vec<u8>, ohttp::ClientResponse) {
-    let mut config = ohttp::KeyConfig::decode(encoded_key).unwrap();
-    let client = ohttp::ClientRequest::from_config(&mut config).unwrap();
-    let plaintext = serde_json::to_vec(inner).unwrap();
-    let padded_bytes = vauchi_relay::padding::pad(&plaintext);
-    let (enc_req, client_response) = client.encapsulate(&padded_bytes).unwrap();
-    (enc_req, client_response)
-}
-
-/// Helper: decrypt an OHTTP response.
-#[allow(dead_code)]
-pub fn ohttp_decrypt(client_response: ohttp::ClientResponse, enc: &[u8]) -> serde_json::Value {
-    let plaintext = client_response.decapsulate(enc).unwrap();
-    let unpadded = vauchi_relay::padding::unpad(&plaintext).unwrap();
-    serde_json::from_slice(&unpadded).unwrap()
-}
-
-/// Helper: fetch the gateway's OHTTP key config as bytes.
-#[allow(dead_code)]
-pub async fn ohttp_key_bytes(app: &Router) -> Vec<u8> {
-    let key_resp = get_ohttp_key(app).await;
-    axum::body::to_bytes(key_resp.into_body(), 65536)
-        .await
-        .unwrap()
-        .to_vec()
-}
-
-/// Helper: send one action through OHTTP and return the decrypted response.
-#[allow(dead_code)]
-pub async fn send_ohttp_action(
-    app: &Router,
-    key_bytes: &[u8],
-    action: &str,
-    mut inner: serde_json::Value,
-) -> serde_json::Value {
-    inner["version"] = serde_json::json!(2);
-    inner["action"] = serde_json::json!(action);
-    let (enc_req, client_resp) = ohttp_encrypt(key_bytes, &inner);
-    let resp = post_ohttp_bytes(app, enc_req).await;
-    assert_eq!(resp.status(), 200);
-    let enc_resp_bytes = axum::body::to_bytes(resp.into_body(), 256 * 1024)
-        .await
-        .unwrap();
-    ohttp_decrypt(client_resp, &enc_resp_bytes)
 }

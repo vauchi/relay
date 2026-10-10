@@ -16,11 +16,11 @@ use tower::ServiceExt;
 use vauchi_relay::http_api::create_gateway_router;
 use vauchi_relay::ohttp_gateway::OhttpGateway;
 
-use crate::common::http_helpers::create_test_state;
+use crate::common::http_helpers::{create_test_state, signed_test_gateway};
 
 async fn status_of(method: Method, uri: &str) -> StatusCode {
     let mut state = create_test_state();
-    state.ohttp_gateway = Some(Arc::new(OhttpGateway::new().unwrap()));
+    state.ohttp_gateway = Some(Arc::new(signed_test_gateway()));
     create_gateway_router(state)
         .oneshot(
             Request::builder()
@@ -38,7 +38,7 @@ async fn status_of(method: Method, uri: &str) -> StatusCode {
 #[tokio::test]
 async fn the_gateway_key_is_served() {
     assert_eq!(
-        status_of(Method::GET, "/v2/ohttp-key").await,
+        status_of(Method::GET, "/v2/ohttp-key-signed").await,
         StatusCode::OK
     );
 }
@@ -65,6 +65,7 @@ async fn the_signed_key_route_exists() {
 
 #[rstest]
 #[case(Method::GET, "/metrics")]
+#[case(Method::GET, "/v2/ohttp-key")]
 #[case(Method::GET, "/health")]
 #[case(Method::GET, "/v2/health")]
 #[case(Method::POST, "/v2/send")]

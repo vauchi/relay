@@ -11,7 +11,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
-use vauchi_protocol::ohttp_key::window_of;
+use vauchi_protocol::ohttp_key::{SignedKeyConfig, window_of};
 use vauchi_relay::e2e_test_clock::{TestClock, router as clock_router};
 use vauchi_relay::http_api::create_v2_router;
 use vauchi_relay::ohttp_gateway::OhttpGateway;
@@ -29,9 +29,10 @@ struct Stack {
 fn stack() -> Stack {
     let dir = tempfile::tempdir().unwrap();
     let clock = TestClock::starting_at(START);
-    let gateway = Arc::new(
-        OhttpGateway::windowed(&dir.path().join("seeds.bin"), clock.unix_clock()).unwrap(),
-    );
+    let mut gateway =
+        OhttpGateway::windowed(&dir.path().join("seeds.bin"), clock.unix_clock()).unwrap();
+    gateway.self_anchored(&dir.path().join("anchor")).unwrap();
+    let gateway = Arc::new(gateway);
     let mut state = create_test_state();
     state.ohttp_gateway = Some(gateway.clone());
     let app = create_v2_router(state).merge(clock_router(clock, Some(gateway)));
@@ -59,9 +60,9 @@ async fn call(app: &axum::Router, method: Method, uri: &str, body: &str) -> (Sta
 }
 
 async fn served_key(app: &axum::Router) -> Vec<u8> {
-    let (status, key) = call(app, Method::GET, "/v2/ohttp-key", "").await;
+    let (status, record) = call(app, Method::GET, "/v2/ohttp-key-signed", "").await;
     assert_eq!(status, StatusCode::OK);
-    key
+    SignedKeyConfig::decode(&record).unwrap().key_config
 }
 
 async fn set_clock(app: &axum::Router, epoch: u64) -> StatusCode {

@@ -8,13 +8,14 @@ use crate::common;
 
 use axum::http::StatusCode;
 use base64::Engine;
+use tower::ServiceExt;
 
 use vauchi_relay::http_api::create_v2_router;
 use vauchi_relay::storage::StoredBlob;
 
 use common::http_helpers::{
-    create_test_state, create_test_state_with_ohttp, get_ohttp_key, ohttp_decrypt, ohttp_encrypt,
-    post_ohttp_bytes, response_json,
+    create_test_state, create_test_state_with_ohttp, get_ohttp_key_signed, ohttp_decrypt,
+    ohttp_encrypt, ohttp_key_bytes, post_ohttp_bytes, response_json,
 };
 
 // @scenario: relay_ohttp :: key endpoint returns valid OHTTP config
@@ -22,36 +23,35 @@ use common::http_helpers::{
 async fn test_ohttp_key_endpoint_returns_valid_config() {
     let app = create_v2_router(create_test_state_with_ohttp());
 
-    let response = get_ohttp_key(&app).await;
-    assert_eq!(response.status(), StatusCode::OK);
+    let key_bytes = ohttp_key_bytes(&app).await;
 
-    let ct = response
-        .headers()
-        .get("content-type")
-        .expect("content-type must be present");
-    assert_eq!(ct, "application/ohttp-keys");
-
-    let fingerprint = response
-        .headers()
-        .get("key-fingerprint")
-        .expect("key-fingerprint must be present");
-    assert_eq!(fingerprint.len(), 64, "fingerprint must be SHA-256 hex");
-
-    let body_bytes = axum::body::to_bytes(response.into_body(), 65536)
-        .await
-        .unwrap();
-    assert!(
-        !body_bytes.is_empty(),
-        "encoded key config must not be empty"
-    );
-
-    // Verify the bytes decode as a valid KeyConfig
-    let decoded = ohttp::KeyConfig::decode(&body_bytes);
+    let decoded = ohttp::KeyConfig::decode(&key_bytes);
     assert!(
         decoded.is_ok(),
-        "body must decode as a valid KeyConfig: {:?}",
+        "the signed record must carry a valid KeyConfig: {:?}",
         decoded.err()
     );
+}
+
+/// Clients read only the signed record since core v0.76.1; the unsigned
+/// route is retired (#288 plan 7.5).
+// @internal
+#[tokio::test]
+async fn test_unsigned_ohttp_key_route_is_retired() {
+    let app = create_v2_router(create_test_state_with_ohttp());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v2/ohttp-key")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 // @scenario: relay_ohttp :: gateway decrypts and routes send action
@@ -62,10 +62,7 @@ async fn test_ohttp_gateway_decrypt_and_route_send() {
     let app = create_v2_router(state);
 
     // Fetch the public key
-    let key_resp = get_ohttp_key(&app).await;
-    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
-        .await
-        .unwrap();
+    let key_bytes = ohttp_key_bytes(&app).await;
 
     let recipient_id = "e".repeat(64);
     let inner = serde_json::json!({
@@ -111,10 +108,7 @@ async fn test_ohttp_gateway_decrypt_and_route_fetch() {
     storage.store(&token, StoredBlob::new(b"fetched-via-ohttp".to_vec()));
 
     // Fetch the public key
-    let key_resp = get_ohttp_key(&app).await;
-    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
-        .await
-        .unwrap();
+    let key_bytes = ohttp_key_bytes(&app).await;
 
     let inner = serde_json::json!({
         "version": 2,
@@ -150,8 +144,7 @@ async fn test_ohttp_disabled_returns_404() {
     // State with ohttp_gateway: None
     let app = create_v2_router(create_test_state());
 
-    // GET /v2/ohttp-key should 404
-    let resp = get_ohttp_key(&app).await;
+    let resp = get_ohttp_key_signed(&app).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     // POST /v2/ohttp should 404
@@ -179,10 +172,7 @@ async fn test_ohttp_single_byte_rejected() {
 #[tokio::test]
 async fn test_ohttp_missing_version_field_rejected() {
     let app = create_v2_router(create_test_state_with_ohttp());
-    let key_resp = get_ohttp_key(&app).await;
-    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
-        .await
-        .unwrap();
+    let key_bytes = ohttp_key_bytes(&app).await;
 
     let inner = serde_json::json!({
         "action": "send",
@@ -203,10 +193,7 @@ async fn test_ohttp_missing_version_field_rejected() {
 #[tokio::test]
 async fn test_ohttp_version_1_rejected() {
     let app = create_v2_router(create_test_state_with_ohttp());
-    let key_resp = get_ohttp_key(&app).await;
-    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
-        .await
-        .unwrap();
+    let key_bytes = ohttp_key_bytes(&app).await;
 
     let inner = serde_json::json!({
         "version": 1,
@@ -234,10 +221,7 @@ async fn test_ohttp_version_2_accepted() {
     let storage = state.storage.clone();
     let app = create_v2_router(state);
 
-    let key_resp = get_ohttp_key(&app).await;
-    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
-        .await
-        .unwrap();
+    let key_bytes = ohttp_key_bytes(&app).await;
 
     let recipient_id = "b".repeat(64);
     let inner = serde_json::json!({
@@ -285,10 +269,7 @@ async fn test_ohttp_escrow_full_flow_put_count_get() {
     let state = create_test_state_with_ohttp();
     let app = create_v2_router(state);
 
-    let key_resp = get_ohttp_key(&app).await;
-    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
-        .await
-        .unwrap();
+    let key_bytes = ohttp_key_bytes(&app).await;
 
     let gate = "aa".repeat(32);
     let slot_init = "bb".repeat(32);
@@ -360,10 +341,7 @@ async fn test_ohttp_escrow_get_before_both_deposits_returns_not_ready() {
     let state = create_test_state_with_ohttp();
     let app = create_v2_router(state);
 
-    let key_resp = get_ohttp_key(&app).await;
-    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
-        .await
-        .unwrap();
+    let key_bytes = ohttp_key_bytes(&app).await;
 
     let gate = "dd".repeat(32);
     let slot = "ee".repeat(32);
@@ -406,10 +384,7 @@ async fn test_ohttp_escrow_get_before_both_deposits_returns_not_ready() {
 #[tokio::test]
 async fn test_ohttp_response_is_padded_to_bucket_size() {
     let app = create_v2_router(create_test_state_with_ohttp());
-    let key_resp = get_ohttp_key(&app).await;
-    let key_bytes = axum::body::to_bytes(key_resp.into_body(), 65536)
-        .await
-        .unwrap();
+    let key_bytes = ohttp_key_bytes(&app).await;
 
     // Send a simple request and check that the decapsulated response is a valid bucket size.
     // Token must be 64 hex chars (see /v2/register validation).

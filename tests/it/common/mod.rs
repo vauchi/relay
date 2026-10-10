@@ -7,6 +7,7 @@
 pub mod anchor_cli;
 pub mod http_helpers;
 pub mod mtls;
+pub mod ohttp_helpers;
 
 use std::sync::Arc;
 use vauchi_relay::rate_limit::RateLimiter;
