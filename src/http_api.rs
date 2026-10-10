@@ -640,11 +640,16 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
         };
     }
 
+    let is_fetch = inner.action == "fetch";
     let response_json = dispatch_ohttp_action(&state, &inner.action, inner.payload).await;
 
     // OHTTP-08: Padding prevents action-type leakage via response size.
     let resp_bytes = serde_json::to_vec(&response_json).unwrap_or_default();
-    let padded_bytes = crate::padding::pad(&resp_bytes);
+    let padded_bytes = if is_fetch {
+        crate::padding::pad_fetch(&resp_bytes)
+    } else {
+        crate::padding::pad(&resp_bytes)
+    };
     match srv_response.encapsulate(&padded_bytes) {
         Ok(enc) => (
             StatusCode::OK,
@@ -963,7 +968,11 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
 /// under the limit — leaving margin for the JSON wrapper and OHTTP/HPKE
 /// encapsulation — and flag `truncated` so the client drains the rest across
 /// re-fetches. 96 KiB keeps ~32 KiB headroom under the 128 KiB cap.
-const MAX_FETCH_RESPONSE_BYTES: usize = 96 * 1024;
+///
+/// The page also has to fit the top fetch-ladder rung once wrapped in
+/// `{"status", "blobs", "truncated"}` and length-prefixed (private#603), so
+/// 512 bytes stay free for that.
+const MAX_FETCH_RESPONSE_BYTES: usize = crate::padding::FETCH_LADDER[2] - 512;
 
 #[tracing::instrument(level = "debug", skip_all, fields(token_count = req.mailbox_tokens.len()), name = "relay.fetch")]
 fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {

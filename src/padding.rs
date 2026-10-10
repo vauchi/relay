@@ -27,12 +27,32 @@ const OVERFLOW_ALIGNMENT: usize = 256;
 /// Size of the length prefix (4 bytes, big-endian).
 const LENGTH_PREFIX_SIZE: usize = 4;
 
+/// The sizes a fetch response may take (owner decision 2026-10-10,
+/// private#603): a hop that sees response sizes learns which rung a mailbox
+/// needed, not how much mail it held.
+pub const FETCH_LADDER: [usize; 3] = [4 * 1024, 32 * 1024, 96 * 1024];
+
 // TODO(PFC): randomness drawn directly in utilities — see 2026-07-06-relay-pfc-violations R24
 /// Pads payload to the nearest bucket size.
 pub fn pad(payload: &[u8]) -> Vec<u8> {
-    let needed = LENGTH_PREFIX_SIZE + payload.len();
-    let target_size = select_bucket(needed);
+    pad_to(payload, select_bucket(LENGTH_PREFIX_SIZE + payload.len()))
+}
 
+/// Pads a fetch response to the smallest [`FETCH_LADDER`] rung that holds
+/// it. Only a single blob larger than the top rung falls back to the
+/// overflow alignment of [`pad`]; the fetch page budget keeps every other
+/// page inside the ladder.
+pub fn pad_fetch(payload: &[u8]) -> Vec<u8> {
+    let needed = LENGTH_PREFIX_SIZE + payload.len();
+    let target_size = FETCH_LADDER
+        .into_iter()
+        .find(|rung| needed <= *rung)
+        .unwrap_or_else(|| select_bucket(needed));
+    pad_to(payload, target_size)
+}
+
+fn pad_to(payload: &[u8], target_size: usize) -> Vec<u8> {
+    let needed = LENGTH_PREFIX_SIZE + payload.len();
     let mut padded = Vec::with_capacity(target_size);
     padded.extend_from_slice(&(payload.len() as u32).to_be_bytes());
     padded.extend_from_slice(payload);

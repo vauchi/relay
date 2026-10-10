@@ -191,6 +191,8 @@ pub async fn send_ohttp_action(
     let (enc_req, client_resp) = ohttp_encrypt(key_bytes, &inner);
     let resp = post_ohttp_bytes(app, enc_req).await;
     assert_eq!(resp.status(), 200);
-    let enc_resp_bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+    let enc_resp_bytes = axum::body::to_bytes(resp.into_body(), 256 * 1024)
+        .await
+        .unwrap();
     ohttp_decrypt(client_resp, &enc_resp_bytes)
 }
