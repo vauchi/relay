@@ -863,11 +863,12 @@ build:docker:arm64:
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+    # MRs build arm64 only when the Dockerfile or this file changes
+    # (private#634): the Raspberry Pi runs one ~20-min build at a time, and
+    # source changes compile the same Rust for both architectures, which
+    # amd64 build:docker already covers in every MR.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
-        - src/**/*
-        - Cargo.toml
-        - Cargo.lock
         - Dockerfile
         - .gitlab-ci.yml
 
@@ -888,11 +889,12 @@ build:docker:manifest:
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+    # MRs build arm64 only when the Dockerfile or this file changes
+    # (private#634): the Raspberry Pi runs one ~20-min build at a time, and
+    # source changes compile the same Rust for both architectures, which
+    # amd64 build:docker already covers in every MR.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
-        - src/**/*
-        - Cargo.toml
-        - Cargo.lock
         - Dockerfile
         - .gitlab-ci.yml
 
