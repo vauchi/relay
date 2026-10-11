@@ -71,8 +71,6 @@ fn contract_all_payload_variants_exist() {
             MessagePayload::RecoveryProofStore(_) => "RecoveryProofStore",
             MessagePayload::RecoveryProofQuery(_) => "RecoveryProofQuery",
             MessagePayload::RecoveryProofResponse(_) => "RecoveryProofResponse",
-            MessagePayload::PurgeRequest(_) => "PurgeRequest",
-            MessagePayload::PurgeResponse(_) => "PurgeResponse",
             MessagePayload::IdentityRevoked(_) => "IdentityRevoked",
             MessagePayload::ForwardingHints(_) => "ForwardingHints",
             MessagePayload::DeviceLinkRelay(_) => "DeviceLinkRelay",
@@ -178,30 +176,6 @@ fn contract_encrypted_update_has_recipient_and_ciphertext() {
     };
     assert_eq!(u.recipient_id.len(), 64);
     assert_eq!(u.ciphertext, vec![10, 20, 30]);
-}
-
-// ============================================================
-// PurgeRequest/Response contracts
-// ============================================================
-
-// @internal
-#[test]
-fn contract_purge_request_optional_fields() {
-    let json = "{}";
-    let req: PurgeRequest = serde_json::from_str(json).unwrap();
-    assert!(!req.include_recovery_proofs);
-    assert_eq!(req.public_key, None);
-    assert_eq!(req.signature, None);
-    assert_eq!(req.purge_token, None);
-    assert_eq!(req.timestamp, None);
-}
-
-// @internal
-#[test]
-fn contract_purge_response_is_empty() {
-    let resp = PurgeResponse {};
-    let json = serde_json::to_string(&resp).unwrap();
-    assert_eq!(json, "{}"); // No counts leaked — T0-10
 }
 
 // ============================================================
