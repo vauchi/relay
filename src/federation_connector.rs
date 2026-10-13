@@ -343,18 +343,30 @@ impl OffloadManager {
             .await
             {
                 Ok(FederationPayload::OffloadAck { accepted: true, .. }) => {
-                    if self.storage.remove_blob(&blob.id) {
-                        self.hint_store.store_hint(ForwardingHint {
-                            routing_id,
-                            blob_id: blob.id.clone(),
-                            target_relay: peer_url.clone(),
-                            created_at_secs: blob.created_at_secs,
-                            expires_at_secs: blob.created_at_secs
-                                + self.config.storage.blob_ttl_secs,
-                        });
-                        self.metrics.federation_hints_stored.inc();
-                        self.metrics.federation_hints_active.inc();
-                        debug!("Offload confirmed: blob {} deleted locally", blob.id);
+                    // The hint is the only route to the peer's copy, so it
+                    // must be stored before the local copy goes
+                    // (vauchi/private#289).
+                    let hint = ForwardingHint {
+                        routing_id,
+                        blob_id: blob.id.clone(),
+                        target_relay: peer_url.clone(),
+                        created_at_secs: blob.created_at_secs,
+                        expires_at_secs: blob.created_at_secs + self.config.storage.blob_ttl_secs,
+                    };
+                    match self.hint_store.store_hint(hint) {
+                        Ok(()) => {
+                            self.metrics.federation_hints_stored.inc();
+                            self.metrics.federation_hints_active.inc();
+                            if self.storage.remove_blob(&blob.id) {
+                                debug!("Offload confirmed: blob {} deleted locally", blob.id);
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Forwarding hint not stored ({e}); keeping blob {} locally",
+                                blob.id
+                            );
+                        }
                     }
                     self.metrics.federation_offloads_sent.inc();
                     sent += 1;

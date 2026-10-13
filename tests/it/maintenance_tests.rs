@@ -65,13 +65,15 @@ fn sweep_blobs_removes_expired_blobs_and_counts_them() {
 fn sweep_forwarding_hints_moves_expired_hints_from_active_to_expired() {
     let store = SqliteForwardingHintStore::in_memory().unwrap();
     for (route, expires_at_secs) in [("expired", 1), ("live", 9_999_999_999)] {
-        store.store_hint(ForwardingHint {
-            routing_id: route.to_string(),
-            blob_id: format!("blob-of-{route}"),
-            target_relay: "https://peer-a:8080".to_string(),
-            created_at_secs: 0,
-            expires_at_secs,
-        });
+        store
+            .store_hint(ForwardingHint {
+                routing_id: route.to_string(),
+                blob_id: format!("blob-of-{route}"),
+                target_relay: "https://peer-a:8080".to_string(),
+                created_at_secs: 0,
+                expires_at_secs,
+            })
+            .unwrap();
     }
     let metrics = RelayMetrics::new();
     metrics.federation_hints_active.set(2);

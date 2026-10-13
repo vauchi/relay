@@ -26,7 +26,7 @@ pub struct ForwardingHint {
 /// Storage for forwarding hints.
 pub trait ForwardingHintStore: Send + Sync {
     /// Stores a forwarding hint.
-    fn store_hint(&self, hint: ForwardingHint);
+    fn store_hint(&self, hint: ForwardingHint) -> Result<(), crate::storage::StorageWriteError>;
     /// Returns all hints for a routing_id.
     fn get_hints(&self, routing_id: &str) -> Vec<ForwardingHint>;
     /// Returns all hints matching any of the given routing_ids/tokens.
@@ -90,9 +90,9 @@ impl SqliteForwardingHintStore {
 }
 
 impl ForwardingHintStore for SqliteForwardingHintStore {
-    fn store_hint(&self, hint: ForwardingHint) {
+    fn store_hint(&self, hint: ForwardingHint) -> Result<(), crate::storage::StorageWriteError> {
         let conn = self.conn.lock();
-        let _ = conn.execute(
+        conn.execute(
             "INSERT OR REPLACE INTO forwarding_hints (blob_id, routing_id, target_relay, created_at_secs, expires_at_secs)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
@@ -102,7 +102,8 @@ impl ForwardingHintStore for SqliteForwardingHintStore {
                 hint.created_at_secs as i64,
                 hint.expires_at_secs as i64,
             ],
-        );
+        )?;
+        Ok(())
     }
 
     fn get_hints(&self, routing_id: &str) -> Vec<ForwardingHint> {
@@ -215,7 +216,7 @@ mod tests {
             created_at_secs: 1000,
             expires_at_secs: 9999999999,
         };
-        store.store_hint(hint);
+        store.store_hint(hint).unwrap();
 
         let hints = store.get_hints("route-1");
         assert_eq!(hints.len(), 1);
@@ -230,21 +231,25 @@ mod tests {
 
     fn test_cleanup_expired(store: &dyn ForwardingHintStore) {
         // Store an already-expired hint
-        store.store_hint(ForwardingHint {
-            routing_id: "route-1".to_string(),
-            blob_id: "blob-expired".to_string(),
-            target_relay: "https://peer:8080".to_string(),
-            created_at_secs: 100,
-            expires_at_secs: 1, // expired long ago
-        });
+        store
+            .store_hint(ForwardingHint {
+                routing_id: "route-1".to_string(),
+                blob_id: "blob-expired".to_string(),
+                target_relay: "https://peer:8080".to_string(),
+                created_at_secs: 100,
+                expires_at_secs: 1, // expired long ago
+            })
+            .unwrap();
         // Store a valid hint
-        store.store_hint(ForwardingHint {
-            routing_id: "route-1".to_string(),
-            blob_id: "blob-valid".to_string(),
-            target_relay: "https://peer:8080".to_string(),
-            created_at_secs: 100,
-            expires_at_secs: 9999999999,
-        });
+        store
+            .store_hint(ForwardingHint {
+                routing_id: "route-1".to_string(),
+                blob_id: "blob-valid".to_string(),
+                target_relay: "https://peer:8080".to_string(),
+                created_at_secs: 100,
+                expires_at_secs: 9999999999,
+            })
+            .unwrap();
 
         let removed = store.cleanup_expired();
         assert_eq!(removed, 1);
@@ -254,20 +259,24 @@ mod tests {
     }
 
     fn test_remove_by_blob_id(store: &dyn ForwardingHintStore) {
-        store.store_hint(ForwardingHint {
-            routing_id: "route-1".to_string(),
-            blob_id: "blob-a".to_string(),
-            target_relay: "https://peer:8080".to_string(),
-            created_at_secs: 100,
-            expires_at_secs: 9999999999,
-        });
-        store.store_hint(ForwardingHint {
-            routing_id: "route-1".to_string(),
-            blob_id: "blob-b".to_string(),
-            target_relay: "https://peer:8080".to_string(),
-            created_at_secs: 100,
-            expires_at_secs: 9999999999,
-        });
+        store
+            .store_hint(ForwardingHint {
+                routing_id: "route-1".to_string(),
+                blob_id: "blob-a".to_string(),
+                target_relay: "https://peer:8080".to_string(),
+                created_at_secs: 100,
+                expires_at_secs: 9999999999,
+            })
+            .unwrap();
+        store
+            .store_hint(ForwardingHint {
+                routing_id: "route-1".to_string(),
+                blob_id: "blob-b".to_string(),
+                target_relay: "https://peer:8080".to_string(),
+                created_at_secs: 100,
+                expires_at_secs: 9999999999,
+            })
+            .unwrap();
 
         assert!(store.remove_hint("blob-a"));
         assert!(!store.remove_hint("nonexistent"));
@@ -275,27 +284,33 @@ mod tests {
     }
 
     fn test_delete_all_for_routing_id(store: &dyn ForwardingHintStore) {
-        store.store_hint(ForwardingHint {
-            routing_id: "route-1".to_string(),
-            blob_id: "blob-1".to_string(),
-            target_relay: "https://peer:8080".to_string(),
-            created_at_secs: 100,
-            expires_at_secs: 9999999999,
-        });
-        store.store_hint(ForwardingHint {
-            routing_id: "route-1".to_string(),
-            blob_id: "blob-2".to_string(),
-            target_relay: "https://peer:8080".to_string(),
-            created_at_secs: 100,
-            expires_at_secs: 9999999999,
-        });
-        store.store_hint(ForwardingHint {
-            routing_id: "route-2".to_string(),
-            blob_id: "blob-3".to_string(),
-            target_relay: "https://peer:8080".to_string(),
-            created_at_secs: 100,
-            expires_at_secs: 9999999999,
-        });
+        store
+            .store_hint(ForwardingHint {
+                routing_id: "route-1".to_string(),
+                blob_id: "blob-1".to_string(),
+                target_relay: "https://peer:8080".to_string(),
+                created_at_secs: 100,
+                expires_at_secs: 9999999999,
+            })
+            .unwrap();
+        store
+            .store_hint(ForwardingHint {
+                routing_id: "route-1".to_string(),
+                blob_id: "blob-2".to_string(),
+                target_relay: "https://peer:8080".to_string(),
+                created_at_secs: 100,
+                expires_at_secs: 9999999999,
+            })
+            .unwrap();
+        store
+            .store_hint(ForwardingHint {
+                routing_id: "route-2".to_string(),
+                blob_id: "blob-3".to_string(),
+                target_relay: "https://peer:8080".to_string(),
+                created_at_secs: 100,
+                expires_at_secs: 9999999999,
+            })
+            .unwrap();
 
         let deleted = store.delete_all_for("route-1");
         assert_eq!(deleted, 2);
@@ -306,20 +321,24 @@ mod tests {
 
     fn test_hint_count_accuracy(store: &dyn ForwardingHintStore) {
         assert_eq!(store.hint_count(), 0);
-        store.store_hint(ForwardingHint {
-            routing_id: "r1".to_string(),
-            blob_id: "b1".to_string(),
-            target_relay: "https://p:8080".to_string(),
-            created_at_secs: 100,
-            expires_at_secs: 9999999999,
-        });
-        store.store_hint(ForwardingHint {
-            routing_id: "r2".to_string(),
-            blob_id: "b2".to_string(),
-            target_relay: "https://p:8080".to_string(),
-            created_at_secs: 100,
-            expires_at_secs: 9999999999,
-        });
+        store
+            .store_hint(ForwardingHint {
+                routing_id: "r1".to_string(),
+                blob_id: "b1".to_string(),
+                target_relay: "https://p:8080".to_string(),
+                created_at_secs: 100,
+                expires_at_secs: 9999999999,
+            })
+            .unwrap();
+        store
+            .store_hint(ForwardingHint {
+                routing_id: "r2".to_string(),
+                blob_id: "b2".to_string(),
+                target_relay: "https://p:8080".to_string(),
+                created_at_secs: 100,
+                expires_at_secs: 9999999999,
+            })
+            .unwrap();
         assert_eq!(store.hint_count(), 2);
     }
 
@@ -328,13 +347,15 @@ mod tests {
     fn test_sqlite_get_hints_many_returns_hints_for_exactly_the_given_routes() {
         let store = SqliteForwardingHintStore::in_memory().unwrap();
         for route in ["route-1", "route-2", "route-3"] {
-            store.store_hint(ForwardingHint {
-                routing_id: route.to_string(),
-                blob_id: format!("blob-of-{route}"),
-                target_relay: "https://peer-a:8080".to_string(),
-                created_at_secs: 1000,
-                expires_at_secs: 9999999999,
-            });
+            store
+                .store_hint(ForwardingHint {
+                    routing_id: route.to_string(),
+                    blob_id: format!("blob-of-{route}"),
+                    target_relay: "https://peer-a:8080".to_string(),
+                    created_at_secs: 1000,
+                    expires_at_secs: 9999999999,
+                })
+                .unwrap();
         }
 
         let mut found: Vec<String> = store
