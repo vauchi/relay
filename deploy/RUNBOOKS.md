@@ -68,8 +68,15 @@ openssl s_client -connect relay.example.com:443 -servername relay.example.com </
 
 ### 1.5 Federation mTLS Certificate Rotation
 
+A relay's federation certificate must name its `RELAY_FEDERATION_RELAY_ID`
+as a DNS subject alternative name. Peers refuse (403) any federation
+message whose declared relay id the sender's client certificate does not
+name, so a relay without an explicit `RELAY_FEDERATION_RELAY_ID` (it then
+picks a random id) cannot federate.
+
 ```bash
-# Generate new certificates (see federation docs)
+# Generate new certificates; the leaf's SAN must include the relay id,
+# e.g. DNS:relay-2.example.com
 # Place in configured paths:
 #   RELAY_FEDERATION_TLS_CERT=/etc/vauchi-relay/federation.crt
 #   RELAY_FEDERATION_TLS_KEY=/etc/vauchi-relay/federation.key
@@ -437,8 +444,9 @@ flowchart LR
 **Steps to add a relay to a federation:**
 
 ```bash
-# On the existing relay: generate federation credentials for the new peer
-# (See federation docs for CA setup)
+# On the existing relay: generate federation credentials for the new peer,
+# with RELAY_FEDERATION_RELAY_ID (relay-2.example.com) as a DNS SAN
+# (see 1.5; peers refuse ids the certificate does not name)
 
 # On the new relay: set environment variables
 RELAY_FEDERATION_ENABLED=true
