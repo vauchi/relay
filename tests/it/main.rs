@@ -37,6 +37,7 @@ mod ohttp_self_anchor_tests;
 mod ohttp_signer_tests;
 mod ohttp_window_keys_tests;
 mod ohttp_windowed_gateway_tests;
+mod rate_limit_cap_tests;
 mod rate_limit_ux;
 mod relay_integration_test;
 mod relay_load_test;
