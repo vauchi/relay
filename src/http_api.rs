@@ -1092,7 +1092,7 @@ fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest
     }
 
     let rate_key = format!("recovery:{}", &req.key_hash);
-    if !state.rate_limiter.consume(&rate_key) {
+    if !state.recovery_rate_limiter.consume(&rate_key) {
         return ApiResult::RateLimited;
     }
 
@@ -1122,6 +1122,18 @@ fn handle_recovery_query_logic(state: &HttpApiState, req: V2RecoveryQueryRequest
             Some(h) => key_hashes.push(h),
             None => return ApiResult::bad_request(format!("invalid key_hash: {}", hex)),
         }
+    }
+
+    // Keyed per probed identity: the HTTP/OHTTP path has no client identity,
+    // and one shared bucket would let anyone block every user's recovery
+    // (vauchi/private#289).
+    let all_allowed = req.key_hashes.iter().all(|hex| {
+        state
+            .recovery_rate_limiter
+            .consume(&format!("recovery_query:{}", hex.to_ascii_lowercase()))
+    });
+    if !all_allowed {
+        return ApiResult::RateLimited;
     }
 
     let results = state.recovery_storage.batch_get(&key_hashes);
