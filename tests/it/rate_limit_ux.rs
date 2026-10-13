@@ -32,6 +32,7 @@ fn create_tight_rate_limit_state() -> HttpApiState {
     HttpApiState {
         storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(1)),
+        recovery_rate_limiter: Arc::new(RateLimiter::new(100_000)),
         metrics: RelayMetrics::new(),
         quota: V2QuotaLimits {
             max_blobs: 1000,

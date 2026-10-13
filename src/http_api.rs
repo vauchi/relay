@@ -53,6 +53,8 @@ pub struct V2QuotaLimits {
 pub struct HttpApiState {
     pub storage: Arc<dyn BlobStore>,
     pub rate_limiter: Arc<RateLimiter>,
+    /// Stricter limiter for recovery-proof store and query (anti-enumeration).
+    pub recovery_rate_limiter: Arc<RateLimiter>,
     pub metrics: RelayMetrics,
     pub quota: V2QuotaLimits,
     /// When `Some`, the OHTTP gateway endpoints are enabled.

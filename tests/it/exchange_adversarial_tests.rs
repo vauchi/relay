@@ -30,6 +30,7 @@ fn test_state() -> HttpApiState {
     HttpApiState {
         storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(100)),
+        recovery_rate_limiter: Arc::new(RateLimiter::new(100_000)),
         metrics: RelayMetrics::new(),
         quota: V2QuotaLimits {
             max_blobs: 1000,
@@ -54,6 +55,7 @@ fn test_state_strict_rate_limit() -> HttpApiState {
     HttpApiState {
         storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
         rate_limiter: Arc::new(RateLimiter::new(2)),
+        recovery_rate_limiter: Arc::new(RateLimiter::new(100_000)),
         metrics: RelayMetrics::new(),
         quota: V2QuotaLimits {
             max_blobs: 1000,

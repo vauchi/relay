@@ -579,6 +579,7 @@ async fn main() {
         let api_state = HttpApiState {
             storage: storage.clone(),
             rate_limiter: rate_limiter.clone(),
+            recovery_rate_limiter: recovery_rate_limiter.clone(),
             metrics: metrics.clone(),
             quota: V2QuotaLimits {
                 max_blobs: config.storage.max_blobs_per_user,

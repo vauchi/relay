@@ -249,6 +249,7 @@ mod middleware {
         HttpApiState {
             storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
             rate_limiter: Arc::new(RateLimiter::new(100_000)),
+            recovery_rate_limiter: Arc::new(RateLimiter::new(100_000)),
             metrics: RelayMetrics::new(),
             quota: V2QuotaLimits {
                 max_blobs: 1000,
@@ -556,6 +557,7 @@ mod adversarial {
         HttpApiState {
             storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
             rate_limiter: Arc::new(RateLimiter::new(100_000)),
+            recovery_rate_limiter: Arc::new(RateLimiter::new(100_000)),
             metrics: RelayMetrics::new(),
             quota: V2QuotaLimits {
                 max_blobs: 1000,
