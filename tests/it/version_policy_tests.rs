@@ -682,3 +682,38 @@ mod adversarial {
         assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
     }
 }
+
+// ── Test-only timestamp override (vauchi/private#289 P1.8) ─────────────────
+
+// @internal
+#[test]
+fn the_stored_timestamp_is_used_without_an_override() {
+    assert_eq!(
+        vauchi_relay::version_policy::resolve_min_version_changed_at(None, Some("1700000000")),
+        Some(1_700_000_000)
+    );
+    assert_eq!(
+        vauchi_relay::version_policy::resolve_min_version_changed_at(None, Some("not a number")),
+        None
+    );
+}
+
+// @internal
+#[cfg(not(feature = "e2e-test-clock"))]
+#[test]
+fn a_production_build_ignores_the_test_override() {
+    assert_eq!(
+        vauchi_relay::version_policy::resolve_min_version_changed_at(Some("1"), Some("1700000000")),
+        Some(1_700_000_000)
+    );
+}
+
+// @internal
+#[cfg(feature = "e2e-test-clock")]
+#[test]
+fn an_e2e_build_lets_the_test_override_win() {
+    assert_eq!(
+        vauchi_relay::version_policy::resolve_min_version_changed_at(Some("1"), Some("1700000000")),
+        Some(1)
+    );
+}
