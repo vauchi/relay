@@ -430,3 +430,32 @@ async fn connector_accepts_a_handshake_ack_larger_than_a_kibibyte() {
 
     assert_eq!(sent, 1);
 }
+
+// @internal
+#[tokio::test]
+async fn an_offloaded_blob_stays_local_when_its_forwarding_hint_cannot_be_stored() {
+    // vauchi/private#289 P1.4: deleting the blob before the hint is stored
+    // left it unreachable whenever the hint write failed.
+    let dir = tempfile::tempdir().unwrap();
+    let hints_db = dir.path().join("hints.db");
+    let hint_store =
+        vauchi_relay::forwarding_hints::SqliteForwardingHintStore::open(&hints_db).unwrap();
+    rusqlite::Connection::open(&hints_db)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER reject_hints BEFORE INSERT ON forwarding_hints \
+             BEGIN SELECT RAISE(FAIL, 'simulated disk full'); END;",
+        )
+        .unwrap();
+    let (addr, client_config) = spawn_mtls_peer(real_peer_router()).await;
+    let mut manager = offload_manager_over_threshold(addr, client_config);
+    manager.hint_store = Arc::new(hint_store);
+
+    manager.check_and_offload().await;
+
+    assert_eq!(
+        manager.storage.get_oldest_blobs(10).len(),
+        1,
+        "without a stored hint the local copy is the only way to reach the blob"
+    );
+}
