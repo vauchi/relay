@@ -81,3 +81,80 @@ async fn the_recovery_store_endpoint_answers_500_without_internal_detail() {
     assert_eq!(body["status"], "error");
     assert!(!body.to_string().contains("simulated disk full"));
 }
+
+// @internal
+#[test]
+fn a_blob_that_is_not_written_is_reported() {
+    use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("blobs.db");
+    let store = SqliteBlobStore::open(&db).unwrap();
+    reject_inserts(&db, "blobs");
+
+    let result = store.store("recipient", StoredBlob::new(vec![1, 2, 3]));
+
+    assert!(result.is_err());
+    assert_eq!(store.blob_count_for("recipient"), 0);
+}
+
+// @internal
+#[tokio::test]
+async fn the_send_endpoint_answers_500_when_the_blob_is_not_stored() {
+    use vauchi_relay::storage::SqliteBlobStore;
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("blobs.db");
+    let mut state = create_test_state();
+    state.storage = Arc::new(SqliteBlobStore::open(&db).unwrap());
+    reject_inserts(&db, "blobs");
+    let app = create_v2_router(state);
+
+    let resp = post_json(
+        &app,
+        "/v2/send",
+        &json!({
+            "recipient_id": "ab".repeat(32),
+            "ciphertext": base64::engine::general_purpose::STANDARD.encode(b"sealed"),
+        }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), 500);
+    let body = response_json(resp).await;
+    assert!(!body.to_string().contains("simulated disk full"));
+}
+
+// @internal
+#[test]
+fn a_peer_that_cannot_store_an_offloaded_blob_does_not_accept_it() {
+    use vauchi_relay::federation_core::apply_offload;
+    use vauchi_relay::federation_protocol::FederationPayload;
+    use vauchi_relay::storage::SqliteBlobStore;
+    use vauchi_relay::{integrity, padding};
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("blobs.db");
+    let store = SqliteBlobStore::open(&db).unwrap();
+    reject_inserts(&db, "blobs");
+    let padded = padding::pad(b"offloaded");
+    let hash = integrity::compute_integrity_hash(&padded);
+
+    let outcome = apply_offload(
+        &store,
+        1 << 30,
+        0.95,
+        "blob-1".to_string(),
+        "routing",
+        padded,
+        1_700_000_000,
+        &hash,
+        0,
+    );
+
+    assert!(!outcome.accepted, "the sender must keep its copy");
+    assert!(matches!(
+        outcome.ack,
+        FederationPayload::OffloadAck {
+            accepted: false,
+            ..
+        }
+    ));
+}
