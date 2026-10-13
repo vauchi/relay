@@ -80,25 +80,7 @@ impl StoredBlob {
     }
 }
 
-/// A write the database did not accept (full disk, read-only file, lock).
-/// Carries the backend's message for logs only; callers answer clients with
-/// a generic error (DC-05).
-#[derive(Debug)]
-pub struct StorageWriteError(String);
-
-impl std::fmt::Display for StorageWriteError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "storage write failed: {}", self.0)
-    }
-}
-
-impl std::error::Error for StorageWriteError {}
-
-impl From<rusqlite::Error> for StorageWriteError {
-    fn from(e: rusqlite::Error) -> Self {
-        Self(e.to_string())
-    }
-}
+pub use crate::storage_error::StorageWriteError;
 
 /// Trait for blob storage backends.
 #[allow(dead_code)]

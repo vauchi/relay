@@ -35,5 +35,6 @@ pub mod rate_limit;
 pub mod recovery_storage;
 pub mod startup;
 pub mod storage;
+pub mod storage_error;
 pub mod url_validation;
 pub mod version_policy;
