@@ -43,4 +43,5 @@ mod relay_load_test;
 mod security_auth_tests;
 mod security_resource_tests;
 mod startup_tests;
+mod storage_write_error_tests;
 mod version_policy_tests;
