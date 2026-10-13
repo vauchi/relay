@@ -190,36 +190,22 @@ async fn main() {
         Some(&config.storage.data_dir),
     ));
 
-    // Load persisted min_version_changed_at timestamp.
-    //
-    // Test-only override: `RELAY_VERSION_CHANGED_AT_SECS` (a unix
-    // timestamp) takes precedence over storage. Lets e2e tests
-    // simulate "min_version was raised long ago, grace already
-    // expired" so they can exercise the rejection path
-    // deterministically. Production deployments must NOT set this
-    // env var (the relay logs WARN if it sees it, see below) — the
-    // storage-backed timestamp is the single source of truth in
-    // production. See problem record
+    // Load persisted min_version_changed_at timestamp. e2e builds
+    // (`e2e-test-clock`) also accept `RELAY_VERSION_CHANGED_AT_SECS`; see
+    // `resolve_min_version_changed_at` and problem record
     // `2026-04-27-version-enforcement-tests-fail`.
-    let env_override = std::env::var("RELAY_VERSION_CHANGED_AT_SECS")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok());
-    let min_version_changed_at = match env_override {
-        Some(t) => {
-            // WARN-loud — this is an in-band production-defence so a
-            // leaked env var in a real deploy is visible in logs.
-            warn!(
-                "Using test override for min_version_changed_at: {} \
-                 (RELAY_VERSION_CHANGED_AT_SECS) — \
-                 must NOT be set in production",
-                t
-            );
-            Some(t)
+    let env_override = std::env::var("RELAY_VERSION_CHANGED_AT_SECS").ok();
+    if env_override.is_some() {
+        if cfg!(feature = "e2e-test-clock") {
+            warn!("Using test override RELAY_VERSION_CHANGED_AT_SECS for min_version_changed_at");
+        } else {
+            warn!("Ignoring RELAY_VERSION_CHANGED_AT_SECS: only e2e-test-clock builds honour it");
         }
-        None => storage
-            .get_config("min_version_changed_at")
-            .and_then(|s| s.parse::<u64>().ok()),
-    };
+    }
+    let min_version_changed_at = vauchi_relay::version_policy::resolve_min_version_changed_at(
+        env_override.as_deref(),
+        storage.get_config("min_version_changed_at").as_deref(),
+    );
 
     let version_policy = Arc::new(parking_lot::RwLock::new(
         vauchi_relay::version_policy::VersionPolicyState::new(
@@ -234,8 +220,13 @@ async fn main() {
     // not pollute the storage backend that a subsequent override-less
     // run would read.
     let current_changed_at = version_policy.read().min_version_changed_at();
+    let honoured_override = if cfg!(feature = "e2e-test-clock") {
+        env_override.as_deref().and_then(|s| s.parse::<u64>().ok())
+    } else {
+        None
+    };
     if let Some(changed_at) = startup::min_version_change_to_persist(
-        env_override,
+        honoured_override,
         min_version_changed_at,
         current_changed_at,
     ) {

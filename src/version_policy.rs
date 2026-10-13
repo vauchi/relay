@@ -202,3 +202,21 @@ pub enum VersionEnforcement {
     /// Client version is below minimum and grace has expired (or never existed).
     Rejected { min_version: u16 },
 }
+
+/// The timestamp `min_version` last changed, from storage. Builds with the
+/// `e2e-test-clock` feature let `RELAY_VERSION_CHANGED_AT_SECS` override it
+/// so e2e tests can start with the grace period already expired; production
+/// builds ignore the variable, so a leaked env var cannot reopen or close
+/// the grace window (vauchi/private#289).
+pub fn resolve_min_version_changed_at(
+    env_override: Option<&str>,
+    stored: Option<&str>,
+) -> Option<u64> {
+    #[cfg(feature = "e2e-test-clock")]
+    if let Some(t) = env_override.and_then(|s| s.parse::<u64>().ok()) {
+        return Some(t);
+    }
+    #[cfg(not(feature = "e2e-test-clock"))]
+    let _ = env_override;
+    stored.and_then(|s| s.parse::<u64>().ok())
+}
