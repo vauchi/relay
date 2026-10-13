@@ -557,3 +557,125 @@ async fn body_limit_is_the_max_message_size_plus_framing_headroom() {
     );
     assert_eq!(over_limit.status(), 413);
 }
+
+// ── Relay id bound to the client certificate (vauchi/private#674) ──────
+
+/// Serves one mTLS connection through the production path and returns a
+/// hyper sender authenticated with a leaf whose SANs are `localhost` (the
+/// server name) and `peer.relay.test`.
+async fn mtls_sender_for_peer(
+    router: axum::Router,
+) -> hyper::client::conn::http1::SendRequest<axum::body::Body> {
+    use crate::common::mtls::generate_mtls_certs_for;
+    use vauchi_relay::federation_http::serve_mtls_connection;
+
+    let (ca_file, cert_file, key_file) = generate_mtls_certs_for(&["localhost", "peer.relay.test"]);
+    let tls_config = RelayConfig {
+        federation: FederationConfig {
+            tls_cert_path: Some(cert_file.path().to_str().unwrap().to_string()),
+            tls_key_path: Some(key_file.path().to_str().unwrap().to_string()),
+            tls_ca_path: Some(ca_file.path().to_str().unwrap().to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let tls = load_federation_tls(&tls_config).unwrap().unwrap();
+    let acceptor = TlsAcceptor::from(tls.server_config.clone());
+    let connector = TlsConnector::from(tls.client_config.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let tls_stream = acceptor.accept(tcp).await.expect("server mTLS handshake");
+        serve_mtls_connection(tls_stream, router).await;
+    });
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let tls_stream = connector
+        .connect(ServerName::try_from("localhost").unwrap(), tcp)
+        .await
+        .expect("client mTLS handshake");
+    let (sender, conn) =
+        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tls_stream))
+            .await
+            .unwrap();
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    sender
+}
+
+async fn offload_as(
+    sender: &mut hyper::client::conn::http1::SendRequest<axum::body::Body>,
+    relay_id: &str,
+    blob_id: &str,
+) -> hyper::StatusCode {
+    let env = offload_envelope(blob_id, "bound-route", b"payload", 0);
+    let request = hyper::Request::builder()
+        .method("POST")
+        .uri("/v2/federation/message")
+        .header("content-type", "application/json")
+        .header(RELAY_ID_HEADER, relay_id)
+        .body(axum::body::Body::from(serde_json::to_vec(&env).unwrap()))
+        .unwrap();
+    sender.send_request(request).await.unwrap().status()
+}
+
+// @internal
+#[tokio::test]
+async fn a_relay_id_named_in_the_client_certificate_is_accepted() {
+    let (state, storage) = fed_state();
+    let mut sender = mtls_sender_for_peer(create_federation_router(state)).await;
+
+    assert_eq!(
+        offload_as(&mut sender, "peer.relay.test", "ok-1").await,
+        200
+    );
+    assert_eq!(storage.take("bound-route").len(), 1);
+}
+
+// @internal
+#[tokio::test]
+async fn a_relay_id_the_client_certificate_does_not_name_is_refused() {
+    let (state, storage) = fed_state();
+    let registry = state.peer_registry.clone();
+    let mut sender = mtls_sender_for_peer(create_federation_router(state)).await;
+
+    for impostor in [
+        "other.relay.test",
+        "*.relay.test",
+        "relay.test",
+        "peer.relay.test.evil",
+        "",
+    ] {
+        let status = offload_as(&mut sender, impostor, "forged").await;
+        assert!(
+            status == 403 || status == 400,
+            "{impostor:?} must be refused, got {status}"
+        );
+    }
+    assert!(
+        storage.take("bound-route").is_empty(),
+        "nothing stored for an impostor"
+    );
+    assert!(
+        registry.all_peers().is_empty(),
+        "no peer recorded for an impostor"
+    );
+}
+
+// @internal
+#[tokio::test]
+async fn a_request_without_a_client_certificate_is_refused() {
+    let (state, storage) = fed_state();
+    let app = create_federation_router(state);
+
+    let resp = post_msg(
+        &app,
+        Some("peer.relay.test"),
+        &offload_envelope("x", "bound-route", b"p", 0),
+    )
+    .await;
+
+    assert_eq!(resp.status(), 403);
+    assert!(storage.take("bound-route").is_empty());
+}

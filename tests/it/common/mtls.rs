@@ -15,6 +15,19 @@ pub fn generate_mtls_certs() -> (
     tempfile::NamedTempFile,
     tempfile::NamedTempFile,
 ) {
+    generate_mtls_certs_for(&["localhost"])
+}
+
+/// [`generate_mtls_certs`] with the leaf's DNS SANs chosen by the caller:
+/// a federation peer's relay id must be one of them (vauchi/private#674).
+#[allow(dead_code)]
+pub fn generate_mtls_certs_for(
+    dns_names: &[&str],
+) -> (
+    tempfile::NamedTempFile,
+    tempfile::NamedTempFile,
+    tempfile::NamedTempFile,
+) {
     use rcgen::{
         BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose,
         IsCa, Issuer, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, SanType,
@@ -36,7 +49,10 @@ pub fn generate_mtls_certs() -> (
     leaf_dn.push(DnType::CommonName, "test-relay");
     leaf_params.distinguished_name = leaf_dn;
     leaf_params.is_ca = IsCa::NoCa;
-    leaf_params.subject_alt_names = vec![SanType::DnsName("localhost".try_into().unwrap())];
+    leaf_params.subject_alt_names = dns_names
+        .iter()
+        .map(|name| SanType::DnsName((*name).try_into().unwrap()))
+        .collect();
     leaf_params.extended_key_usages = vec![
         ExtendedKeyUsagePurpose::ServerAuth,
         ExtendedKeyUsagePurpose::ClientAuth,
