@@ -205,8 +205,10 @@ async fn test_recovery_query_batch_returns_partial_results() {
 #[tokio::test]
 async fn test_recovery_store_rate_limited() {
     let mut state = create_test_state();
-    // Set very low rate limit
-    state.rate_limiter = std::sync::Arc::new(vauchi_relay::rate_limit::RateLimiter::new(1));
+    // Only the recovery limiter is tight: the general one must not be what
+    // throttles recovery (vauchi/private#289).
+    state.recovery_rate_limiter =
+        std::sync::Arc::new(vauchi_relay::rate_limit::RateLimiter::new(1));
 
     let app = create_v2_router(state);
     let key_hash = "ee".repeat(32);
@@ -229,6 +231,57 @@ async fn test_recovery_store_rate_limited() {
     )
     .await;
     assert_eq!(resp.status(), 429);
+}
+
+// @scenario: recovery :: query is rate limited per key hash
+#[tokio::test]
+async fn test_recovery_query_rate_limited_per_key_hash() {
+    let mut state = create_test_state();
+    state.recovery_rate_limiter =
+        std::sync::Arc::new(vauchi_relay::rate_limit::RateLimiter::new(1));
+    let app = create_v2_router(state);
+    let probed = "ab".repeat(32);
+    let other = "cd".repeat(32);
+
+    let resp = post_json(
+        &app,
+        "/v2/recovery/query",
+        &json!({ "key_hashes": [probed] }),
+    )
+    .await;
+    assert_eq!(resp.status(), 200);
+
+    // Probing the same identity again is throttled (anti-enumeration).
+    let resp = post_json(
+        &app,
+        "/v2/recovery/query",
+        &json!({ "key_hashes": [probed] }),
+    )
+    .await;
+    assert_eq!(resp.status(), 429);
+
+    // A batch that includes the throttled hash is throttled as a whole.
+    let resp = post_json(
+        &app,
+        "/v2/recovery/query",
+        &json!({ "key_hashes": [other, probed] }),
+    )
+    .await;
+    assert_eq!(resp.status(), 429);
+}
+
+// @scenario: recovery :: one identity's query limit does not block another's
+#[tokio::test]
+async fn test_recovery_query_limit_is_independent_per_key_hash() {
+    let mut state = create_test_state();
+    state.recovery_rate_limiter =
+        std::sync::Arc::new(vauchi_relay::rate_limit::RateLimiter::new(1));
+    let app = create_v2_router(state);
+
+    for hash in ["01".repeat(32), "02".repeat(32), "03".repeat(32)] {
+        let resp = post_json(&app, "/v2/recovery/query", &json!({ "key_hashes": [hash] })).await;
+        assert_eq!(resp.status(), 200);
+    }
 }
 
 // @internal
