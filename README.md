@@ -177,6 +177,9 @@ SIGTERM/SIGINT → stop accepting → drain connections
 - SSRF validation on federation peer URLs
   (blocks private/loopback/link-local)
 - mTLS (mutual client+server certs) for federation transport (ADR-052)
+- Key files (Noise and OHTTP keys) are created owner-only (`0600`) on
+  Unix. Windows is not a supported host: there the files keep the
+  directory's default ACL.
 
 ### Container Image
 
