@@ -70,7 +70,7 @@ impl StoredGuardianSet {
 #[allow(dead_code)]
 pub trait GuardianStore: Send + Sync {
     /// Stores (replaces) all guardian entries for a hash atomically.
-    fn store(&self, set: StoredGuardianSet);
+    fn store(&self, set: StoredGuardianSet) -> Result<(), crate::storage::StorageWriteError>;
 
     /// Retrieves guardian entries by hash. Returns `None` if not found or expired.
     fn get(&self, guardian_hash: &[u8; 32]) -> Option<StoredGuardianSet>;
@@ -143,10 +143,10 @@ impl SqliteGuardianStore {
 }
 
 impl GuardianStore for SqliteGuardianStore {
-    fn store(&self, set: StoredGuardianSet) {
+    fn store(&self, set: StoredGuardianSet) -> Result<(), crate::storage::StorageWriteError> {
         let entries_data = serialize_entries(&set.entries);
         let conn = self.conn.lock();
-        let _ = conn.execute(
+        conn.execute(
             "INSERT OR REPLACE INTO guardian_sets (guardian_hash, entries_data, created_at_secs, expires_at_secs)
              VALUES (?1, ?2, ?3, ?4)",
             params![
@@ -155,7 +155,8 @@ impl GuardianStore for SqliteGuardianStore {
                 set.created_at_secs as i64,
                 set.expires_at_secs as i64
             ],
-        );
+        )?;
+        Ok(())
     }
 
     fn get(&self, guardian_hash: &[u8; 32]) -> Option<StoredGuardianSet> {
@@ -252,7 +253,7 @@ mod tests {
         let entries = vec![vec![1u8, 2, 3], vec![4u8, 5, 6]];
 
         let set = StoredGuardianSet::new(hash, entries.clone());
-        store.store(set);
+        store.store(set).unwrap();
 
         let retrieved = store.get(&hash);
         assert!(retrieved.is_some(), "expected stored set to be retrievable");
@@ -271,10 +272,10 @@ mod tests {
         let hash = [0x02u8; 32];
 
         let set1 = StoredGuardianSet::new(hash, vec![vec![1, 2, 3]]);
-        store.store(set1);
+        store.store(set1).unwrap();
 
         let set2 = StoredGuardianSet::new(hash, vec![vec![4, 5, 6], vec![7, 8, 9]]);
-        store.store(set2);
+        store.store(set2).unwrap();
 
         let retrieved = store.get(&hash).unwrap();
         assert_eq!(
@@ -291,7 +292,9 @@ mod tests {
 
     fn test_remove_impl(store: &dyn GuardianStore) {
         let hash = [0x03u8; 32];
-        store.store(StoredGuardianSet::new(hash, vec![vec![1, 2, 3]]));
+        store
+            .store(StoredGuardianSet::new(hash, vec![vec![1, 2, 3]]))
+            .unwrap();
 
         assert!(store.get(&hash).is_some());
 
@@ -309,9 +312,15 @@ mod tests {
     fn test_set_count_impl(store: &dyn GuardianStore) {
         assert_eq!(store.set_count(), 0);
 
-        store.store(StoredGuardianSet::new([0x10u8; 32], vec![vec![1]]));
-        store.store(StoredGuardianSet::new([0x20u8; 32], vec![vec![2]]));
-        store.store(StoredGuardianSet::new([0x30u8; 32], vec![vec![3]]));
+        store
+            .store(StoredGuardianSet::new([0x10u8; 32], vec![vec![1]]))
+            .unwrap();
+        store
+            .store(StoredGuardianSet::new([0x20u8; 32], vec![vec![2]]))
+            .unwrap();
+        store
+            .store(StoredGuardianSet::new([0x30u8; 32], vec![vec![3]]))
+            .unwrap();
 
         assert_eq!(store.set_count(), 3);
     }
@@ -321,7 +330,7 @@ mod tests {
         let entries = make_entries(MAX_GUARDIAN_ENTRIES);
 
         let set = StoredGuardianSet::new(hash, entries.clone());
-        store.store(set);
+        store.store(set).unwrap();
 
         let retrieved = store.get(&hash).unwrap();
         assert_eq!(
@@ -398,7 +407,7 @@ mod tests {
         let hash = [0xBBu8; 32];
         let store = SqliteGuardianStore::in_memory().unwrap();
         let set = StoredGuardianSet::new(hash, vec![]);
-        store.store(set);
+        store.store(set).unwrap();
 
         let retrieved = store.get(&hash).unwrap();
         assert_eq!(retrieved.entries, Vec::<Vec<u8>>::new());

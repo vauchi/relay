@@ -94,11 +94,15 @@ fn sweep_forwarding_hints_moves_expired_hints_from_active_to_expired() {
 #[test]
 fn sweep_recovery_proofs_takes_expired_proofs_off_the_active_gauge() {
     let store = SqliteRecoveryProofStore::in_memory().unwrap();
-    store.store(StoredRecoveryProof {
-        expires_at_secs: unix_now() - 100,
-        ..StoredRecoveryProof::new([1; 32], vec![1, 2, 3])
-    });
-    store.store(StoredRecoveryProof::new([2; 32], vec![1, 2, 3]));
+    store
+        .store(StoredRecoveryProof {
+            expires_at_secs: unix_now() - 100,
+            ..StoredRecoveryProof::new([1; 32], vec![1, 2, 3])
+        })
+        .unwrap();
+    store
+        .store(StoredRecoveryProof::new([2; 32], vec![1, 2, 3]))
+        .unwrap();
     let metrics = RelayMetrics::new();
     metrics.recovery_proofs_active.set(2);
 

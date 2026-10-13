@@ -301,6 +301,9 @@ enum ApiResult {
     Unauthorized(String),
     /// Client error (bad input, validation failure). Maps to 400.
     BadRequest(String),
+    /// The database did not accept a write. Maps to 500 with a generic
+    /// message; the cause is logged, never sent (DC-05).
+    StorageFailed,
 }
 
 impl ApiResult {
@@ -334,6 +337,9 @@ impl ApiResult {
             }
             Self::BadRequest(msg) => {
                 serde_json::json!({ "status": "error", "error": msg })
+            }
+            Self::StorageFailed => {
+                serde_json::json!({ "status": "error", "error": "storage unavailable" })
             }
         }
     }
@@ -380,6 +386,14 @@ fn logic_response(
             Json(serde_json::json!({
                 "status": "error",
                 "error": msg
+            })),
+        ),
+        ApiResult::StorageFailed => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(header::RETRY_AFTER, "")],
+            Json(serde_json::json!({
+                "status": "error",
+                "error": "storage unavailable"
             })),
         ),
     }
@@ -1103,7 +1117,10 @@ fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest
     };
 
     let proof = crate::recovery_storage::StoredRecoveryProof::new(key_hash, proof_bytes);
-    state.recovery_storage.store(proof);
+    if let Err(e) = state.recovery_storage.store(proof) {
+        tracing::error!("recovery proof not stored: {e}");
+        return ApiResult::StorageFailed;
+    }
 
     ApiResult::ok(serde_json::json!({ "status": "ok" }))
 }
@@ -1220,7 +1237,10 @@ fn handle_guardian_store_logic(state: &HttpApiState, req: V2GuardianStoreRequest
     };
 
     let set = crate::guardian_storage::StoredGuardianSet::new(guardian_hash, decoded_entries);
-    state.guardian_storage.store(set);
+    if let Err(e) = state.guardian_storage.store(set) {
+        tracing::error!("guardian set not stored: {e}");
+        return ApiResult::StorageFailed;
+    }
 
     ApiResult::ok(serde_json::json!({ "status": "ok" }))
 }

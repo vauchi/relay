@@ -64,7 +64,7 @@ impl StoredRecoveryProof {
 #[allow(dead_code)]
 pub trait RecoveryProofStore: Send + Sync {
     /// Stores a recovery proof. Overwrites if one already exists for this key.
-    fn store(&self, proof: StoredRecoveryProof);
+    fn store(&self, proof: StoredRecoveryProof) -> Result<(), crate::storage::StorageWriteError>;
 
     /// Retrieves a recovery proof by key hash.
     fn get(&self, key_hash: &[u8; 32]) -> Option<StoredRecoveryProof>;
@@ -126,9 +126,9 @@ impl SqliteRecoveryProofStore {
 }
 
 impl RecoveryProofStore for SqliteRecoveryProofStore {
-    fn store(&self, proof: StoredRecoveryProof) {
+    fn store(&self, proof: StoredRecoveryProof) -> Result<(), crate::storage::StorageWriteError> {
         let conn = self.conn.lock();
-        let _ = conn.execute(
+        conn.execute(
             "INSERT OR REPLACE INTO recovery_proofs (key_hash, proof_data, created_at_secs, expires_at_secs)
              VALUES (?1, ?2, ?3, ?4)",
             params![
@@ -137,7 +137,8 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
                 proof.created_at_secs as i64,
                 proof.expires_at_secs as i64
             ],
-        );
+        )?;
+        Ok(())
     }
 
     fn get(&self, key_hash: &[u8; 32]) -> Option<StoredRecoveryProof> {
@@ -241,9 +242,11 @@ mod tests {
     #[test]
     fn test_cleanup_expired_counts_and_removes_only_expired_proofs() {
         let store = SqliteRecoveryProofStore::in_memory().unwrap();
-        store.store(proof_expiring_at(1, unix_now() - 100));
-        store.store(proof_expiring_at(2, unix_now() - 100));
-        store.store(proof_expiring_at(3, unix_now() + 1000));
+        store.store(proof_expiring_at(1, unix_now() - 100)).unwrap();
+        store.store(proof_expiring_at(2, unix_now() - 100)).unwrap();
+        store
+            .store(proof_expiring_at(3, unix_now() + 1000))
+            .unwrap();
 
         let removed = store.cleanup_expired();
 
@@ -257,7 +260,7 @@ mod tests {
         let proof_data = vec![1, 2, 3, 4, 5];
 
         let proof = StoredRecoveryProof::new(key_hash, proof_data.clone());
-        store.store(proof);
+        store.store(proof).unwrap();
 
         let retrieved = store.get(&key_hash);
         let retrieved = retrieved.unwrap();
@@ -275,10 +278,10 @@ mod tests {
         let key_hash = [0x02u8; 32];
 
         let proof1 = StoredRecoveryProof::new(key_hash, vec![1, 2, 3]);
-        store.store(proof1);
+        store.store(proof1).unwrap();
 
         let proof2 = StoredRecoveryProof::new(key_hash, vec![4, 5, 6]);
-        store.store(proof2);
+        store.store(proof2).unwrap();
 
         let retrieved = store.get(&key_hash).unwrap();
         assert_eq!(retrieved.proof_data, vec![4, 5, 6]);
@@ -290,8 +293,12 @@ mod tests {
         let key2 = [0x02u8; 32];
         let key3 = [0x03u8; 32]; // Not stored
 
-        store.store(StoredRecoveryProof::new(key1, vec![1]));
-        store.store(StoredRecoveryProof::new(key2, vec![2]));
+        store
+            .store(StoredRecoveryProof::new(key1, vec![1]))
+            .unwrap();
+        store
+            .store(StoredRecoveryProof::new(key2, vec![2]))
+            .unwrap();
 
         let results = store.batch_get(&[key1, key2, key3]);
 
@@ -303,7 +310,9 @@ mod tests {
 
     fn test_remove_impl(store: &dyn RecoveryProofStore) {
         let key_hash = [0x04u8; 32];
-        store.store(StoredRecoveryProof::new(key_hash, vec![1, 2, 3]));
+        store
+            .store(StoredRecoveryProof::new(key_hash, vec![1, 2, 3]))
+            .unwrap();
 
         assert!(store.get(&key_hash).is_some());
 
@@ -353,8 +362,12 @@ mod tests {
 
         assert_eq!(store.proof_count(), 0);
 
-        store.store(StoredRecoveryProof::new([0x01u8; 32], vec![1]));
-        store.store(StoredRecoveryProof::new([0x02u8; 32], vec![2]));
+        store
+            .store(StoredRecoveryProof::new([0x01u8; 32], vec![1]))
+            .unwrap();
+        store
+            .store(StoredRecoveryProof::new([0x02u8; 32], vec![2]))
+            .unwrap();
 
         assert_eq!(store.proof_count(), 2);
     }
