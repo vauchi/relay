@@ -71,17 +71,54 @@ pub struct RateLimiter {
     buckets: RwLock<HashMap<String, TokenBucket>>,
     /// Maximum requests per minute.
     max_per_minute: u32,
+    /// Most client buckets held at once (vauchi/private#289).
+    max_buckets: usize,
 }
+
+/// Default ceiling on tracked clients: about 10 MB of buckets.
+pub const DEFAULT_MAX_BUCKETS: usize = 100_000;
 
 impl RateLimiter {
     /// Creates a new rate limiter.
     ///
     /// `max_per_minute` is the maximum number of requests allowed per minute per client.
     pub fn new(max_per_minute: u32) -> Self {
+        Self::with_max_buckets(max_per_minute, DEFAULT_MAX_BUCKETS)
+    }
+
+    /// A limiter that tracks at most `max_buckets` clients. At the cap,
+    /// buckets that have refilled completely (indistinguishable from a
+    /// fresh one) are dropped to make room; if none has, a new client is
+    /// refused rather than evicting a draining bucket, which would hand its
+    /// client a fresh allowance.
+    pub fn with_max_buckets(max_per_minute: u32, max_buckets: usize) -> Self {
         RateLimiter {
             buckets: RwLock::new(HashMap::new()),
             max_per_minute,
+            max_buckets,
         }
+    }
+
+    fn bucket_for<'a>(
+        &self,
+        buckets: &'a mut HashMap<String, TokenBucket>,
+        client_id: &str,
+        now: Instant,
+    ) -> Option<&'a mut TokenBucket> {
+        if !buckets.contains_key(client_id) && buckets.len() >= self.max_buckets {
+            buckets.retain(|_, bucket| {
+                bucket.refill(now);
+                bucket.tokens < bucket.max_tokens
+            });
+            if buckets.len() >= self.max_buckets {
+                return None;
+            }
+        }
+        Some(
+            buckets
+                .entry(client_id.to_string())
+                .or_insert_with(|| self.new_bucket(now)),
+        )
     }
 
     fn new_bucket(&self, now: Instant) -> TokenBucket {
@@ -100,10 +137,8 @@ impl RateLimiter {
     #[allow(dead_code)]
     pub fn check_at(&self, client_id: &str, now: Instant) -> bool {
         let mut buckets = self.buckets.write();
-        let bucket = buckets
-            .entry(client_id.to_string())
-            .or_insert_with(|| self.new_bucket(now));
-        bucket.can_consume(now)
+        self.bucket_for(&mut buckets, client_id, now)
+            .is_some_and(|bucket| bucket.can_consume(now))
     }
 
     /// Tries to consume a token for this client.
@@ -116,10 +151,8 @@ impl RateLimiter {
     /// [`Self::consume`] as of `now`.
     pub fn consume_at(&self, client_id: &str, now: Instant) -> bool {
         let mut buckets = self.buckets.write();
-        let bucket = buckets
-            .entry(client_id.to_string())
-            .or_insert_with(|| self.new_bucket(now));
-        bucket.try_consume(now)
+        self.bucket_for(&mut buckets, client_id, now)
+            .is_some_and(|bucket| bucket.try_consume(now))
     }
 
     /// Removes inactive client buckets (for memory cleanup).
