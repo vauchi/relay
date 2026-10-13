@@ -98,6 +98,42 @@ where
     }
 }
 
+/// The client certificate the mTLS handshake verified, attached to every
+/// request on that connection so the handler can check the relay id a
+/// peer declares against it (vauchi/private#674).
+#[derive(Clone)]
+pub struct PeerCertificate(pub rustls::pki_types::CertificateDer<'static>);
+
+/// Serves a federation connection whose mTLS handshake is done, attaching
+/// the peer's client certificate to every request on it.
+pub async fn serve_mtls_connection(
+    stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+    router: Router,
+) {
+    let certificate = stream
+        .get_ref()
+        .1
+        .peer_certificates()
+        .and_then(|chain| chain.first())
+        .cloned();
+    let router = match certificate {
+        Some(certificate) => router.layer(axum::Extension(PeerCertificate(certificate))),
+        None => router,
+    };
+    serve_connection(stream, router).await;
+}
+
+/// Whether `relay_id` is a name the certificate was issued for. A relay id
+/// that is not a valid DNS name or IP address never matches.
+fn certificate_names(certificate: &PeerCertificate, relay_id: &str) -> bool {
+    let Ok(name) = rustls::pki_types::ServerName::try_from(relay_id) else {
+        return false;
+    };
+    webpki::EndEntityCert::try_from(&certificate.0)
+        .and_then(|cert| cert.verify_is_valid_for_subject_name(&name))
+        .is_ok()
+}
+
 async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
@@ -109,6 +145,7 @@ async fn health_handler() -> impl IntoResponse {
 /// has no reply).
 async fn message_handler(
     State(state): State<FederationHttpState>,
+    peer_certificate: Option<axum::Extension<PeerCertificate>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -116,6 +153,20 @@ async fn message_handler(
         Some(id) if !id.is_empty() => id.to_string(),
         _ => return (StatusCode::BAD_REQUEST, "missing X-Federation-Relay-Id").into_response(),
     };
+
+    // mTLS proves only that the peer holds a CA-signed certificate; the
+    // relay id it declares must be one the certificate names, or any peer
+    // could speak as another (vauchi/private#674).
+    let bound = peer_certificate
+        .as_ref()
+        .is_some_and(|axum::Extension(cert)| certificate_names(cert, &peer_relay_id));
+    if !bound {
+        return (
+            StatusCode::FORBIDDEN,
+            "X-Federation-Relay-Id is not named by the client certificate",
+        )
+            .into_response();
+    }
 
     if !state.rate_limiter.consume(&peer_relay_id) {
         state.metrics.federation_rate_limited.inc();

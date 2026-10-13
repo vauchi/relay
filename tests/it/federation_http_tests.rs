@@ -7,13 +7,12 @@
 //! `oneshot` with the peer relay id supplied through the
 //! `X-Federation-Relay-Id` header (the HTTP analogue of the WS handshake).
 //! `offload_round_trips_over_real_mtls` additionally exercises the full
-//! `serve_connection` path end-to-end: a real mTLS TCP listener serving the
+//! `serve_mtls_connection` path end-to-end: a real mTLS TCP listener serving the
 //! router, hit by a real mTLS hyper client.
 
 use std::sync::Arc;
 
 use crate::common::http_helpers::*;
-use crate::common::mtls::generate_mtls_certs;
 use serde_json::Value;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls::pki_types::ServerName;
@@ -24,7 +23,7 @@ use vauchi_relay::config::{FederationConfig, RelayConfig};
 use vauchi_relay::federation_http::{
     BLOB_ID_HEADER, CREATED_AT_HEADER, FederationHttpState, HOP_COUNT_HEADER,
     INTEGRITY_HASH_HEADER, OFFLOAD_CONTENT_TYPE, RELAY_ID_HEADER, ROUTING_ID_HEADER,
-    create_federation_router, serve_connection,
+    create_federation_router,
 };
 use vauchi_relay::federation_protocol::{FederationPayload, create_federation_envelope};
 use vauchi_relay::federation_tls::load_federation_tls;
@@ -58,10 +57,20 @@ async fn post_msg(
     if let Some(id) = relay_id {
         builder = builder.header("X-Federation-Relay-Id", id);
     }
-    let req = builder
+    let mut req = builder
         .body(ax_body::Body::from(serde_json::to_vec(envelope).unwrap()))
         .unwrap();
+    attach_certificate_naming(&mut req, relay_id);
     app.clone().oneshot(req).await.unwrap()
+}
+
+/// Router-level tests bypass the TLS listener, so they attach the client
+/// certificate the listener would have: one naming the declared relay id.
+fn attach_certificate_naming<B>(req: &mut ax_http::Request<B>, relay_id: Option<&str>) {
+    if let Some(id) = relay_id.filter(|id| !id.is_empty()) {
+        req.extensions_mut()
+            .insert(crate::common::mtls::peer_certificate_naming(&[id]));
+    }
 }
 
 fn offload_envelope(blob_id: &str, routing_id: &str, payload: &[u8], hop_count: u8) -> Value {
@@ -205,7 +214,8 @@ async fn post_offload_binary(
             .header(INTEGRITY_HASH_HEADER, integrity_hash)
             .header(HOP_COUNT_HEADER, hop_count.to_string());
     }
-    let req = builder.body(ax_body::Body::from(padded)).unwrap();
+    let mut req = builder.body(ax_body::Body::from(padded)).unwrap();
+    attach_certificate_naming(&mut req, relay_id);
     app.clone().oneshot(req).await.unwrap()
 }
 
@@ -263,7 +273,8 @@ async fn offload_as_octet_stream_missing_metadata_header_is_rejected() {
 // @internal
 #[tokio::test]
 async fn offload_round_trips_over_real_mtls() {
-    let (ca_file, cert_file, key_file) = generate_mtls_certs();
+    let (ca_file, cert_file, key_file) =
+        crate::common::mtls::generate_mtls_certs_for(&["localhost", "peer-B"]);
     let tls_config = RelayConfig {
         federation: FederationConfig {
             tls_cert_path: Some(cert_file.path().to_str().unwrap().to_string()),
@@ -280,13 +291,13 @@ async fn offload_round_trips_over_real_mtls() {
     let (state, storage) = fed_state();
     let router = create_federation_router(state);
 
-    // Server: one mTLS connection, served via the production `serve_connection`.
+    // Server: one mTLS connection, served via the production `serve_mtls_connection`.
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         let (tcp, _) = listener.accept().await.unwrap();
         let tls_stream = acceptor.accept(tcp).await.expect("server mTLS handshake");
-        serve_connection(tls_stream, router).await;
+        vauchi_relay::federation_http::serve_mtls_connection(tls_stream, router).await;
     });
 
     // Client: real mTLS hyper connection.
@@ -527,13 +538,14 @@ async fn message_with_empty_relay_id_header_is_rejected() {
 }
 
 async fn post_body_of_len(app: &axum::Router, len: usize) -> ax_response::Response {
-    let req = ax_http::Request::builder()
+    let mut req = ax_http::Request::builder()
         .method("POST")
         .uri("/v2/federation/message")
         .header("content-type", "application/json")
         .header("X-Federation-Relay-Id", "peer-1")
         .body(ax_body::Body::from(vec![b'x'; len]))
         .unwrap();
+    attach_certificate_naming(&mut req, Some("peer-1"));
     app.clone().oneshot(req).await.unwrap()
 }
 
@@ -669,12 +681,16 @@ async fn a_request_without_a_client_certificate_is_refused() {
     let (state, storage) = fed_state();
     let app = create_federation_router(state);
 
-    let resp = post_msg(
-        &app,
-        Some("peer.relay.test"),
-        &offload_envelope("x", "bound-route", b"p", 0),
-    )
-    .await;
+    let req = ax_http::Request::builder()
+        .method("POST")
+        .uri("/v2/federation/message")
+        .header("content-type", "application/json")
+        .header(RELAY_ID_HEADER, "peer.relay.test")
+        .body(ax_body::Body::from(
+            serde_json::to_vec(&offload_envelope("x", "bound-route", b"p", 0)).unwrap(),
+        ))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
 
     assert_eq!(resp.status(), 403);
     assert!(storage.take("bound-route").is_empty());

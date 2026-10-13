@@ -92,6 +92,9 @@ rand = "0.8"
 tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 rustls-pemfile = "2"
+# Federation: check a peer's declared relay id against its client
+# certificate (vauchi/private#674). Already in the tree through rustls.
+rustls-webpki = { version = "0.103", default-features = false }
 
 # tower::Service: drive the axum federation router from hyper's
 # per-connection serve over the mTLS stream (ADR-052).

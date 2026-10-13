@@ -83,6 +83,9 @@ fn spawn_relay(cert: &str, key: &str, ca: &str, peer: Option<&str>) -> RelayProc
         .env("RELAY_HTTP_API_ENABLED", "true")
         .env("RELAY_DATA_DIR", data_dir.path())
         .env("RELAY_FEDERATION_ENABLED", "true")
+        // The shared test certificate names `localhost`; a peer's relay id
+        // must be named by its certificate (vauchi/private#674).
+        .env("RELAY_FEDERATION_RELAY_ID", "localhost")
         .env("RELAY_FEDERATION_TLS_CERT", cert)
         .env("RELAY_FEDERATION_TLS_KEY", key)
         .env("RELAY_FEDERATION_TLS_CA", ca)

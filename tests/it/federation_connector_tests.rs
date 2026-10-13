@@ -12,15 +12,13 @@
 
 use std::sync::Arc;
 
-use crate::common::mtls::generate_mtls_certs;
+use crate::common::mtls::generate_mtls_certs_for;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 use vauchi_relay::config::{FederationConfig, RelayConfig};
 use vauchi_relay::federation_connector::send_payload_to_addr;
-use vauchi_relay::federation_http::{
-    FederationHttpState, create_federation_router, serve_connection,
-};
+use vauchi_relay::federation_http::{FederationHttpState, create_federation_router};
 use vauchi_relay::federation_protocol::{FederationPayload, create_federation_envelope};
 use vauchi_relay::federation_tls::load_federation_tls;
 use vauchi_relay::metrics::RelayMetrics;
@@ -32,7 +30,7 @@ use vauchi_relay::{integrity, padding};
 // @internal
 #[tokio::test]
 async fn federation_connector_offloads_over_real_mtls() {
-    let (ca_file, cert_file, key_file) = generate_mtls_certs();
+    let (ca_file, cert_file, key_file) = generate_mtls_certs_for(&["localhost", "peer-A"]);
     let tls_config = RelayConfig {
         federation: FederationConfig {
             tls_cert_path: Some(cert_file.path().to_str().unwrap().to_string()),
@@ -60,7 +58,7 @@ async fn federation_connector_offloads_over_real_mtls() {
     tokio::spawn(async move {
         let (tcp, _) = listener.accept().await.unwrap();
         let tls_stream = acceptor.accept(tcp).await.expect("server mTLS handshake");
-        serve_connection(tls_stream, router).await;
+        vauchi_relay::federation_http::serve_mtls_connection(tls_stream, router).await;
     });
 
     // Build the payload exactly as OffloadManager::check_and_offload does:
@@ -111,7 +109,7 @@ async fn spawn_mtls_peer(
     std::net::SocketAddr,
     Arc<tokio_rustls::rustls::ClientConfig>,
 ) {
-    let (ca_file, cert_file, key_file) = generate_mtls_certs();
+    let (ca_file, cert_file, key_file) = generate_mtls_certs_for(&["localhost", "self"]);
     let tls_config = RelayConfig {
         federation: FederationConfig {
             tls_cert_path: Some(cert_file.path().to_str().unwrap().to_string()),
@@ -135,7 +133,7 @@ async fn spawn_mtls_peer(
             let router = router.clone();
             tokio::spawn(async move {
                 if let Ok(tls_stream) = acceptor.accept(tcp).await {
-                    serve_connection(tls_stream, router).await;
+                    vauchi_relay::federation_http::serve_mtls_connection(tls_stream, router).await;
                 }
             });
         }

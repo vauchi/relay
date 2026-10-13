@@ -69,3 +69,15 @@ pub fn generate_mtls_certs_for(
         .unwrap();
     (ca_file, cert_file, key_file)
 }
+
+/// A client certificate naming `relay_ids`, for router-level tests that
+/// bypass the TLS listener (the handler checks names; the chain is the
+/// handshake's job).
+#[allow(dead_code)]
+pub fn peer_certificate_naming(
+    relay_ids: &[&str],
+) -> vauchi_relay::federation_http::PeerCertificate {
+    let names: Vec<String> = relay_ids.iter().map(|s| (*s).to_string()).collect();
+    let cert = rcgen::generate_simple_self_signed(names).unwrap();
+    vauchi_relay::federation_http::PeerCertificate(cert.cert.der().clone())
+}

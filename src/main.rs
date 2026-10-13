@@ -360,8 +360,9 @@ async fn main() {
                                 return;
                             }
                         };
-                        // Serve federation HTTP (ADR-052) over the mTLS stream.
-                        federation_http::serve_connection(tls_stream, router).await;
+                        // Serve federation HTTP (ADR-052) over the mTLS stream,
+                        // with the peer's certificate bound to its requests.
+                        federation_http::serve_mtls_connection(tls_stream, router).await;
                     });
                 }
             });
