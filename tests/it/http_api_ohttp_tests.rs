@@ -105,7 +105,9 @@ async fn test_ohttp_gateway_decrypt_and_route_fetch() {
 
     // Pre-store a blob
     let token = "f".repeat(64);
-    storage.store(&token, StoredBlob::new(b"fetched-via-ohttp".to_vec()));
+    storage
+        .store(&token, StoredBlob::new(b"fetched-via-ohttp".to_vec()))
+        .unwrap();
 
     // Fetch the public key
     let key_bytes = ohttp_key_bytes(&app).await;

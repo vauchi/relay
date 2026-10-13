@@ -20,7 +20,7 @@ fn setup_store() -> SqliteBlobStore {
 fn setup_store_with_blobs(recipient: &str, count: usize) -> SqliteBlobStore {
     let store = setup_store();
     for _ in 0..count {
-        store.store(recipient, make_blob(256));
+        store.store(recipient, make_blob(256)).unwrap();
     }
     store
 }
@@ -32,14 +32,14 @@ fn bench_blob_store(c: &mut Criterion) {
     group.bench_function("store_256B", |b| {
         let store = setup_store();
         b.iter(|| {
-            store.store("recipient-bench", make_blob(256));
+            store.store("recipient-bench", make_blob(256)).unwrap();
         });
     });
 
     group.bench_function("store_4KB", |b| {
         let store = setup_store();
         b.iter(|| {
-            store.store("recipient-bench", make_blob(4096));
+            store.store("recipient-bench", make_blob(4096)).unwrap();
         });
     });
 
@@ -60,7 +60,7 @@ fn bench_blob_store(c: &mut Criterion) {
             || {
                 let blob = make_blob(256);
                 let id = blob.id.clone();
-                store.store("recipient-ack", blob);
+                store.store("recipient-ack", blob).unwrap();
                 id
             },
             |blob_id| {
@@ -91,7 +91,9 @@ fn bench_blob_store(c: &mut Criterion) {
         let store = setup_store();
         for i in 0..50 {
             for _ in 0..10 {
-                store.store(&format!("recipient-{i}"), make_blob(256));
+                store
+                    .store(&format!("recipient-{i}"), make_blob(256))
+                    .unwrap();
             }
         }
         b.iter(|| {
@@ -103,7 +105,9 @@ fn bench_blob_store(c: &mut Criterion) {
         let store = setup_store();
         for i in 0..50 {
             for _ in 0..10 {
-                store.store(&format!("recipient-{i}"), make_blob(256));
+                store
+                    .store(&format!("recipient-{i}"), make_blob(256))
+                    .unwrap();
             }
         }
         b.iter(|| {

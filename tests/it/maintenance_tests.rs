@@ -43,11 +43,15 @@ fn metric_line(metrics: &RelayMetrics, name: &str) -> String {
 fn sweep_blobs_removes_expired_blobs_and_counts_them() {
     let storage = SqliteBlobStore::in_memory().unwrap();
     let two_hours_ago = unix_now() - 7200;
-    storage.store(
-        "recipient",
-        StoredBlob::with_metadata(vec![1], two_hours_ago, 0),
-    );
-    storage.store("recipient", StoredBlob::new(vec![2]));
+    storage
+        .store(
+            "recipient",
+            StoredBlob::with_metadata(vec![1], two_hours_ago, 0),
+        )
+        .unwrap();
+    storage
+        .store("recipient", StoredBlob::new(vec![2]))
+        .unwrap();
     let metrics = RelayMetrics::new();
 
     let removed = maintenance::sweep_blobs(&storage, Duration::from_secs(3600), &metrics);

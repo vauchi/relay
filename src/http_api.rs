@@ -933,7 +933,10 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
     }
     let blob = StoredBlob::new(ciphertext).with_origin_hint(req.origin_hint);
     let blob_id = blob.id.clone();
-    state.storage.store(&req.recipient_id, blob);
+    if let Err(e) = state.storage.store(&req.recipient_id, blob) {
+        tracing::error!("blob not stored: {e}");
+        return ApiResult::StorageFailed;
+    }
     state.metrics.blobs_created.inc();
     state
         .metrics

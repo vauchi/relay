@@ -67,10 +67,12 @@ async fn test_v2_fetch_truncated_page_uses_most_of_its_budget_without_exceeding_
     // Tiny blobs make the per-entry overhead dominate, so a size estimate
     // that is off in either direction shows in the page.
     for _ in 0..600 {
-        storage.store(
-            &token,
-            StoredBlob::new(vec![0x5a]).with_origin_hint(Some("12345678".to_string())),
-        );
+        storage
+            .store(
+                &token,
+                StoredBlob::new(vec![0x5a]).with_origin_hint(Some("12345678".to_string())),
+            )
+            .unwrap();
     }
 
     let resp = post_json(
@@ -103,7 +105,9 @@ async fn test_v2_fetch_stops_before_a_second_large_blob_would_exceed_the_budget(
     let token = "f".repeat(64);
     // Two 40 KiB blobs are ~109 KiB of base64: one fits the budget, two do not.
     for _ in 0..3 {
-        storage.store(&token, StoredBlob::new(vec![0x5a; 40 * 1024]));
+        storage
+            .store(&token, StoredBlob::new(vec![0x5a; 40 * 1024]))
+            .unwrap();
     }
 
     let resp = post_json(

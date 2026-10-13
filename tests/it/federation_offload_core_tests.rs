@@ -154,10 +154,12 @@ fn apply_offload_rejects_at_capacity() {
 #[test]
 fn apply_offload_accepts_while_a_non_empty_store_is_below_the_refuse_ratio() {
     let store = SqliteBlobStore::in_memory().expect("in-memory store");
-    store.store(
-        "already-here",
-        vauchi_relay::storage::StoredBlob::new(vec![0u8; 100]),
-    );
+    store
+        .store(
+            "already-here",
+            vauchi_relay::storage::StoredBlob::new(vec![0u8; 100]),
+        )
+        .unwrap();
     let padded = padding::pad(b"z");
     let hash = integrity::compute_integrity_hash(&padded);
 

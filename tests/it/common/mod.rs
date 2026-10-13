@@ -23,10 +23,12 @@ pub fn create_test_store_with_data(
 
     for r in 0..num_recipients {
         for b in 0..blobs_per_recipient {
-            store.store(
-                &format!("recipient-{}", r),
-                StoredBlob::new(vec![r as u8, b as u8]),
-            );
+            store
+                .store(
+                    &format!("recipient-{}", r),
+                    StoredBlob::new(vec![r as u8, b as u8]),
+                )
+                .unwrap();
         }
     }
 

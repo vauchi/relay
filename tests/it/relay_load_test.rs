@@ -27,10 +27,12 @@ fn test_high_throughput_storage() {
     let start = Instant::now();
 
     for i in 0..num_operations {
-        store.store(
-            &format!("recipient-{}", i % 100),
-            StoredBlob::new(vec![i as u8; 256]),
-        );
+        store
+            .store(
+                &format!("recipient-{}", i % 100),
+                StoredBlob::new(vec![i as u8; 256]),
+            )
+            .unwrap();
     }
 
     let elapsed = start.elapsed();
@@ -70,7 +72,9 @@ fn test_concurrent_read_write() {
         let store = Arc::clone(&store);
         handles.push(thread::spawn(move || {
             for i in 0..ops_per_thread {
-                store.store(&format!("recipient-{}", w), StoredBlob::new(vec![i as u8]));
+                store
+                    .store(&format!("recipient-{}", w), StoredBlob::new(vec![i as u8]))
+                    .unwrap();
                 // Small yield to increase interleaving
                 if i % 100 == 0 {
                     thread::yield_now();
@@ -144,10 +148,12 @@ fn test_cleanup_removes_all_blobs() {
 
     // Store many blobs
     for i in 0..1000 {
-        store.store(
-            &format!("recipient-{}", i),
-            StoredBlob::new(vec![0u8; 1024]),
-        );
+        store
+            .store(
+                &format!("recipient-{}", i),
+                StoredBlob::new(vec![0u8; 1024]),
+            )
+            .unwrap();
     }
 
     assert_eq!(store.blob_count(), 1000);
@@ -175,7 +181,9 @@ fn test_large_blob_handling() {
     // 1MB blob
     let large_data = vec![0u8; 1024 * 1024];
 
-    store.store("recipient", StoredBlob::new(large_data.clone()));
+    store
+        .store("recipient", StoredBlob::new(large_data.clone()))
+        .unwrap();
 
     let retrieved = store.peek("recipient");
     assert_eq!(retrieved.len(), 1);
@@ -194,10 +202,12 @@ fn test_many_recipients() {
     let start = Instant::now();
 
     for i in 0..num_recipients {
-        store.store(
-            &format!("recipient-{:05}", i),
-            StoredBlob::new(vec![i as u8]),
-        );
+        store
+            .store(
+                &format!("recipient-{:05}", i),
+                StoredBlob::new(vec![i as u8]),
+            )
+            .unwrap();
     }
 
     let store_elapsed = start.elapsed();
@@ -269,7 +279,7 @@ fn test_concurrent_acknowledgments() {
     for i in 0..100 {
         let blob = StoredBlob::new(vec![i as u8]);
         blob_ids.push(blob.id.clone());
-        store.store("recipient", blob);
+        store.store("recipient", blob).unwrap();
     }
 
     assert_eq!(store.blob_count(), 100);
@@ -304,10 +314,12 @@ fn test_storage_memory_pressure() {
     // Store many small blobs across many recipients
     for r in 0..100 {
         for b in 0..100 {
-            store.store(
-                &format!("recipient-{}", r),
-                StoredBlob::new(vec![r as u8, b as u8]),
-            );
+            store
+                .store(
+                    &format!("recipient-{}", r),
+                    StoredBlob::new(vec![r as u8, b as u8]),
+                )
+                .unwrap();
         }
     }
 

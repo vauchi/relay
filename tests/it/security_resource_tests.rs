@@ -26,7 +26,7 @@ fn test_blob_sender_map_gc_prunes_expired_entries() {
     // Store a blob
     let blob = StoredBlob::new(vec![1, 2, 3]);
     let blob_id = blob.id.clone();
-    storage.store("recipient1", blob);
+    storage.store("recipient1", blob).unwrap();
 
     // Verify blob exists
     assert_eq!(storage.blob_count(), 1);
@@ -54,8 +54,8 @@ fn test_all_blob_ids_returns_all_blobs() {
     let id1 = blob1.id.clone();
     let id2 = blob2.id.clone();
 
-    storage.store("alice", blob1);
-    storage.store("bob", blob2);
+    storage.store("alice", blob1).unwrap();
+    storage.store("bob", blob2).unwrap();
 
     let ids = storage.all_blob_ids();
     assert_eq!(ids.len(), 2);
@@ -74,7 +74,7 @@ fn test_blob_take_is_atomic() {
 
     let blob = StoredBlob::new(vec![42, 43, 44]);
     let blob_id = blob.id.clone();
-    storage.store("recipient1", blob);
+    storage.store("recipient1", blob).unwrap();
 
     // take() should return the blob and remove it
     let taken = storage.take("recipient1");
@@ -98,7 +98,7 @@ fn test_blob_take_no_duplicates_under_concurrency() {
 
     // Store multiple blobs
     for i in 0..10 {
-        storage.store("shared", StoredBlob::new(vec![i]));
+        storage.store("shared", StoredBlob::new(vec![i])).unwrap();
     }
 
     let storage1 = storage.clone();

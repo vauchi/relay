@@ -69,10 +69,15 @@ pub fn apply_offload(
         return reject(blob_id, "at capacity");
     }
 
-    storage.store(
+    // A refused write is reported as not accepted, so the sender keeps its
+    // copy instead of deleting the only one (vauchi/private#289).
+    if let Err(e) = storage.store(
         routing_id,
         StoredBlob::with_metadata(unpadded, created_at_secs, hop_count + 1),
-    );
+    ) {
+        tracing::error!("offloaded blob not stored: {e}");
+        return reject(blob_id, "storage unavailable");
+    }
     OffloadOutcome {
         ack: FederationPayload::OffloadAck {
             blob_id,

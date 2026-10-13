@@ -86,7 +86,7 @@ pub use crate::storage_error::StorageWriteError;
 #[allow(dead_code)]
 pub trait BlobStore: Send + Sync {
     /// Stores a blob for a recipient.
-    fn store(&self, recipient_id: &str, blob: StoredBlob);
+    fn store(&self, recipient_id: &str, blob: StoredBlob) -> Result<(), StorageWriteError>;
 
     /// Retrieves all pending blobs for a recipient (without removing them).
     fn peek(&self, recipient_id: &str) -> Vec<StoredBlob>;
@@ -221,9 +221,9 @@ impl SqliteBlobStore {
 }
 
 impl BlobStore for SqliteBlobStore {
-    fn store(&self, recipient_id: &str, blob: StoredBlob) {
+    fn store(&self, recipient_id: &str, blob: StoredBlob) -> Result<(), StorageWriteError> {
         let conn = self.conn.lock();
-        let _ = conn.execute(
+        conn.execute(
             "INSERT INTO blobs (id, recipient_id, data, created_at_secs, hop_count, origin_hint)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -234,7 +234,8 @@ impl BlobStore for SqliteBlobStore {
                 blob.hop_count as i64,
                 blob.origin_hint,
             ],
-        );
+        )?;
+        Ok(())
     }
 
     fn peek(&self, recipient_id: &str) -> Vec<StoredBlob> {
@@ -535,7 +536,9 @@ mod tests {
     fn test_shutdown_checkpoints_the_wal_into_the_database_file() {
         let dir = tempfile::tempdir().unwrap();
         let store = SqliteBlobStore::open(dir.path().join("blobs.db")).unwrap();
-        store.store("recipient-1", StoredBlob::new(vec![1, 2, 3]));
+        store
+            .store("recipient-1", StoredBlob::new(vec![1, 2, 3]))
+            .unwrap();
         let wal_len = || {
             std::fs::metadata(dir.path().join("blobs.db-wal"))
                 .unwrap()
@@ -552,7 +555,7 @@ mod tests {
         let blob = StoredBlob::new(vec![1, 2, 3]);
         let blob_id = blob.id.clone();
 
-        store.store("recipient-1", blob);
+        store.store("recipient-1", blob).unwrap();
 
         let peeked = store.peek("recipient-1");
         assert_eq!(peeked.len(), 1);
@@ -565,8 +568,12 @@ mod tests {
     }
 
     fn test_take_impl(store: &dyn BlobStore) {
-        store.store("recipient-1", StoredBlob::new(vec![1]));
-        store.store("recipient-1", StoredBlob::new(vec![2]));
+        store
+            .store("recipient-1", StoredBlob::new(vec![1]))
+            .unwrap();
+        store
+            .store("recipient-1", StoredBlob::new(vec![2]))
+            .unwrap();
 
         let taken = store.take("recipient-1");
         assert_eq!(taken.len(), 2);
@@ -581,10 +588,12 @@ mod tests {
     fn origin_hint_roundtrips_through_peek_take_and_peek_many() {
         let store = SqliteBlobStore::in_memory().unwrap();
         let hint = "bm9uY2V8Y2lwaGVydGV4dA==".to_string();
-        store.store(
-            "recipient-hint",
-            StoredBlob::new(vec![9]).with_origin_hint(Some(hint.clone())),
-        );
+        store
+            .store(
+                "recipient-hint",
+                StoredBlob::new(vec![9]).with_origin_hint(Some(hint.clone())),
+            )
+            .unwrap();
 
         assert_eq!(
             store.peek("recipient-hint")[0].origin_hint.as_ref(),
@@ -602,7 +611,9 @@ mod tests {
     #[test]
     fn legacy_blob_without_origin_hint_reads_as_none() {
         let store = SqliteBlobStore::in_memory().unwrap();
-        store.store("recipient-legacy", StoredBlob::new(vec![1]));
+        store
+            .store("recipient-legacy", StoredBlob::new(vec![1]))
+            .unwrap();
         assert_eq!(store.peek("recipient-legacy")[0].origin_hint, None);
     }
 
@@ -641,10 +652,12 @@ mod tests {
         assert_eq!(legacy.len(), 1);
         assert_eq!(legacy[0].origin_hint, None);
 
-        store.store(
-            "recipient-new",
-            StoredBlob::new(vec![2]).with_origin_hint(Some("aGludA==".to_string())),
-        );
+        store
+            .store(
+                "recipient-new",
+                StoredBlob::new(vec![2]).with_origin_hint(Some("aGludA==".to_string())),
+            )
+            .unwrap();
         assert_eq!(
             store.peek("recipient-new")[0].origin_hint.as_deref(),
             Some("aGludA==")
@@ -660,8 +673,8 @@ mod tests {
         let blob2 = StoredBlob::new(vec![2]);
         let blob1_id = blob1.id.clone();
 
-        store.store("recipient-1", blob1);
-        store.store("recipient-1", blob2);
+        store.store("recipient-1", blob1).unwrap();
+        store.store("recipient-1", blob2).unwrap();
 
         let removed = store.acknowledge("recipient-1", &blob1_id);
         assert!(removed);
@@ -672,7 +685,9 @@ mod tests {
     }
 
     fn test_cleanup_impl(store: &dyn BlobStore) {
-        store.store("recipient-1", StoredBlob::new(vec![1]));
+        store
+            .store("recipient-1", StoredBlob::new(vec![1]))
+            .unwrap();
 
         // With a long TTL, nothing should be removed
         let removed = store.cleanup_expired(Duration::from_secs(3600));
@@ -718,8 +733,12 @@ mod tests {
         // Store some blobs
         {
             let store = SqliteBlobStore::open(&db_path).unwrap();
-            store.store("recipient-1", StoredBlob::new(vec![1, 2, 3]));
-            store.store("recipient-2", StoredBlob::new(vec![4, 5, 6]));
+            store
+                .store("recipient-1", StoredBlob::new(vec![1, 2, 3]))
+                .unwrap();
+            store
+                .store("recipient-2", StoredBlob::new(vec![4, 5, 6]))
+                .unwrap();
             assert_eq!(store.blob_count(), 2);
         }
 
@@ -741,9 +760,15 @@ mod tests {
 
         assert_eq!(store.blob_count(), 0);
 
-        store.store("recipient-1", StoredBlob::new(vec![1]));
-        store.store("recipient-1", StoredBlob::new(vec![2]));
-        store.store("recipient-2", StoredBlob::new(vec![3]));
+        store
+            .store("recipient-1", StoredBlob::new(vec![1]))
+            .unwrap();
+        store
+            .store("recipient-1", StoredBlob::new(vec![2]))
+            .unwrap();
+        store
+            .store("recipient-2", StoredBlob::new(vec![3]))
+            .unwrap();
 
         assert_eq!(store.blob_count(), 3);
         assert_eq!(store.recipient_count(), 2);
@@ -753,7 +778,9 @@ mod tests {
     fn test_acknowledge_nonexistent() {
         let store = SqliteBlobStore::in_memory().unwrap();
 
-        store.store("recipient-1", StoredBlob::new(vec![1]));
+        store
+            .store("recipient-1", StoredBlob::new(vec![1]))
+            .unwrap();
 
         let removed = store.acknowledge("recipient-1", "nonexistent-id");
         assert!(!removed);
@@ -785,9 +812,15 @@ mod tests {
 
         assert_eq!(store.blob_count_for("recipient-1"), 0);
 
-        store.store("recipient-1", StoredBlob::new(vec![1]));
-        store.store("recipient-1", StoredBlob::new(vec![2]));
-        store.store("recipient-2", StoredBlob::new(vec![3]));
+        store
+            .store("recipient-1", StoredBlob::new(vec![1]))
+            .unwrap();
+        store
+            .store("recipient-1", StoredBlob::new(vec![2]))
+            .unwrap();
+        store
+            .store("recipient-2", StoredBlob::new(vec![3]))
+            .unwrap();
 
         assert_eq!(store.blob_count_for("recipient-1"), 2);
         assert_eq!(store.blob_count_for("recipient-2"), 1);
@@ -800,8 +833,12 @@ mod tests {
 
         assert_eq!(store.storage_size_for("recipient-1"), 0);
 
-        store.store("recipient-1", StoredBlob::new(vec![0u8; 100]));
-        store.store("recipient-1", StoredBlob::new(vec![0u8; 200]));
+        store
+            .store("recipient-1", StoredBlob::new(vec![0u8; 100]))
+            .unwrap();
+        store
+            .store("recipient-1", StoredBlob::new(vec![0u8; 200]))
+            .unwrap();
 
         let size = store.storage_size_for("recipient-1");
         // Each blob: data_len + id_len (UUID ~36 chars) + 8 bytes overhead
@@ -850,9 +887,15 @@ mod tests {
     fn test_delete_all_for() {
         let store = SqliteBlobStore::in_memory().unwrap();
 
-        store.store("recipient-1", StoredBlob::new(vec![1]));
-        store.store("recipient-1", StoredBlob::new(vec![2]));
-        store.store("recipient-2", StoredBlob::new(vec![3]));
+        store
+            .store("recipient-1", StoredBlob::new(vec![1]))
+            .unwrap();
+        store
+            .store("recipient-1", StoredBlob::new(vec![2]))
+            .unwrap();
+        store
+            .store("recipient-2", StoredBlob::new(vec![3]))
+            .unwrap();
 
         let removed = store.delete_all_for("recipient-1");
         assert_eq!(removed, 2);
@@ -906,7 +949,7 @@ mod tests {
         for i in 0..5u8 {
             let mut blob = StoredBlob::new(vec![i]);
             blob.created_at_secs = 1000 + i as u64;
-            store.store("r1", blob);
+            store.store("r1", blob).unwrap();
         }
         let oldest = store.get_oldest_blobs(3);
         assert_eq!(oldest.len(), 3);
@@ -920,10 +963,10 @@ mod tests {
         // hop_count=0 (should be included)
         let mut b1 = StoredBlob::new(vec![1]);
         b1.created_at_secs = 100;
-        store.store("r1", b1);
+        store.store("r1", b1).unwrap();
         // hop_count=1 (should be skipped)
         let b2 = StoredBlob::with_metadata(vec![2], 50, 1);
-        store.store("r1", b2);
+        store.store("r1", b2).unwrap();
 
         let oldest = store.get_oldest_blobs(10);
         assert_eq!(oldest.len(), 1);
@@ -935,13 +978,13 @@ mod tests {
         let store = SqliteBlobStore::in_memory().unwrap();
         let mut b1 = StoredBlob::new(vec![1]);
         b1.created_at_secs = 300;
-        store.store("r1", b1);
+        store.store("r1", b1).unwrap();
         let mut b2 = StoredBlob::new(vec![2]);
         b2.created_at_secs = 100;
-        store.store("r2", b2);
+        store.store("r2", b2).unwrap();
         let mut b3 = StoredBlob::new(vec![3]);
         b3.created_at_secs = 200;
-        store.store("r1", b3);
+        store.store("r1", b3).unwrap();
 
         let oldest = store.get_oldest_blobs(10);
         assert_eq!(oldest.len(), 3);
@@ -955,8 +998,8 @@ mod tests {
         let store = SqliteBlobStore::in_memory().unwrap();
         let blob = StoredBlob::new(vec![1]);
         let id = blob.id.clone();
-        store.store("r1", blob);
-        store.store("r1", StoredBlob::new(vec![2]));
+        store.store("r1", blob).unwrap();
+        store.store("r1", StoredBlob::new(vec![2])).unwrap();
 
         assert!(store.remove_blob(&id));
         assert_eq!(store.blob_count(), 1);
@@ -971,7 +1014,7 @@ mod tests {
         {
             let store = SqliteBlobStore::open(&db_path).unwrap();
             let blob = StoredBlob::with_metadata(vec![1, 2, 3], 999, 2);
-            store.store("r1", blob);
+            store.store("r1", blob).unwrap();
         }
 
         {
@@ -995,9 +1038,9 @@ mod tests {
         let b3 = StoredBlob::new(vec![7, 8, 9]);
         let id1 = b1.id.clone();
         let id3 = b3.id.clone();
-        store.store("token_a", b1);
-        store.store("token_b", b2);
-        store.store("token_c", b3);
+        store.store("token_a", b1).unwrap();
+        store.store("token_b", b2).unwrap();
+        store.store("token_c", b3).unwrap();
 
         let results = store.peek_many(&["token_a", "token_c"]);
         assert_eq!(results.len(), 2);
@@ -1021,9 +1064,13 @@ mod tests {
     #[test]
     fn test_peek_many_attributes_blobs_to_their_token() {
         let store = SqliteBlobStore::in_memory().unwrap();
-        store.store("alice_token", StoredBlob::new(vec![1]));
-        store.store("alice_token", StoredBlob::new(vec![2]));
-        store.store("bob_token", StoredBlob::new(vec![3]));
+        store
+            .store("alice_token", StoredBlob::new(vec![1]))
+            .unwrap();
+        store
+            .store("alice_token", StoredBlob::new(vec![2]))
+            .unwrap();
+        store.store("bob_token", StoredBlob::new(vec![3])).unwrap();
 
         let results = store.peek_many(&["alice_token", "bob_token"]);
         assert_eq!(results.len(), 3);
@@ -1036,7 +1083,9 @@ mod tests {
     #[test]
     fn test_peek_many_empty_tokens() {
         let store = SqliteBlobStore::in_memory().unwrap();
-        store.store("token_a", StoredBlob::new(vec![1, 2, 3]));
+        store
+            .store("token_a", StoredBlob::new(vec![1, 2, 3]))
+            .unwrap();
 
         let results = store.peek_many(&[]);
         assert!(results.is_empty());
@@ -1045,7 +1094,9 @@ mod tests {
     #[test]
     fn test_peek_many_no_matches() {
         let store = SqliteBlobStore::in_memory().unwrap();
-        store.store("token_a", StoredBlob::new(vec![1, 2, 3]));
+        store
+            .store("token_a", StoredBlob::new(vec![1, 2, 3]))
+            .unwrap();
 
         let results = store.peek_many(&["nonexistent"]);
         assert!(results.is_empty());
@@ -1054,9 +1105,9 @@ mod tests {
     #[test]
     fn test_peek_many_single_token_matches_multiple_blobs() {
         let store = SqliteBlobStore::in_memory().unwrap();
-        store.store("token_a", StoredBlob::new(vec![1]));
-        store.store("token_a", StoredBlob::new(vec![2]));
-        store.store("token_b", StoredBlob::new(vec![3]));
+        store.store("token_a", StoredBlob::new(vec![1])).unwrap();
+        store.store("token_a", StoredBlob::new(vec![2])).unwrap();
+        store.store("token_b", StoredBlob::new(vec![3])).unwrap();
 
         let results = store.peek_many(&["token_a"]);
         assert_eq!(results.len(), 2);
@@ -1065,7 +1116,7 @@ mod tests {
     #[test]
     fn test_peek_many_does_not_remove_blobs() {
         let store = SqliteBlobStore::in_memory().unwrap();
-        store.store("token_a", StoredBlob::new(vec![1]));
+        store.store("token_a", StoredBlob::new(vec![1])).unwrap();
 
         let first = store.peek_many(&["token_a"]);
         assert_eq!(first.len(), 1);
@@ -1098,7 +1149,7 @@ mod tests {
                 let blob = StoredBlob::new(data.clone());
                 let blob_id = blob.id.clone();
 
-                store.store(&recipient, blob);
+                store.store(&recipient, blob).unwrap();
                 let peeked = store.peek(&recipient);
 
                 prop_assert_eq!(peeked.len(), 1);
@@ -1113,7 +1164,7 @@ mod tests {
                 recipient in recipient_id_strategy(),
             ) {
                 let store = SqliteBlobStore::in_memory().unwrap();
-                store.store(&recipient, StoredBlob::new(data.clone()));
+                store.store(&recipient, StoredBlob::new(data.clone())).unwrap();
 
                 let taken = store.take(&recipient);
                 prop_assert_eq!(taken.len(), 1);
@@ -1131,8 +1182,8 @@ mod tests {
                 data_b in proptest::collection::vec(any::<u8>(), 1..256),
             ) {
                 let store = SqliteBlobStore::in_memory().unwrap();
-                store.store("recipient-a", StoredBlob::new(data_a.clone()));
-                store.store("recipient-b", StoredBlob::new(data_b.clone()));
+                store.store("recipient-a", StoredBlob::new(data_a.clone())).unwrap();
+                store.store("recipient-b", StoredBlob::new(data_b.clone())).unwrap();
 
                 let a = store.peek("recipient-a");
                 let b = store.peek("recipient-b");
@@ -1150,7 +1201,7 @@ mod tests {
             ) {
                 let store = SqliteBlobStore::in_memory().unwrap();
                 for _ in 0..n {
-                    store.store(&recipient, StoredBlob::new(vec![1]));
+                    store.store(&recipient, StoredBlob::new(vec![1])).unwrap();
                 }
                 prop_assert_eq!(store.blob_count(), n);
                 prop_assert_eq!(store.blob_count_for(&recipient), n);
@@ -1170,7 +1221,7 @@ mod tests {
                 for _ in 0..n {
                     let blob = StoredBlob::new(vec![42]);
                     ids.push(blob.id.clone());
-                    store.store(&recipient, blob);
+                    store.store(&recipient, blob).unwrap();
                 }
 
                 let removed = store.acknowledge(&recipient, &ids[0]);

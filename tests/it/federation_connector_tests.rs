@@ -183,10 +183,13 @@ fn offload_manager_with(
         tls_client_config: Some(client_config),
         allow_loopback_peers: true,
     };
-    manager.storage.store(
-        "gate-route",
-        vauchi_relay::storage::StoredBlob::new(vec![1; 50]),
-    );
+    manager
+        .storage
+        .store(
+            "gate-route",
+            vauchi_relay::storage::StoredBlob::new(vec![1; 50]),
+        )
+        .unwrap();
     manager
 }
 

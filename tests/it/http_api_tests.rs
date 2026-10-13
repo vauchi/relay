@@ -151,8 +151,12 @@ async fn test_v2_fetch_returns_stored_blobs() {
     let app = create_v2_router(state);
 
     let token = "b".repeat(64);
-    storage.store(&token, StoredBlob::new(b"blob1".to_vec()));
-    storage.store(&token, StoredBlob::new(b"blob2".to_vec()));
+    storage
+        .store(&token, StoredBlob::new(b"blob1".to_vec()))
+        .unwrap();
+    storage
+        .store(&token, StoredBlob::new(b"blob2".to_vec()))
+        .unwrap();
 
     let resp = post_json(
         &app,
@@ -187,9 +191,15 @@ async fn test_v2_fetch_attributes_blobs_to_their_token() {
 
     let alice_token = "a".repeat(64);
     let bob_token = "b".repeat(64);
-    storage.store(&alice_token, StoredBlob::new(b"from-alice".to_vec()));
-    storage.store(&bob_token, StoredBlob::new(b"from-bob-1".to_vec()));
-    storage.store(&bob_token, StoredBlob::new(b"from-bob-2".to_vec()));
+    storage
+        .store(&alice_token, StoredBlob::new(b"from-alice".to_vec()))
+        .unwrap();
+    storage
+        .store(&bob_token, StoredBlob::new(b"from-bob-1".to_vec()))
+        .unwrap();
+    storage
+        .store(&bob_token, StoredBlob::new(b"from-bob-2".to_vec()))
+        .unwrap();
 
     let resp = post_json(
         &app,
@@ -303,7 +313,9 @@ async fn test_v2_fetch_bounds_response_under_ohttp_cap() {
     let token = "c".repeat(64);
     // 60 × 4 KiB ≈ 240 KiB raw (≈ 320 KiB base64) — well over the 128 KiB cap.
     for _ in 0..60 {
-        storage.store(&token, StoredBlob::new(vec![0x5a; 4096]));
+        storage
+            .store(&token, StoredBlob::new(vec![0x5a; 4096]))
+            .unwrap();
     }
 
     let resp = post_json(
@@ -343,8 +355,12 @@ async fn test_v2_fetch_not_truncated_when_all_fit() {
     let app = create_v2_router(state);
 
     let token = "d".repeat(64);
-    storage.store(&token, StoredBlob::new(b"small-1".to_vec()));
-    storage.store(&token, StoredBlob::new(b"small-2".to_vec()));
+    storage
+        .store(&token, StoredBlob::new(b"small-1".to_vec()))
+        .unwrap();
+    storage
+        .store(&token, StoredBlob::new(b"small-2".to_vec()))
+        .unwrap();
 
     let resp = post_json(
         &app,
@@ -391,7 +407,7 @@ async fn test_v2_ack_removes_blob() {
     let token = "c".repeat(64);
     let blob = StoredBlob::new(b"to-be-acked".to_vec());
     let blob_id = blob.id.clone();
-    storage.store(&token, blob);
+    storage.store(&token, blob).unwrap();
 
     let resp = post_json(
         &app,
@@ -449,8 +465,12 @@ async fn test_v2_purge_deletes_all_blobs() {
     let app = create_v2_router(state);
 
     let token = "d".repeat(64);
-    storage.store(&token, StoredBlob::new(b"data1".to_vec()));
-    storage.store(&token, StoredBlob::new(b"data2".to_vec()));
+    storage
+        .store(&token, StoredBlob::new(b"data1".to_vec()))
+        .unwrap();
+    storage
+        .store(&token, StoredBlob::new(b"data2".to_vec()))
+        .unwrap();
 
     let resp = post_json(&app, "/v2/purge", &signed_purge_json(&token)).await;
 
@@ -540,7 +560,9 @@ async fn test_v2_purge_replay_rejected() {
     let app = create_v2_router(state);
 
     let token = "d".repeat(64);
-    storage.store(&token, StoredBlob::new(b"data1".to_vec()));
+    storage
+        .store(&token, StoredBlob::new(b"data1".to_vec()))
+        .unwrap();
 
     let purge_json = signed_purge_json(&token);
 

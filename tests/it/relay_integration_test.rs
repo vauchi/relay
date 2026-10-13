@@ -23,7 +23,7 @@ fn test_blob_store_and_retrieve() {
     let blob = StoredBlob::new(vec![1, 2, 3, 4, 5]);
     let blob_id = blob.id.clone();
 
-    store.store("recipient-xyz", blob);
+    store.store("recipient-xyz", blob).unwrap();
 
     let pending = store.peek("recipient-xyz");
     assert_eq!(pending.len(), 1);
@@ -38,9 +38,15 @@ fn test_blob_store_and_retrieve() {
 fn test_multiple_blobs_for_recipient() {
     let store = SqliteBlobStore::in_memory().unwrap();
 
-    store.store("recipient-1", StoredBlob::new(vec![1]));
-    store.store("recipient-1", StoredBlob::new(vec![2]));
-    store.store("recipient-1", StoredBlob::new(vec![3]));
+    store
+        .store("recipient-1", StoredBlob::new(vec![1]))
+        .unwrap();
+    store
+        .store("recipient-1", StoredBlob::new(vec![2]))
+        .unwrap();
+    store
+        .store("recipient-1", StoredBlob::new(vec![3]))
+        .unwrap();
 
     let pending = store.peek("recipient-1");
     assert_eq!(pending.len(), 3);
@@ -54,9 +60,15 @@ fn test_multiple_blobs_for_recipient() {
 fn test_blobs_separate_per_recipient() {
     let store = SqliteBlobStore::in_memory().unwrap();
 
-    store.store("recipient-1", StoredBlob::new(vec![1]));
-    store.store("recipient-2", StoredBlob::new(vec![2]));
-    store.store("recipient-3", StoredBlob::new(vec![3]));
+    store
+        .store("recipient-1", StoredBlob::new(vec![1]))
+        .unwrap();
+    store
+        .store("recipient-2", StoredBlob::new(vec![2]))
+        .unwrap();
+    store
+        .store("recipient-3", StoredBlob::new(vec![3]))
+        .unwrap();
 
     assert_eq!(store.peek("recipient-1").len(), 1);
     assert_eq!(store.peek("recipient-2").len(), 1);
@@ -77,8 +89,8 @@ fn test_acknowledge_removes_blob() {
     let blob2 = StoredBlob::new(vec![2]);
     let blob1_id = blob1.id.clone();
 
-    store.store("recipient", blob1);
-    store.store("recipient", blob2);
+    store.store("recipient", blob1).unwrap();
+    store.store("recipient", blob2).unwrap();
 
     assert_eq!(store.blob_count(), 2);
 
@@ -102,7 +114,7 @@ fn test_acknowledge_removes_blob() {
 fn test_acknowledge_nonexistent_returns_false() {
     let store = SqliteBlobStore::in_memory().unwrap();
 
-    store.store("recipient", StoredBlob::new(vec![1]));
+    store.store("recipient", StoredBlob::new(vec![1])).unwrap();
 
     let result = store.acknowledge("recipient", "nonexistent-id");
     assert!(!result);
@@ -119,8 +131,8 @@ fn test_acknowledge_nonexistent_returns_false() {
 fn test_take_removes_all() {
     let store = SqliteBlobStore::in_memory().unwrap();
 
-    store.store("recipient", StoredBlob::new(vec![1]));
-    store.store("recipient", StoredBlob::new(vec![2]));
+    store.store("recipient", StoredBlob::new(vec![1])).unwrap();
+    store.store("recipient", StoredBlob::new(vec![2])).unwrap();
 
     let taken = store.take("recipient");
     assert_eq!(taken.len(), 2);
@@ -139,7 +151,7 @@ fn test_take_removes_all() {
 fn test_cleanup_expired() {
     let store = SqliteBlobStore::in_memory().unwrap();
 
-    store.store("recipient", StoredBlob::new(vec![1]));
+    store.store("recipient", StoredBlob::new(vec![1])).unwrap();
 
     // With long TTL, nothing should expire
     let removed = store.cleanup_expired(Duration::from_secs(3600));
@@ -162,9 +174,15 @@ fn test_storage_metrics() {
     assert_eq!(store.blob_count(), 0);
     assert_eq!(store.recipient_count(), 0);
 
-    store.store("recipient-1", StoredBlob::new(vec![1, 2, 3]));
-    store.store("recipient-1", StoredBlob::new(vec![4, 5]));
-    store.store("recipient-2", StoredBlob::new(vec![6]));
+    store
+        .store("recipient-1", StoredBlob::new(vec![1, 2, 3]))
+        .unwrap();
+    store
+        .store("recipient-1", StoredBlob::new(vec![4, 5]))
+        .unwrap();
+    store
+        .store("recipient-2", StoredBlob::new(vec![6]))
+        .unwrap();
 
     assert_eq!(store.blob_count(), 3);
     assert_eq!(store.recipient_count(), 2);
@@ -189,14 +207,14 @@ fn test_storage_size_is_logical_and_shrinks() {
         "empty store reports zero, not DB page overhead"
     );
 
-    store.store("r1", StoredBlob::new(vec![0u8; 100]));
+    store.store("r1", StoredBlob::new(vec![0u8; 100])).unwrap();
     let after_one = store.storage_size_bytes();
     assert!(
         after_one >= 100,
         "must count the stored payload, got {after_one}"
     );
 
-    store.store("r2", StoredBlob::new(vec![0u8; 200]));
+    store.store("r2", StoredBlob::new(vec![0u8; 200])).unwrap();
     assert!(
         store.storage_size_bytes() > after_one,
         "grows as more payload is stored"
@@ -227,7 +245,9 @@ fn test_concurrent_access() {
         let store = Arc::clone(&store);
         handles.push(thread::spawn(move || {
             for j in 0..100 {
-                store.store(&format!("recipient-{}", i), StoredBlob::new(vec![j as u8]));
+                store
+                    .store(&format!("recipient-{}", i), StoredBlob::new(vec![j as u8]))
+                    .unwrap();
             }
         }));
     }
@@ -254,7 +274,9 @@ fn test_concurrent_access() {
 fn test_peek_idempotent() {
     let store = SqliteBlobStore::in_memory().unwrap();
 
-    store.store("recipient", StoredBlob::new(vec![1, 2, 3]));
+    store
+        .store("recipient", StoredBlob::new(vec![1, 2, 3]))
+        .unwrap();
 
     // Multiple peeks should return the same data
     for _ in 0..5 {

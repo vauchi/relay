@@ -441,7 +441,9 @@ mod tests {
         let config = make_test_config(1_000_000, 0.80);
         let mgr = manager(config, None);
         // Well below 80% of 1 MB — no offload attempted (no TLS needed).
-        mgr.storage.store("r1", StoredBlob::new(vec![1; 100]));
+        mgr.storage
+            .store("r1", StoredBlob::new(vec![1; 100]))
+            .unwrap();
         assert_eq!(mgr.check_and_offload().await, 0);
         assert_eq!(mgr.hint_store.hint_count(), 0);
     }
@@ -453,7 +455,9 @@ mod tests {
         // nothing is offloaded and the blob stays put.
         let config = make_test_config(100, 0.01);
         let mgr = manager(config, None);
-        mgr.storage.store("r1", StoredBlob::new(vec![1; 50]));
+        mgr.storage
+            .store("r1", StoredBlob::new(vec![1; 50]))
+            .unwrap();
         assert_eq!(mgr.check_and_offload().await, 0);
     }
 
@@ -482,7 +486,9 @@ mod tests {
                 .with_no_client_auth(),
         );
         let mgr = manager(config, Some(tls));
-        mgr.storage.store("r1", StoredBlob::new(vec![1; 50]));
+        mgr.storage
+            .store("r1", StoredBlob::new(vec![1; 50]))
+            .unwrap();
 
         assert_eq!(
             mgr.check_and_offload().await,

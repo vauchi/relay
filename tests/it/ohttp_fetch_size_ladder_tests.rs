@@ -25,7 +25,8 @@ async fn padded_response_len(state_blobs: &[usize], action: &str) -> usize {
     for (i, size) in state_blobs.iter().enumerate() {
         state
             .storage
-            .store(&token, StoredBlob::new(vec![i as u8; *size]));
+            .store(&token, StoredBlob::new(vec![i as u8; *size]))
+            .unwrap();
     }
     let app = create_v2_router(state);
     let key = ohttp_key_bytes(&app).await;
