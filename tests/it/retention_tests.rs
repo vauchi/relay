@@ -13,6 +13,7 @@ const DAY: u64 = 24 * 60 * 60;
 const CREATED: u64 = 1_700_000_000;
 const RETENTION: Duration = Duration::from_secs(120 * DAY);
 
+// @scenario: message_delivery:Message stored with TTL
 #[test]
 fn retention_keeps_day_100_data_across_restart_and_ack_removes_only_that_blob() {
     let directory = tempfile::tempdir().unwrap();
@@ -46,6 +47,7 @@ fn retention_keeps_day_100_data_across_restart_and_ack_removes_only_that_blob() 
     assert_eq!(store.blob_count(), 1);
 }
 
+// @scenario: message_delivery:Message expires after TTL
 #[test]
 fn retention_expires_at_the_exact_boundary_and_preserves_a_later_envelope() {
     for elapsed in [120 * DAY - 1, 120 * DAY, 120 * DAY + 1] {
@@ -69,6 +71,7 @@ fn retention_expires_at_the_exact_boundary_and_preserves_a_later_envelope() {
     }
 }
 
+// @internal
 #[test]
 fn retention_does_not_restart_when_a_peer_accepts_an_old_envelope() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -97,6 +100,7 @@ fn retention_does_not_restart_when_a_peer_accepts_an_old_envelope() {
     assert_eq!(store.peek("recipient").len(), 0);
 }
 
+// @internal
 #[test]
 fn retention_handles_a_clock_before_creation_or_before_one_full_ttl() {
     let store = SqliteBlobStore::in_memory().unwrap();
@@ -114,6 +118,7 @@ fn retention_handles_a_clock_before_creation_or_before_one_full_ttl() {
 }
 
 proptest::proptest! {
+    // @internal
     #[test]
     fn retention_matches_age_for_representable_timestamps(
         now in proptest::prelude::any::<u64>(),
