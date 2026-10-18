@@ -41,6 +41,7 @@ mod rate_limit_cap_tests;
 mod rate_limit_ux;
 mod relay_integration_test;
 mod relay_load_test;
+mod retention_tests;
 mod security_auth_tests;
 mod security_resource_tests;
 mod startup_tests;
