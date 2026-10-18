@@ -218,6 +218,21 @@ impl SqliteBlobStore {
     pub fn in_memory() -> Result<Self, rusqlite::Error> {
         Self::open(":memory:")
     }
+
+    /// Removes blobs at least `ttl` old as of the supplied Unix timestamp.
+    pub fn cleanup_expired_at(&self, ttl: Duration, now_secs: u64) -> usize {
+        let Some(cutoff) = now_secs.checked_sub(ttl.as_secs()) else {
+            return 0;
+        };
+        let cutoff = i64::try_from(cutoff).unwrap_or(i64::MAX);
+        self.conn
+            .lock()
+            .execute(
+                "DELETE FROM blobs WHERE created_at_secs <= ?1",
+                params![cutoff],
+            )
+            .unwrap_or(0)
+    }
 }
 
 impl BlobStore for SqliteBlobStore {
@@ -335,18 +350,11 @@ impl BlobStore for SqliteBlobStore {
     }
 
     fn cleanup_expired(&self, ttl: Duration) -> usize {
-        let conn = self.conn.lock();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let cutoff = now.saturating_sub(ttl.as_secs()) as i64;
-
-        conn.execute(
-            "DELETE FROM blobs WHERE created_at_secs <= ?1",
-            params![cutoff],
-        )
-        .unwrap_or(0)
+        self.cleanup_expired_at(ttl, now)
     }
 
     fn blob_count(&self) -> usize {
