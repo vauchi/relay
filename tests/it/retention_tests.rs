@@ -112,3 +112,19 @@ fn retention_handles_a_clock_before_creation_or_before_one_full_ttl() {
     assert_eq!(store.peek("epoch").len(), 0);
     assert_eq!(store.peek("future")[0].data, vec![2]);
 }
+
+proptest::proptest! {
+    #[test]
+    fn retention_matches_age_for_representable_timestamps(
+        now in proptest::prelude::any::<u64>(),
+        created in 0u64..=i64::MAX as u64,
+        ttl_secs in proptest::prelude::any::<u64>(),
+    ) {
+        let store = SqliteBlobStore::in_memory().unwrap();
+        store.store("recipient", StoredBlob::with_metadata(vec![1], created, 0)).unwrap();
+        let expired = now >= created && now - created >= ttl_secs;
+        let removed = store.cleanup_expired_at(Duration::from_secs(ttl_secs), now);
+        proptest::prop_assert_eq!(removed, usize::from(expired));
+        proptest::prop_assert_eq!(store.peek("recipient").len(), usize::from(!expired));
+    }
+}
