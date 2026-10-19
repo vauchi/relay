@@ -5,12 +5,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
+use vauchi_relay::federation_core::apply_offload;
 use vauchi_relay::http_api::create_v2_router;
-use vauchi_relay::storage::StoredBlob;
+use vauchi_relay::storage::{BlobStore, SqliteBlobStore, StoredBlob};
+use vauchi_relay::{integrity, padding};
 
 use super::common::http_helpers::{
-    create_test_state_with_ohttp, ohttp_key_bytes, post_json, response_json, response_json_large,
-    send_ohttp_action,
+    create_test_state, create_test_state_with_ohttp, ohttp_key_bytes, post_json, response_json,
+    response_json_large, send_ohttp_action,
 };
 
 const DAY: u64 = 24 * 60 * 60;
@@ -127,6 +129,84 @@ async fn fetch_retention_uses_configured_ttl_without_clock_underflow() {
         if delivered {
             assert_eq!(blobs[0]["blob_id"], id);
             assert_eq!(blobs[0]["created_at"], created);
+        }
+    }
+}
+
+// @scenario: message_delivery:Message expires after TTL
+#[tokio::test]
+async fn fetch_does_not_revive_federated_expiry_after_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("retention.db");
+    let token = "a".repeat(64);
+    let live = StoredBlob::with_metadata(b"live".to_vec(), CREATED + 1, 0);
+    let live_id = live.id.clone();
+    {
+        let store = SqliteBlobStore::open(&path).unwrap();
+        let payload = padding::pad(b"expired-peer-update");
+        let hash = integrity::compute_integrity_hash(&payload);
+        let result = apply_offload(
+            &store,
+            1_073_741_824,
+            0.95,
+            "peer-id".into(),
+            &token,
+            payload,
+            CREATED,
+            &hash,
+            0,
+        );
+        assert!(result.accepted);
+        assert_eq!(store.peek(&token)[0].created_at_secs, CREATED);
+        store.store(&token, live).unwrap();
+        store.shutdown();
+    }
+    let mut state = create_test_state();
+    state.storage = Arc::new(SqliteBlobStore::open(&path).unwrap());
+    state.blob_ttl = Duration::from_secs(TTL);
+    state.unix_clock = Arc::new(|| CREATED + TTL);
+    let app = create_v2_router(state);
+    let response = post_json(&app, "/v2/fetch", &json!({"mailbox_tokens": [token]})).await;
+    assert_eq!(response.status(), 200);
+    let response = response_json(response).await;
+    assert_eq!(response["blobs"].as_array().unwrap().len(), 1);
+    assert_eq!(response["blobs"][0]["blob_id"], live_id);
+    assert_eq!(response["blobs"][0]["created_at"], CREATED + 1);
+    assert_eq!(response["truncated"], false);
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+
+    // @internal
+    #[test]
+    fn fetch_retention_matches_age_for_representable_creation_times(
+        created in 0u64..=i64::MAX as u64,
+        now in proptest::prelude::any::<u64>(),
+        ttl in proptest::prelude::any::<u64>(),
+    ) {
+        let mut state = create_test_state();
+        state.blob_ttl = Duration::from_secs(ttl);
+        state.unix_clock = Arc::new(move || now);
+        let token = "a".repeat(64);
+        let blob = StoredBlob::with_metadata(vec![42], created, 0);
+        let id = blob.id.clone();
+        state.storage.store(&token, blob).unwrap();
+        let app = create_v2_router(state);
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let response = runtime.block_on(async {
+            let response = post_json(&app, "/v2/fetch", &json!({"mailbox_tokens": [token]})).await;
+            assert_eq!(response.status(), 200);
+            response_json(response).await
+        });
+        let expired = now >= created && now - created >= ttl;
+        let blobs = response["blobs"].as_array().unwrap();
+        proptest::prop_assert_eq!(blobs.len(), usize::from(!expired));
+        proptest::prop_assert_eq!(&response["truncated"], &json!(false));
+        if !expired {
+            proptest::prop_assert_eq!(&blobs[0]["blob_id"], &json!(id));
+            proptest::prop_assert_eq!(&blobs[0]["created_at"], &json!(created));
+            proptest::prop_assert_eq!(&blobs[0]["mailbox_token"], &json!(token));
         }
     }
 }
