@@ -31,6 +31,8 @@ use vauchi_relay::version_policy::{VersionPolicyConfig, VersionPolicyState};
 fn create_tight_rate_limit_state() -> HttpApiState {
     HttpApiState {
         storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
+        blob_ttl: vauchi_relay::config::StorageConfig::default().blob_ttl(),
+        unix_clock: super::common::http_helpers::test_unix_clock(),
         rate_limiter: Arc::new(RateLimiter::new(1)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(100_000)),
         metrics: RelayMetrics::new(),

@@ -570,6 +570,8 @@ async fn main() {
 
         let api_state = HttpApiState {
             storage: storage.clone(),
+            blob_ttl: config.blob_ttl(),
+            unix_clock: gateway_clock.clone(),
             rate_limiter: rate_limiter.clone(),
             recovery_rate_limiter: recovery_rate_limiter.clone(),
             metrics: metrics.clone(),

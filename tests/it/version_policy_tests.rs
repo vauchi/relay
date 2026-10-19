@@ -248,6 +248,8 @@ mod middleware {
     fn state_with_policy(config: VersionPolicyConfig, changed_at: Option<u64>) -> HttpApiState {
         HttpApiState {
             storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
+            blob_ttl: vauchi_relay::config::StorageConfig::default().blob_ttl(),
+            unix_clock: crate::common::http_helpers::test_unix_clock(),
             rate_limiter: Arc::new(RateLimiter::new(100_000)),
             recovery_rate_limiter: Arc::new(RateLimiter::new(100_000)),
             metrics: RelayMetrics::new(),
@@ -556,6 +558,8 @@ mod adversarial {
         let config = VersionPolicyConfig::new(min, min, 14).unwrap();
         HttpApiState {
             storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
+            blob_ttl: vauchi_relay::config::StorageConfig::default().blob_ttl(),
+            unix_clock: crate::common::http_helpers::test_unix_clock(),
             rate_limiter: Arc::new(RateLimiter::new(100_000)),
             recovery_rate_limiter: Arc::new(RateLimiter::new(100_000)),
             metrics: RelayMetrics::new(),

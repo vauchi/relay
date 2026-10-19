@@ -52,6 +52,8 @@ pub struct V2QuotaLimits {
 #[derive(Clone)]
 pub struct HttpApiState {
     pub storage: Arc<dyn BlobStore>,
+    pub blob_ttl: std::time::Duration,
+    pub unix_clock: crate::ohttp_gateway::UnixClock,
     pub rate_limiter: Arc<RateLimiter>,
     /// Stricter limiter for recovery-proof store and query (anti-enumeration).
     pub recovery_rate_limiter: Arc<RateLimiter>,
@@ -980,7 +982,12 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
     let mut blob_data: Vec<serde_json::Value> = Vec::new();
     let mut used_bytes = 0usize;
     let mut truncated = false;
-    for (token, blob) in &blobs {
+    let now = (state.unix_clock)();
+    let ttl = state.blob_ttl.as_secs();
+    for (token, blob) in blobs.iter().filter(|(_, blob)| {
+        now.checked_sub(blob.created_at_secs)
+            .is_none_or(|age| age < ttl)
+    }) {
         let entry = serde_json::json!({
             "blob_id": blob.id,
             "ciphertext": base64::engine::general_purpose::STANDARD.encode(&blob.data),

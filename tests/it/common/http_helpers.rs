@@ -33,11 +33,22 @@ pub use super::ohttp_helpers::{
     send_ohttp_action, signed_test_gateway,
 };
 
+pub fn test_unix_clock() -> vauchi_relay::ohttp_gateway::UnixClock {
+    Arc::new(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    })
+}
+
 /// Create a test state for API tests.
 #[allow(dead_code)]
 pub fn create_test_state() -> HttpApiState {
     HttpApiState {
         storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
+        blob_ttl: vauchi_relay::config::StorageConfig::default().blob_ttl(),
+        unix_clock: test_unix_clock(),
         rate_limiter: Arc::new(RateLimiter::new(100_000)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(100_000)),
         metrics: RelayMetrics::new(),
@@ -65,6 +76,8 @@ pub fn create_test_state_with_ohttp() -> HttpApiState {
     let gw = signed_test_gateway();
     HttpApiState {
         storage: Arc::new(SqliteBlobStore::in_memory().unwrap()),
+        blob_ttl: vauchi_relay::config::StorageConfig::default().blob_ttl(),
+        unix_clock: test_unix_clock(),
         rate_limiter: Arc::new(RateLimiter::new(100_000)),
         recovery_rate_limiter: Arc::new(RateLimiter::new(100_000)),
         metrics: RelayMetrics::new(),
