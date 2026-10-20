@@ -31,6 +31,7 @@ use vauchi_protocol::v2::{
 
 use crate::escrow::EscrowStore;
 use crate::exchange_broker::ExchangeBroker;
+use crate::forwarding_hints::ForwardingHintStore;
 use crate::guardian_storage::GuardianStore;
 use crate::handler::NonceTracker;
 use crate::http::security_headers_middleware;
@@ -75,6 +76,8 @@ pub struct HttpApiState {
     pub recovery_storage: Arc<dyn RecoveryProofStore>,
     /// Guardian entry storage for social recovery.
     pub guardian_storage: Arc<dyn GuardianStore>,
+    /// Hints to blobs offloaded to peer relays; a purge removes its own.
+    pub forwarding_hints: Arc<dyn ForwardingHintStore>,
 }
 
 /// Envelope used inside an OHTTP request body.
@@ -1083,6 +1086,7 @@ fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> ApiResult {
         return ApiResult::RateLimited;
     }
     let deleted = state.storage.delete_all_for(&req.recipient_id);
+    state.forwarding_hints.delete_all_for(&req.recipient_id);
     state
         .metrics
         .blobs_stored

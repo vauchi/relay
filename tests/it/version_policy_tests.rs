@@ -267,6 +267,9 @@ mod middleware {
             ))),
             recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
             guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
+            forwarding_hints: Arc::new(
+                vauchi_relay::forwarding_hints::SqliteForwardingHintStore::in_memory().unwrap(),
+            ),
         }
     }
 
@@ -577,6 +580,9 @@ mod adversarial {
             ))),
             recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
             guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
+            forwarding_hints: Arc::new(
+                vauchi_relay::forwarding_hints::SqliteForwardingHintStore::in_memory().unwrap(),
+            ),
         }
     }
 

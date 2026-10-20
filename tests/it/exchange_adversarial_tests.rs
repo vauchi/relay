@@ -17,6 +17,7 @@ use tower::ServiceExt;
 
 use vauchi_relay::escrow::EscrowStore;
 use vauchi_relay::exchange_broker::ExchangeBroker;
+use vauchi_relay::forwarding_hints::SqliteForwardingHintStore;
 use vauchi_relay::guardian_storage::SqliteGuardianStore;
 use vauchi_relay::handler::NonceTracker;
 use vauchi_relay::http_api::{HttpApiState, V2QuotaLimits, create_v2_router};
@@ -49,6 +50,7 @@ fn test_state() -> HttpApiState {
         ))),
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
         guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
+        forwarding_hints: Arc::new(SqliteForwardingHintStore::in_memory().unwrap()),
     }
 }
 
@@ -76,6 +78,7 @@ fn test_state_strict_rate_limit() -> HttpApiState {
         ))),
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
         guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
+        forwarding_hints: Arc::new(SqliteForwardingHintStore::in_memory().unwrap()),
     }
 }
 
