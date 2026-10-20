@@ -15,6 +15,7 @@ use vauchi_relay::storage::StoredBlob;
 
 use common::http_helpers::{
     ax_body::Body, create_test_state, post_json, response_json, response_json_large,
+    signed_purge_json,
 };
 
 // ── Health ──
@@ -425,37 +426,6 @@ async fn test_v2_ack_removes_blob() {
 }
 
 // ── Purge ──
-
-fn signed_purge_json(recipient_id: &str) -> serde_json::Value {
-    use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
-    let seed = [0u8; 32];
-    let keypair = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
-    let public_key = keypair.public_key();
-    let public_key_hex = hex::encode(public_key.as_ref());
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    // v2 purge token is the recipient_id (32-byte hex) decoded to 32 bytes
-    let token_bytes = hex::decode(recipient_id).expect("recipient_id must be 64-char hex");
-
-    let mut msg = Vec::new();
-    msg.extend_from_slice(public_key.as_ref());
-    msg.extend_from_slice(&token_bytes);
-    msg.extend_from_slice(&timestamp.to_be_bytes());
-
-    let signature = hex::encode(keypair.sign(&msg).as_ref());
-
-    serde_json::json!({
-        "version": 2,
-        "public_key": public_key_hex,
-        "signature": signature,
-        "timestamp": timestamp,
-        "purge_token": recipient_id,
-        "recipient_id": recipient_id,
-    })
-}
 
 // @internal
 #[tokio::test]
