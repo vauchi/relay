@@ -47,6 +47,7 @@ fn retention_keeps_day_100_data_across_restart_and_ack_removes_only_that_blob() 
     assert_eq!(store.blob_count(), 1);
 }
 
+// @scenario: privacy_compliance :: Relay data expires automatically
 // @scenario: message_delivery:Message expires after TTL
 #[test]
 fn retention_expires_at_the_exact_boundary_and_preserves_a_later_envelope() {
