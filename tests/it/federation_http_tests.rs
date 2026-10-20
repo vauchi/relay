@@ -348,6 +348,7 @@ fn envelope_json(version: u8, payload: Value) -> Value {
     })
 }
 
+// @scenario: relay_network :: Version-skewed control messages are refused, not dropped
 // @internal
 #[tokio::test]
 async fn control_envelope_with_mismatched_version_returns_426() {
@@ -423,6 +424,7 @@ async fn matching_version_control_envelope_still_dispatches() {
     assert_eq!(resp.status(), 204, "CapacityReport has no response payload");
 }
 
+// @scenario: relay_network :: Version-skewed control messages are refused, not dropped
 // @internal
 #[tokio::test]
 async fn unknown_payload_type_is_counted_not_erred() {

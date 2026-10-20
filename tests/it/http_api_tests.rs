@@ -500,6 +500,7 @@ async fn test_v2_purge_rejects_missing_signature() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+// @scenario: relay_network :: Invalid signature rejected by relay
 // @internal
 #[tokio::test]
 async fn test_v2_purge_rejects_bad_signature() {
@@ -552,6 +553,7 @@ async fn test_v2_purge_rejects_expired_timestamp() {
     assert!(body["error"].as_str().unwrap().contains("timestamp"));
 }
 
+// @scenario: relay_network :: Nonce replay attack prevented
 // @internal
 #[tokio::test]
 async fn test_v2_purge_replay_rejected() {
