@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine;
 use serde_json::json;
 use vauchi_relay::federation_core::apply_offload;
 use vauchi_relay::http_api::create_v2_router;
@@ -209,4 +210,32 @@ proptest::proptest! {
             proptest::prop_assert_eq!(&blobs[0]["mailbox_token"], &json!(token));
         }
     }
+}
+
+// The e2e relay runs on a test clock that jumps days ahead of real time; a
+// blob stamped by any other clock than the one that expires it reads as
+// already expired there (private#735).
+// @scenario: message_delivery:Message stored with TTL
+#[tokio::test]
+async fn a_sent_blob_is_aged_by_the_clock_that_expires_it() {
+    const RELAY_NOW: u64 = 4_000_000_000;
+    let mut state = create_test_state();
+    state.blob_ttl = Duration::from_secs(60 * 60);
+    state.unix_clock = Arc::new(|| RELAY_NOW);
+    let app = create_v2_router(state);
+    let token = "a".repeat(64);
+    let send = json!({
+        "version": 2,
+        "recipient_id": token,
+        "ciphertext": base64::engine::general_purpose::STANDARD.encode(b"ignore-bob"),
+    });
+    assert_eq!(post_json(&app, "/v2/send", &send).await.status(), 200);
+
+    let response = post_json(&app, "/v2/fetch", &json!({"mailbox_tokens": [token]})).await;
+    assert_eq!(response.status(), 200);
+    let response = response_json(response).await;
+
+    let blobs = response["blobs"].as_array().unwrap();
+    assert_eq!(blobs.len(), 1, "the blob sent now must still be fetchable");
+    assert_eq!(blobs[0]["created_at"], json!(RELAY_NOW));
 }
