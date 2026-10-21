@@ -40,7 +40,12 @@ impl StoredBlob {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+        Self::new_at(data, created_at_secs)
+    }
 
+    /// Creates a new locally stored blob stamped at `created_at_secs`, the
+    /// time on the clock that later expires it.
+    pub fn new_at(data: Vec<u8>, created_at_secs: u64) -> Self {
         StoredBlob {
             id: uuid::Uuid::new_v4().to_string(),
             data,

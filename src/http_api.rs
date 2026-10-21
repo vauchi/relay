@@ -936,7 +936,8 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
     {
         return ApiResult::QuotaExceeded;
     }
-    let blob = StoredBlob::new(ciphertext).with_origin_hint(req.origin_hint);
+    let blob =
+        StoredBlob::new_at(ciphertext, (state.unix_clock)()).with_origin_hint(req.origin_hint);
     let blob_id = blob.id.clone();
     if let Err(e) = state.storage.store(&req.recipient_id, blob) {
         tracing::error!("blob not stored: {e}");
