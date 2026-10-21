@@ -86,6 +86,14 @@ pub trait RecoveryProofStore: Send + Sync {
     /// Removes a recovery proof by key hash.
     fn remove(&self, key_hash: &[u8; 32]) -> bool;
 
+    /// Stores `proof` unless a live proof under its key hash is owned by a
+    /// different key (or `proof` is unowned and the stored one is owned).
+    /// Returns whether it was stored (#738).
+    fn store_unless_owned_by_another(
+        &self,
+        proof: StoredRecoveryProof,
+    ) -> Result<bool, crate::storage::StorageWriteError>;
+
     /// Removes every proof owned by `owner_pk`. Returns the number removed.
     fn delete_owned_by(&self, owner_pk: &[u8; 32]) -> usize;
 
@@ -221,6 +229,42 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
             )
             .unwrap_or(0);
         changes > 0
+    }
+
+    fn store_unless_owned_by_another(
+        &self,
+        proof: StoredRecoveryProof,
+    ) -> Result<bool, crate::storage::StorageWriteError> {
+        let conn = self.conn.lock();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        // One statement, so a concurrent upload cannot slip between an
+        // ownership check and the write. `owner_pk = excluded.owner_pk` is
+        // never true for an unowned upload (NULL), so it cannot replace an
+        // owned proof.
+        let stored = conn.execute(
+            "INSERT INTO recovery_proofs (key_hash, proof_data, created_at_secs, expires_at_secs, owner_pk)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(key_hash) DO UPDATE SET
+                 proof_data = excluded.proof_data,
+                 created_at_secs = excluded.created_at_secs,
+                 expires_at_secs = excluded.expires_at_secs,
+                 owner_pk = excluded.owner_pk
+             WHERE recovery_proofs.owner_pk IS NULL
+                OR recovery_proofs.owner_pk = excluded.owner_pk
+                OR recovery_proofs.expires_at_secs <= ?6",
+            params![
+                proof.key_hash.as_slice(),
+                proof.proof_data,
+                proof.created_at_secs as i64,
+                proof.expires_at_secs as i64,
+                proof.owner_pk.as_ref().map(|pk| pk.as_slice()),
+                now
+            ],
+        )?;
+        Ok(stored == 1)
     }
 
     fn delete_owned_by(&self, owner_pk: &[u8; 32]) -> usize {
@@ -487,5 +531,26 @@ mod tests {
             store.get(&[9; 32]).is_some(),
             "an unowned legacy proof stays"
         );
+    }
+
+    // An expired proof is gone for every reader, so its owner no longer
+    // holds the key hash (#738).
+    // @internal
+    #[test]
+    fn an_expired_owned_proof_can_be_replaced_by_another_key() {
+        let store = SqliteRecoveryProofStore::in_memory().unwrap();
+        store
+            .store(proof_expiring_at(4, unix_now() - 1).owned_by([0xA1; 32]))
+            .unwrap();
+        let live = StoredRecoveryProof::new([5; 32], vec![1]).owned_by([0xA1; 32]);
+        store.store(live).unwrap();
+
+        let over_expired = StoredRecoveryProof::new([4; 32], vec![2]).owned_by([0xEE; 32]);
+        let over_live = StoredRecoveryProof::new([5; 32], vec![2]).owned_by([0xEE; 32]);
+
+        assert!(store.store_unless_owned_by_another(over_expired).unwrap());
+        assert!(!store.store_unless_owned_by_another(over_live).unwrap());
+        assert_eq!(store.get(&[4; 32]).unwrap().owner_pk, Some([0xEE; 32]));
+        assert_eq!(store.get(&[5; 32]).unwrap().owner_pk, Some([0xA1; 32]));
     }
 }

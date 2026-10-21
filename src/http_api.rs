@@ -1166,9 +1166,15 @@ fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest
     if let Some(owner) = owner {
         proof = proof.owned_by(owner);
     }
-    if let Err(e) = state.recovery_storage.store(proof) {
-        tracing::error!("recovery proof not stored: {e}");
-        return ApiResult::StorageFailed;
+    match state.recovery_storage.store_unless_owned_by_another(proof) {
+        Ok(true) => {}
+        Ok(false) => {
+            return ApiResult::unauthorized("recovery proof is owned by another key");
+        }
+        Err(e) => {
+            tracing::error!("recovery proof not stored: {e}");
+            return ApiResult::StorageFailed;
+        }
     }
 
     ApiResult::ok(serde_json::json!({ "status": "ok" }))
