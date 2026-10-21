@@ -81,8 +81,13 @@ fn test_verify_purge_ed25519_valid() {
 
     let signature = key_pair.sign(&message);
 
-    let result =
-        verify::verify_purge_ed25519(public_key, &purge_token, signature.as_ref(), timestamp);
+    let result = verify::verify_purge_ed25519(
+        public_key,
+        &purge_token,
+        signature.as_ref(),
+        timestamp,
+        false,
+    );
     assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
 }
 
@@ -101,7 +106,7 @@ fn test_verify_purge_ed25519_bad_signature() {
         .as_secs();
     let bad_sig = [0xFFu8; 64];
 
-    let result = verify::verify_purge_ed25519(public_key, &purge_token, &bad_sig, timestamp);
+    let result = verify::verify_purge_ed25519(public_key, &purge_token, &bad_sig, timestamp, false);
     assert_eq!(result.unwrap_err(), "invalid purge signature");
 }
 
@@ -126,7 +131,8 @@ fn test_verify_purge_ed25519_expired_timestamp() {
     message.extend_from_slice(&old_ts.to_be_bytes());
     let signature = key_pair.sign(&message);
 
-    let result = verify::verify_purge_ed25519(public_key, &purge_token, signature.as_ref(), old_ts);
+    let result =
+        verify::verify_purge_ed25519(public_key, &purge_token, signature.as_ref(), old_ts, false);
     assert_eq!(
         result.unwrap_err(),
         "purge timestamp outside acceptable window"
@@ -136,7 +142,7 @@ fn test_verify_purge_ed25519_expired_timestamp() {
 // @internal
 #[test]
 fn test_verify_purge_ed25519_wrong_key_length() {
-    let result = verify::verify_purge_ed25519(&[0u8; 16], &[0u8; 32], &[0u8; 64], 0);
+    let result = verify::verify_purge_ed25519(&[0u8; 16], &[0u8; 32], &[0u8; 64], 0, false);
     assert!(result.unwrap_err().contains("public_key must be 32 bytes"));
 }
 
@@ -170,8 +176,13 @@ fn test_verify_purge_ed25519_accepts_timestamp_at_window_edge() {
     message.extend_from_slice(&timestamp.to_be_bytes());
     let signature = key_pair.sign(&message);
 
-    let result =
-        verify::verify_purge_ed25519(public_key, &purge_token, signature.as_ref(), timestamp);
+    let result = verify::verify_purge_ed25519(
+        public_key,
+        &purge_token,
+        signature.as_ref(),
+        timestamp,
+        false,
+    );
 
     assert_eq!(result, Ok(()));
 }

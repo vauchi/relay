@@ -862,7 +862,7 @@ fn is_valid_exchange_code(code: &str) -> bool {
 fn verify_purge_signature(
     req: &V2PurgeRequest,
     nonce_tracker: &NonceTracker,
-) -> Result<(), String> {
+) -> Result<Vec<u8>, String> {
     let pk_bytes =
         hex::decode(&req.public_key).map_err(|e| format!("invalid public_key hex: {e}"))?;
     let sig_bytes =
@@ -875,6 +875,7 @@ fn verify_purge_signature(
         &token_bytes,
         &sig_bytes,
         req.timestamp,
+        req.erase_guardian_set,
     )?;
 
     // OHTTP-04: Replay protection — reject if purge_token was already used
@@ -882,7 +883,7 @@ fn verify_purge_signature(
         return Err("purge token replay detected".to_string());
     }
 
-    Ok(())
+    Ok(pk_bytes)
 }
 
 /// Verify Ed25519 auth on a guardian store/delete request and check replay.
@@ -1080,14 +1081,23 @@ fn handle_register_logic(req: V2RegisterRequest) -> ApiResult {
 fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> ApiResult {
     // Verify signature + nonce replay BEFORE rate limiting — prevents
     // unauthenticated attackers from exhausting the rate limit for legitimate users.
-    if let Err(e) = verify_purge_signature(&req, &state.nonce_tracker) {
-        return ApiResult::unauthorized(e);
-    }
+    let public_key = match verify_purge_signature(&req, &state.nonce_tracker) {
+        Ok(pk) => pk,
+        Err(e) => return ApiResult::unauthorized(e),
+    };
     if !state.rate_limiter.consume(&req.recipient_id) {
         return ApiResult::RateLimited;
     }
     let deleted = state.storage.delete_all_for(&req.recipient_id);
     state.forwarding_hints.delete_all_for(&req.recipient_id);
+    if let Ok(owner) = <[u8; 32]>::try_from(public_key.as_slice()) {
+        state.recovery_storage.delete_owned_by(&owner);
+        if req.erase_guardian_set {
+            state
+                .guardian_storage
+                .remove(&crate::handler::verify::guardian_hash_of(&owner));
+        }
+    }
     state
         .metrics
         .blobs_stored
@@ -1131,7 +1141,31 @@ fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest
         None => return ApiResult::bad_request("invalid key_hash hex"),
     };
 
-    let proof = crate::recovery_storage::StoredRecoveryProof::new(key_hash, proof_bytes);
+    let owner = match (&req.owner_pk, req.timestamp, &req.signature) {
+        (None, None, None) => None,
+        (Some(owner_pk), Some(timestamp), Some(signature)) => {
+            match crate::handler::verify::verify_recovery_owner_ed25519(
+                owner_pk,
+                &key_hash,
+                &proof_bytes,
+                timestamp,
+                signature,
+            ) {
+                Ok(owner) => Some(owner),
+                Err(e) => return ApiResult::unauthorized(e),
+            }
+        }
+        _ => {
+            return ApiResult::bad_request(
+                "owner_pk, timestamp and signature must be sent together",
+            );
+        }
+    };
+
+    let mut proof = crate::recovery_storage::StoredRecoveryProof::new(key_hash, proof_bytes);
+    if let Some(owner) = owner {
+        proof = proof.owned_by(owner);
+    }
     if let Err(e) = state.recovery_storage.store(proof) {
         tracing::error!("recovery proof not stored: {e}");
         return ApiResult::StorageFailed;

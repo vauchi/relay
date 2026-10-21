@@ -26,6 +26,9 @@ pub struct StoredRecoveryProof {
     pub created_at_secs: u64,
     /// When the proof expires (Unix timestamp in seconds).
     pub expires_at_secs: u64,
+    /// Ed25519 key of the identity that uploaded the proof, when it signed
+    /// the upload. That identity's purge erases the proof.
+    pub owner_pk: Option<[u8; 32]>,
 }
 
 impl StoredRecoveryProof {
@@ -47,7 +50,14 @@ impl StoredRecoveryProof {
             proof_data,
             created_at_secs: now,
             expires_at_secs,
+            owner_pk: None,
         }
+    }
+
+    /// Records the identity whose signed upload this proof is.
+    pub fn owned_by(mut self, owner_pk: [u8; 32]) -> Self {
+        self.owner_pk = Some(owner_pk);
+        self
     }
 
     /// Checks if the proof has expired.
@@ -75,6 +85,9 @@ pub trait RecoveryProofStore: Send + Sync {
 
     /// Removes a recovery proof by key hash.
     fn remove(&self, key_hash: &[u8; 32]) -> bool;
+
+    /// Removes every proof owned by `owner_pk`. Returns the number removed.
+    fn delete_owned_by(&self, owner_pk: &[u8; 32]) -> usize;
 
     /// Removes all expired proofs. Returns the number removed.
     fn cleanup_expired(&self) -> usize;
@@ -114,6 +127,23 @@ impl SqliteRecoveryProofStore {
             [],
         )?;
 
+        // Idempotent migration for databases created before proofs had an
+        // owner (#711). SQLite has no ADD COLUMN IF NOT EXISTS.
+        let has_owner_pk: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('recovery_proofs') WHERE name = 'owner_pk'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if has_owner_pk == 0 {
+            conn.execute("ALTER TABLE recovery_proofs ADD COLUMN owner_pk BLOB", [])?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_recovery_owner ON recovery_proofs(owner_pk)",
+            [],
+        )?;
+
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -129,13 +159,14 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
     fn store(&self, proof: StoredRecoveryProof) -> Result<(), crate::storage::StorageWriteError> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT OR REPLACE INTO recovery_proofs (key_hash, proof_data, created_at_secs, expires_at_secs)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR REPLACE INTO recovery_proofs (key_hash, proof_data, created_at_secs, expires_at_secs, owner_pk)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 proof.key_hash.as_slice(),
                 proof.proof_data,
                 proof.created_at_secs as i64,
-                proof.expires_at_secs as i64
+                proof.expires_at_secs as i64,
+                proof.owner_pk.as_ref().map(|pk| pk.as_slice())
             ],
         )?;
         Ok(())
@@ -149,7 +180,7 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
             .as_secs() as i64;
 
         conn.query_row(
-            "SELECT key_hash, proof_data, created_at_secs, expires_at_secs
+            "SELECT key_hash, proof_data, created_at_secs, expires_at_secs, owner_pk
              FROM recovery_proofs
              WHERE key_hash = ?1 AND expires_at_secs > ?2",
             params![key_hash.as_slice(), now],
@@ -163,6 +194,9 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
                     proof_data: row.get(1)?,
                     created_at_secs: row.get::<_, i64>(2)? as u64,
                     expires_at_secs: row.get::<_, i64>(3)? as u64,
+                    owner_pk: row
+                        .get::<_, Option<Vec<u8>>>(4)?
+                        .and_then(|pk| pk.try_into().ok()),
                 })
             },
         )
@@ -187,6 +221,15 @@ impl RecoveryProofStore for SqliteRecoveryProofStore {
             )
             .unwrap_or(0);
         changes > 0
+    }
+
+    fn delete_owned_by(&self, owner_pk: &[u8; 32]) -> usize {
+        let conn = self.conn.lock();
+        conn.execute(
+            "DELETE FROM recovery_proofs WHERE owner_pk = ?1",
+            params![owner_pk.as_slice()],
+        )
+        .unwrap_or(0)
     }
 
     fn cleanup_expired(&self) -> usize {
@@ -406,5 +449,43 @@ mod tests {
                 "Expected WAL mode for file-based database"
             );
         }
+    }
+
+    // @internal
+    #[test]
+    fn open_migrates_a_database_from_before_proofs_had_an_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("recovery.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "CREATE TABLE recovery_proofs (
+                    key_hash BLOB PRIMARY KEY,
+                    proof_data BLOB NOT NULL,
+                    created_at_secs INTEGER NOT NULL,
+                    expires_at_secs INTEGER NOT NULL
+                )",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO recovery_proofs VALUES (?1, X'01', 100, ?2)",
+                params![[9u8; 32].as_slice(), (unix_now() + 1000) as i64],
+            )
+            .unwrap();
+        }
+
+        let store = SqliteRecoveryProofStore::open(&path).expect("open migrates the column");
+        store
+            .store(StoredRecoveryProof::new([1; 32], vec![2]).owned_by([0xA1; 32]))
+            .unwrap();
+
+        assert_eq!(store.get(&[9; 32]).unwrap().owner_pk, None);
+        assert_eq!(store.get(&[1; 32]).unwrap().owner_pk, Some([0xA1; 32]));
+        assert_eq!(store.delete_owned_by(&[0xA1; 32]), 1);
+        assert!(
+            store.get(&[9; 32]).is_some(),
+            "an unowned legacy proof stays"
+        );
     }
 }
