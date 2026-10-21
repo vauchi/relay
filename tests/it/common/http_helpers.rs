@@ -140,9 +140,14 @@ pub async fn response_json_large(response: Response) -> serde_json::Value {
 
 /// A `/v2/purge` body for `recipient_id`, signed by the all-zero seed key.
 pub fn signed_purge_json(recipient_id: &str) -> serde_json::Value {
+    signed_purge_json_by(0, recipient_id)
+}
+
+/// A `/v2/purge` body for `recipient_id`, signed by the key whose seed is
+/// 32 bytes of `seed_byte`.
+pub fn signed_purge_json_by(seed_byte: u8, recipient_id: &str) -> serde_json::Value {
     use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
-    let seed = [0u8; 32];
-    let keypair = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
+    let keypair = Ed25519KeyPair::from_seed_unchecked(&[seed_byte; 32]).unwrap();
     let public_key = keypair.public_key();
     let public_key_hex = hex::encode(public_key.as_ref());
     let timestamp = std::time::SystemTime::now()
