@@ -259,3 +259,102 @@ async fn an_upload_with_only_some_owner_fields_is_rejected() {
     }
     assert!(proofs.get(&[8; 32]).is_none());
 }
+
+fn upload_with_proof(body: Value, proof: &[u8]) -> Value {
+    let mut body = body;
+    body["proof_data"] = json!(base64::engine::general_purpose::STANDARD.encode(proof));
+    body
+}
+
+/// An upload of `proof` signed by `owner`.
+fn owned_upload_of(owner: u8, key_hash: &[u8; 32], proof: &[u8]) -> Value {
+    let timestamp = now();
+    let mut message = b"recovery-store".to_vec();
+    message.extend_from_slice(key_hash);
+    message.extend_from_slice(&sha256(&[proof]));
+    message.extend_from_slice(&timestamp.to_be_bytes());
+    let mut body = upload_with_proof(unowned_upload(key_hash), proof);
+    body["owner_pk"] = json!(hex::encode(public_key(owner)));
+    body["timestamp"] = json!(timestamp);
+    body["signature"] = json!(hex::encode(keypair(owner).sign(&message).as_ref()));
+    body
+}
+
+// Owner-locked proofs (vauchi/private#738, owner decision 2026-10-21): a
+// replacement of an owned proof must be signed by the same owner, or it
+// could strip the owner and outlive the owner's purge.
+// @internal
+#[tokio::test]
+async fn only_its_owner_can_replace_an_owned_proof() {
+    let state = create_test_state();
+    let proofs = state.recovery_storage.clone();
+    let app = create_v2_router(state);
+    let key_hash = [9; 32];
+    let first = post_json(
+        &app,
+        "/v2/recovery/store",
+        &owned_upload(ALICE, &key_hash, now()),
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let by_mallory = post_json(
+        &app,
+        "/v2/recovery/store",
+        &owned_upload_of(MALLORY, &key_hash, b"m"),
+    )
+    .await;
+    let unowned = post_json(
+        &app,
+        "/v2/recovery/store",
+        &upload_with_proof(unowned_upload(&key_hash), b"u"),
+    )
+    .await;
+
+    assert_eq!(by_mallory.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(unowned.status(), StatusCode::UNAUTHORIZED);
+    let kept = proofs.get(&key_hash).unwrap();
+    assert_eq!(kept.proof_data, PROOF);
+    assert_eq!(kept.owner_pk, Some(public_key(ALICE).try_into().unwrap()));
+
+    let by_alice = post_json(
+        &app,
+        "/v2/recovery/store",
+        &owned_upload_of(ALICE, &key_hash, b"a2"),
+    )
+    .await;
+
+    assert_eq!(by_alice.status(), StatusCode::OK);
+    assert_eq!(proofs.get(&key_hash).unwrap().proof_data, b"a2");
+}
+
+// Unowned proofs from clients before #711 keep last-write-wins, and a signed
+// upload may claim one.
+// @internal
+#[tokio::test]
+async fn unowned_proofs_stay_replaceable() {
+    let state = create_test_state();
+    let proofs = state.recovery_storage.clone();
+    let app = create_v2_router(state);
+    let key_hash = [10; 32];
+    let legacy = |proof: &[u8]| upload_with_proof(unowned_upload(&key_hash), proof);
+
+    let first = post_json(&app, "/v2/recovery/store", &legacy(b"old")).await;
+    let second = post_json(&app, "/v2/recovery/store", &legacy(b"new")).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(second.status(), StatusCode::OK);
+    assert_eq!(proofs.get(&key_hash).unwrap().proof_data, b"new");
+
+    let claimed = post_json(
+        &app,
+        "/v2/recovery/store",
+        &owned_upload_of(ALICE, &key_hash, b"a"),
+    )
+    .await;
+
+    assert_eq!(claimed.status(), StatusCode::OK);
+    assert_eq!(
+        proofs.get(&key_hash).unwrap().owner_pk,
+        Some(public_key(ALICE).try_into().unwrap())
+    );
+}
