@@ -25,6 +25,7 @@ mod http_api_ohttp_exchange_tests;
 mod http_api_ohttp_rollover_tests;
 mod http_api_ohttp_signed_tests;
 mod http_api_ohttp_tests;
+mod http_api_owned_recovery_tests;
 mod http_api_purge_tests;
 mod http_api_recovery_tests;
 mod http_api_retention_tests;
