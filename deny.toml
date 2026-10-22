@@ -36,6 +36,7 @@ allow = [
     "Zlib",
     "Unicode-3.0",
     "MPL-2.0",
+    "CDLA-Permissive-2.0",  # webpki-roots (Mozilla CA certs), as in core
     "OpenSSL",
 ]
 confidence-threshold = 0.8
