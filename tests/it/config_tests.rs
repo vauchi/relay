@@ -768,3 +768,29 @@ fn a_malformed_gateway_listener_address_is_refused_with_a_warning() {
         "{warnings:?}"
     );
 }
+
+/// The relay proxies the CDN for the OHTTP content action unless told not
+/// to (vauchi/private#733 D11).
+// @internal
+#[test]
+fn the_content_origin_defaults_to_the_cdn_and_can_be_changed_or_turned_off() {
+    let (default, _) = RelayConfig::from_map(&HashMap::new());
+    let (moved, _) = RelayConfig::from_map(&HashMap::from([(
+        "RELAY_CONTENT_ORIGIN".to_string(),
+        "https://content.example/v2".to_string(),
+    )]));
+    let (off, _) = RelayConfig::from_map(&HashMap::from([(
+        "RELAY_CONTENT_ORIGIN".to_string(),
+        String::new(),
+    )]));
+
+    assert_eq!(
+        default.http_api.content_origin.as_deref(),
+        Some("https://cdn.vauchi.app/v1")
+    );
+    assert_eq!(
+        moved.http_api.content_origin.as_deref(),
+        Some("https://content.example/v2")
+    );
+    assert_eq!(off.http_api.content_origin, None);
+}
