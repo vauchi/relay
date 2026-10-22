@@ -590,7 +590,20 @@ async fn main() {
             recovery_storage: recovery_storage.clone(),
             guardian_storage: guardian_storage.clone(),
             forwarding_hints: hint_store.clone(),
-            content_proxy: None,
+            content_proxy: config
+                .http_api
+                .content_origin
+                .as_deref()
+                .and_then(|origin| {
+                    vauchi_relay::content_proxy::ContentProxy::new(
+                        origin,
+                        std::time::Duration::from_secs(600),
+                        5 * 1024 * 1024,
+                    )
+                    .map(std::sync::Arc::new)
+                    .map_err(|e| warn!("RELAY_CONTENT_ORIGIN '{origin}': {e}; no content proxy"))
+                    .ok()
+                }),
         };
 
         #[cfg(feature = "e2e-test-clock")]

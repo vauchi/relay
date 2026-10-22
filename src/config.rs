@@ -219,6 +219,9 @@ pub struct HttpApiConfig {
     pub exchange_max_offers: usize,
     /// Default TTL for exchange offers in seconds (when client doesn't specify).
     pub exchange_default_ttl_secs: u64,
+    /// The CDN origin the OHTTP `content` action proxies
+    /// (vauchi/private#733 D11). `RELAY_CONTENT_ORIGIN`; empty turns it off.
+    pub content_origin: Option<String>,
 }
 
 impl Default for HttpApiConfig {
@@ -236,6 +239,7 @@ impl Default for HttpApiConfig {
             ohttp_exchange_rate_limit_per_min: 300,
             exchange_max_offers: 10_000,
             exchange_default_ttl_secs: 300, // 5 minutes
+            content_origin: Some("https://cdn.vauchi.app/v1".to_string()),
         }
     }
 }
@@ -592,6 +596,10 @@ impl RelayConfig {
                  must be set together; the signed OHTTP key endpoint stays unavailable"
                     .to_string(),
             );
+        }
+
+        if let Some(val) = vars.get("RELAY_CONTENT_ORIGIN") {
+            config.http_api.content_origin = (!val.is_empty()).then(|| val.clone());
         }
 
         if let Some(val) = vars.get("RELAY_OHTTP_GATEWAY_ADDR") {

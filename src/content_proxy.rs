@@ -122,7 +122,12 @@ pub struct ContentProxy {
     tls: tokio_rustls::TlsConnector,
     lifetime: Duration,
     max_bytes: usize,
-    cache: Mutex<HashMap<String, (Instant, Arc<Vec<u8>>)>>,
+    cache: Mutex<HashMap<String, CachedFile>>,
+}
+
+struct CachedFile {
+    fetched: Instant,
+    body: Arc<Vec<u8>>,
 }
 
 impl ContentProxy {
@@ -161,9 +166,15 @@ impl ContentProxy {
         let body = Arc::new(self.fetch_from_origin(path).await?);
         if let Ok(mut cache) = self.cache.lock() {
             let now = Instant::now();
-            cache.retain(|_, (fetched, _)| now.duration_since(*fetched) < self.lifetime);
+            cache.retain(|_, file| now.duration_since(file.fetched) < self.lifetime);
             if cache.len() < MAX_CACHED_FILES {
-                cache.insert(path.to_string(), (now, Arc::clone(&body)));
+                cache.insert(
+                    path.to_string(),
+                    CachedFile {
+                        fetched: now,
+                        body: Arc::clone(&body),
+                    },
+                );
             }
         }
         Ok(body)
@@ -171,8 +182,8 @@ impl ContentProxy {
 
     fn cached(&self, path: &str) -> Option<Arc<Vec<u8>>> {
         let cache = self.cache.lock().ok()?;
-        let (fetched, body) = cache.get(path)?;
-        (fetched.elapsed() < self.lifetime).then(|| Arc::clone(body))
+        let file = cache.get(path)?;
+        (file.fetched.elapsed() < self.lifetime).then(|| Arc::clone(&file.body))
     }
 
     async fn fetch_from_origin(&self, path: &str) -> Result<Vec<u8>, ContentProxyError> {
