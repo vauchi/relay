@@ -14,7 +14,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use vauchi_relay::content_proxy::{ContentProxy, is_content_path};
+use vauchi_relay::content_proxy::{ContentProxy, content_action, is_content_path};
+use vauchi_relay::padding::pad_content;
 
 const MAX: usize = 64 * 1024;
 
@@ -154,4 +155,52 @@ fn an_origin_must_be_an_http_url_with_a_host() {
             "{origin}"
         );
     }
+}
+
+// @internal
+#[tokio::test]
+async fn the_content_action_answers_with_the_file_in_base64() {
+    use base64::Engine as _;
+    let (origin, _) = cdn(200, b"{\"pt\":1}".to_vec()).await;
+    let proxy = ContentProxy::new(&origin, Duration::from_secs(600), MAX).unwrap();
+
+    let answer = content_action(Some(&proxy), serde_json::json!({"path": "locales/pt.json"})).await;
+
+    assert_eq!(answer["status"], "ok", "{answer}");
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(answer["content_b64"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(body, b"{\"pt\":1}");
+}
+
+// @internal
+#[tokio::test]
+async fn the_content_action_refuses_bad_requests_without_detail() {
+    let (origin, requests) = cdn(200, b"x".to_vec()).await;
+    let proxy = ContentProxy::new(&origin, Duration::from_secs(600), MAX).unwrap();
+    for payload in [
+        serde_json::json!({}),
+        serde_json::json!({"path": 7}),
+        serde_json::json!({"path": "../secret"}),
+        serde_json::json!({"path": "https://evil.test/x.json"}),
+    ] {
+        let answer = content_action(Some(&proxy), payload.clone()).await;
+        assert_eq!(answer["status"], "error", "{payload}");
+    }
+    assert_eq!(requests.load(Ordering::SeqCst), 0);
+
+    let answer = content_action(None, serde_json::json!({"path": "manifest.json"})).await;
+    assert_eq!(answer["status"], "error");
+}
+
+/// The gateway sees response sizes; every locale file must look the same.
+// @internal
+#[test]
+fn content_answers_are_padded_so_their_size_does_not_name_the_file() {
+    let portuguese = pad_content(&vec![b'p'; 150_000]);
+    let german = pad_content(&vec![b'd'; 200_000]);
+    let manifest = pad_content(&vec![b'm'; 3_000]);
+
+    assert_eq!(portuguese.len(), german.len());
+    assert_eq!(manifest.len(), 64 * 1024);
 }
