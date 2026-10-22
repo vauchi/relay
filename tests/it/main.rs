@@ -7,6 +7,7 @@
 #[allow(dead_code)]
 mod common;
 mod config_tests;
+mod content_proxy_tests;
 mod contract_protocol_tests;
 mod e2e_test_clock_tests;
 mod escrow_store_tests;
