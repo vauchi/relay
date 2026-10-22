@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod connection_limit;
+pub mod content_proxy;
 pub mod e2e_test_clock;
 pub mod escrow;
 pub mod exchange_broker;

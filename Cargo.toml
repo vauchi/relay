@@ -92,6 +92,8 @@ rand = "0.8"
 tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 rustls-pemfile = "2"
+# Root store for the content proxy's HTTPS fetch from the CDN (vauchi/private#733 D11).
+webpki-roots = "1"
 # Federation: check a peer's declared relay id against its client
 # certificate (vauchi/private#674). Already in the tree through rustls.
 webpki = { package = "rustls-webpki", version = "0.103", default-features = false }
