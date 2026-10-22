@@ -423,6 +423,10 @@ criteria = "safe-to-deploy"
 version = "0.2.127"
 criteria = "safe-to-deploy"
 
+[[exemptions.webpki-roots]]
+version = "1.0.10"
+criteria = "safe-to-deploy"
+
 [[exemptions.x509-parser]]
 version = "0.18.1"
 criteria = "safe-to-run"
