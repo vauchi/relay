@@ -51,6 +51,7 @@ fn test_state() -> HttpApiState {
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
         guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
         forwarding_hints: Arc::new(SqliteForwardingHintStore::in_memory().unwrap()),
+        content_proxy: None,
     }
 }
 
@@ -79,6 +80,7 @@ fn test_state_strict_rate_limit() -> HttpApiState {
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
         guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
         forwarding_hints: Arc::new(SqliteForwardingHintStore::in_memory().unwrap()),
+        content_proxy: None,
     }
 }
 

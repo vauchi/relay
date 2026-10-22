@@ -51,6 +51,22 @@ pub fn pad_fetch(payload: &[u8]) -> Vec<u8> {
     pad_to(payload, target_size)
 }
 
+/// The sizes a content answer may take (vauchi/private#733 D8): every
+/// locale file, base64 in its JSON answer, lands on one rung, so a hop that
+/// sees response sizes cannot tell which language was fetched.
+pub const CONTENT_LADDER: [usize; 3] = [64 * 1024, 512 * 1024, 2 * 1024 * 1024];
+
+/// Pads a content answer to the smallest [`CONTENT_LADDER`] rung that holds
+/// it, or to the overflow alignment of [`pad`] above the top rung.
+pub fn pad_content(payload: &[u8]) -> Vec<u8> {
+    let needed = LENGTH_PREFIX_SIZE + payload.len();
+    let target_size = CONTENT_LADDER
+        .into_iter()
+        .find(|rung| needed <= *rung)
+        .unwrap_or_else(|| select_bucket(needed));
+    pad_to(payload, target_size)
+}
+
 fn pad_to(payload: &[u8], target_size: usize) -> Vec<u8> {
     let needed = LENGTH_PREFIX_SIZE + payload.len();
     let mut padded = Vec::with_capacity(target_size);

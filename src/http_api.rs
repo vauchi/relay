@@ -78,6 +78,9 @@ pub struct HttpApiState {
     pub guardian_storage: Arc<dyn GuardianStore>,
     /// Hints to blobs offloaded to peer relays; a purge removes its own.
     pub forwarding_hints: Arc<dyn ForwardingHintStore>,
+    /// Serves CDN content over OHTTP (vauchi/private#733 D11); `None`
+    /// answers the `content` action with an error.
+    pub content_proxy: Option<Arc<crate::content_proxy::ContentProxy>>,
 }
 
 /// Envelope used inside an OHTTP request body.
@@ -628,15 +631,15 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
         };
     }
 
-    let is_fetch = inner.action == "fetch";
+    let action = inner.action.clone();
     let response_json = dispatch_ohttp_action(&state, &inner.action, inner.payload).await;
 
     // OHTTP-08: Padding prevents action-type leakage via response size.
     let resp_bytes = serde_json::to_vec(&response_json).unwrap_or_default();
-    let padded_bytes = if is_fetch {
-        crate::padding::pad_fetch(&resp_bytes)
-    } else {
-        crate::padding::pad(&resp_bytes)
+    let padded_bytes = match action.as_str() {
+        "fetch" => crate::padding::pad_fetch(&resp_bytes),
+        "content" => crate::padding::pad_content(&resp_bytes),
+        _ => crate::padding::pad(&resp_bytes),
     };
     match srv_response.encapsulate(&padded_bytes) {
         Ok(enc) => (
@@ -670,6 +673,9 @@ async fn dispatch_ohttp_action(
     payload: serde_json::Value,
 ) -> serde_json::Value {
     match action {
+        "content" => {
+            crate::content_proxy::content_action(state.content_proxy.as_deref(), payload).await
+        }
         "send" => {
             let req: V2SendRequest = match serde_json::from_value(payload) {
                 Ok(r) => r,

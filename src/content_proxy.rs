@@ -235,3 +235,26 @@ async fn read_capped(
     }
     Ok(data)
 }
+
+/// The OHTTP `content` action: `{"path": "<content path>"}` answers
+/// `{"status": "ok", "content_b64": "..."}`, or an error naming no detail.
+pub async fn content_action(
+    proxy: Option<&ContentProxy>,
+    payload: serde_json::Value,
+) -> serde_json::Value {
+    use base64::Engine as _;
+    let error = |reason: &str| serde_json::json!({ "status": "error", "error": reason });
+    let Some(proxy) = proxy else {
+        return error("content unavailable");
+    };
+    let Some(path) = payload.get("path").and_then(serde_json::Value::as_str) else {
+        return error("bad content payload");
+    };
+    match proxy.fetch(path).await {
+        Ok(body) => serde_json::json!({
+            "status": "ok",
+            "content_b64": base64::engine::general_purpose::STANDARD.encode(body.as_slice()),
+        }),
+        Err(e) => error(&e.to_string()),
+    }
+}

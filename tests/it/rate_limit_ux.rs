@@ -53,6 +53,7 @@ fn create_tight_rate_limit_state() -> HttpApiState {
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
         guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
         forwarding_hints: Arc::new(SqliteForwardingHintStore::in_memory().unwrap()),
+        content_proxy: None,
     }
 }
 

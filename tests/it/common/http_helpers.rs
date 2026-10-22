@@ -69,6 +69,7 @@ pub fn create_test_state() -> HttpApiState {
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
         guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
         forwarding_hints: Arc::new(SqliteForwardingHintStore::in_memory().unwrap()),
+        content_proxy: None,
     }
 }
 
@@ -99,6 +100,7 @@ pub fn create_test_state_with_ohttp() -> HttpApiState {
         recovery_storage: Arc::new(SqliteRecoveryProofStore::in_memory().unwrap()),
         guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
         forwarding_hints: Arc::new(SqliteForwardingHintStore::in_memory().unwrap()),
+        content_proxy: None,
     }
 }
 

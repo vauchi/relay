@@ -270,6 +270,7 @@ mod middleware {
             forwarding_hints: Arc::new(
                 vauchi_relay::forwarding_hints::SqliteForwardingHintStore::in_memory().unwrap(),
             ),
+            content_proxy: None,
         }
     }
 
@@ -583,6 +584,7 @@ mod adversarial {
             forwarding_hints: Arc::new(
                 vauchi_relay::forwarding_hints::SqliteForwardingHintStore::in_memory().unwrap(),
             ),
+            content_proxy: None,
         }
     }
 

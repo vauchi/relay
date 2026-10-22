@@ -590,6 +590,7 @@ async fn main() {
             recovery_storage: recovery_storage.clone(),
             guardian_storage: guardian_storage.clone(),
             forwarding_hints: hint_store.clone(),
+            content_proxy: None,
         };
 
         #[cfg(feature = "e2e-test-clock")]
