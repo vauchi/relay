@@ -15,7 +15,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use vauchi_relay::content_proxy::{ContentProxy, content_action, is_content_path};
-use vauchi_relay::padding::pad_content;
+use vauchi_relay::padding::{pad_compressed_content, pad_content};
 
 const MAX: usize = 64 * 1024;
 
@@ -49,6 +49,7 @@ fn only_paths_in_the_content_tree_are_served() {
         "manifest.json",
         "networks.json",
         "themes.json",
+        "themes/themes.json",
         "locales/pt.json",
         "locales/pt-BR.json",
         "help/de.json",
@@ -69,6 +70,7 @@ fn only_paths_in_the_content_tree_are_served() {
         "locales/pt.txt",
         "locales/pt",
         "secrets/key.json",
+        "themes/../manifest.json",
         "locales/a/b.json",
         "locales/.json",
         "locales/pt.json?x=1",
@@ -173,6 +175,56 @@ async fn the_content_action_answers_with_the_file_in_base64() {
     assert_eq!(body, b"{\"pt\":1}");
 }
 
+/// A locale file is larger than the OHTTP relay passes on; compressed,
+/// it fits (vauchi/private#733 D14).
+// @internal
+#[tokio::test]
+async fn asked_for_gzip_the_content_action_answers_with_the_file_compressed() {
+    use base64::Engine as _;
+    use std::io::Read as _;
+    let file = br#"{"pt":"ola","pt.long":"ola ola ola ola ola ola ola ola"}"#.repeat(500);
+    let (origin, _) = cdn(200, file.clone()).await;
+    let proxy = ContentProxy::new(&origin, Duration::from_secs(600), MAX).unwrap();
+
+    let answer = content_action(
+        Some(&proxy),
+        serde_json::json!({"path": "locales/pt.json", "encoding": "gzip"}),
+    )
+    .await;
+
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(answer["encoding"], "gzip");
+    let compressed = base64::engine::general_purpose::STANDARD
+        .decode(answer["content_b64"].as_str().unwrap())
+        .unwrap();
+    assert!(
+        compressed.len() < file.len() / 4,
+        "{} bytes",
+        compressed.len()
+    );
+    let mut body = Vec::new();
+    flate2::read::GzDecoder::new(compressed.as_slice())
+        .read_to_end(&mut body)
+        .unwrap();
+    assert_eq!(body, file);
+}
+
+// @internal
+#[tokio::test]
+async fn an_unknown_encoding_gets_the_file_as_it_is() {
+    let (origin, _) = cdn(200, b"{\"pt\":1}".to_vec()).await;
+    let proxy = ContentProxy::new(&origin, Duration::from_secs(600), MAX).unwrap();
+
+    let answer = content_action(
+        Some(&proxy),
+        serde_json::json!({"path": "locales/pt.json", "encoding": "zstd"}),
+    )
+    .await;
+
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(answer.get("encoding"), None);
+}
+
 // @internal
 #[tokio::test]
 async fn the_content_action_refuses_bad_requests_without_detail() {
@@ -203,4 +255,20 @@ fn content_answers_are_padded_so_their_size_does_not_name_the_file() {
 
     assert_eq!(portuguese.len(), german.len());
     assert_eq!(manifest.len(), 64 * 1024);
+}
+
+/// The OHTTP relay passes at most 128 KiB back (`OHTTP_RELAY_MAX_RESPONSE_BYTES`
+/// in ohttp-relay). Every compressed locale, about 57 to 64 KB in base64
+/// today, lands on one rung with room to grow; small files on another.
+// @internal
+#[test]
+fn compressed_answers_are_padded_alike_and_fit_through_the_ohttp_relay() {
+    let english = pad_compressed_content(&vec![b'e'; 57_000]);
+    let german = pad_compressed_content(&vec![b'd'; 90_000]);
+    let themes = pad_compressed_content(&vec![b't'; 5_000]);
+
+    assert_eq!(english.len(), 96 * 1024);
+    assert_eq!(german.len(), english.len());
+    assert_eq!(themes.len(), 16 * 1024);
+    assert!(german.len() < 128 * 1024);
 }
