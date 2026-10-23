@@ -51,7 +51,8 @@ impl std::error::Error for ContentProxyError {}
 
 /// Whether `path` names a file in the content tree: `manifest.json`,
 /// `networks.json`, `themes.json`, or `locales/<name>.json` /
-/// `help/<name>.json` with a name of ASCII letters, digits and `-`.
+/// `help/<name>.json` / `themes/<name>.json` with a name of ASCII letters,
+/// digits and `-`.
 pub fn is_content_path(path: &str) -> bool {
     if path.is_empty() || path.len() > MAX_PATH_BYTES {
         return false;
@@ -59,7 +60,7 @@ pub fn is_content_path(path: &str) -> bool {
     match path.split_once('/') {
         None => matches!(path, "manifest.json" | "networks.json" | "themes.json"),
         Some((dir, file)) => {
-            matches!(dir, "locales" | "help")
+            matches!(dir, "locales" | "help" | "themes")
                 && file.strip_suffix(".json").is_some_and(|name| {
                     !name.is_empty()
                         && name.len() <= 32
@@ -261,11 +262,26 @@ pub async fn content_action(
     let Some(path) = payload.get("path").and_then(serde_json::Value::as_str) else {
         return error("bad content payload");
     };
-    match proxy.fetch(path).await {
-        Ok(body) => serde_json::json!({
+    let body = match proxy.fetch(path).await {
+        Ok(body) => body,
+        Err(e) => return error(&e.to_string()),
+    };
+    let base64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    if payload.get("encoding").and_then(serde_json::Value::as_str) == Some("gzip")
+        && let Ok(compressed) = gzip(body.as_slice())
+    {
+        return serde_json::json!({
             "status": "ok",
-            "content_b64": base64::engine::general_purpose::STANDARD.encode(body.as_slice()),
-        }),
-        Err(e) => error(&e.to_string()),
+            "encoding": "gzip",
+            "content_b64": base64(&compressed),
+        });
     }
+    serde_json::json!({ "status": "ok", "content_b64": base64(body.as_slice()) })
+}
+
+fn gzip(bytes: &[u8]) -> std::io::Result<Vec<u8>> {
+    use std::io::Write as _;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    encoder.write_all(bytes)?;
+    encoder.finish()
 }

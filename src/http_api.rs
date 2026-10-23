@@ -638,6 +638,9 @@ async fn ohttp_handler(State(state): State<HttpApiState>, body: Bytes) -> axum::
     let resp_bytes = serde_json::to_vec(&response_json).unwrap_or_default();
     let padded_bytes = match action.as_str() {
         "fetch" => crate::padding::pad_fetch(&resp_bytes),
+        "content" if response_json["encoding"] == "gzip" => {
+            crate::padding::pad_compressed_content(&resp_bytes)
+        }
         "content" => crate::padding::pad_content(&resp_bytes),
         _ => crate::padding::pad(&resp_bytes),
     };

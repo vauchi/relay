@@ -67,6 +67,23 @@ pub fn pad_content(payload: &[u8]) -> Vec<u8> {
     pad_to(payload, target_size)
 }
 
+/// The sizes a compressed content answer may take (vauchi/private#733
+/// D14). The OHTTP relay passes at most 128 KiB back, so the top rung stays
+/// with [`FETCH_LADDER`]'s; every compressed locale lands on it.
+pub const COMPRESSED_CONTENT_LADDER: [usize; 2] = [16 * 1024, 96 * 1024];
+
+/// Pads a compressed content answer to the smallest
+/// [`COMPRESSED_CONTENT_LADDER`] rung that holds it, or to the overflow
+/// alignment of [`pad`] above the top rung.
+pub fn pad_compressed_content(payload: &[u8]) -> Vec<u8> {
+    let needed = LENGTH_PREFIX_SIZE + payload.len();
+    let target_size = COMPRESSED_CONTENT_LADDER
+        .into_iter()
+        .find(|rung| needed <= *rung)
+        .unwrap_or_else(|| select_bucket(needed));
+    pad_to(payload, target_size)
+}
+
 fn pad_to(payload: &[u8], target_size: usize) -> Vec<u8> {
     let needed = LENGTH_PREFIX_SIZE + payload.len();
     let mut padded = Vec::with_capacity(target_size);
