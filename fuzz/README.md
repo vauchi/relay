@@ -38,7 +38,8 @@ done
 
 ## CI
 
-The `fuzz:nightly` scheduled pipeline job runs all 6 targets for 5 minutes each. Crashes are saved as artifacts for 1 month. Enable by setting `FUZZ_ENABLED=true` on the nightly schedule.
+The `fuzz:nightly` scheduled pipeline job runs all 6 targets for 5 minutes each. Crashes are
+saved as artifacts for 1 month. Enable by setting `FUZZ_ENABLED=true` on the nightly schedule.
 
 ## Adding a New Target
 

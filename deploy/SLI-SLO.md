@@ -5,11 +5,19 @@
 
 ## What Are SLIs and SLOs?
 
-A **Service Level Indicator (SLI)** is a quantitative measurement of service behaviour — a ratio or value derived directly from metrics. An **Service Level Objective (SLO)** is the target value or range an SLI must meet over a measurement window.
+A **Service Level Indicator (SLI)** is a quantitative measurement of service
+behaviour — a ratio or value derived directly from metrics. An **Service Level
+Objective (SLO)** is the target value or range an SLI must meet over a
+measurement window.
 
-SLOs set a shared expectation between operators and users. They also define **error budgets**: the amount of permitted failure before the SLO is breached. Spending error budget on planned maintenance is acceptable; losing it to bugs or incidents is not.
+SLOs set a shared expectation between operators and users. They also define
+**error budgets**: the amount of permitted failure before the SLO is breached.
+Spending error budget on planned maintenance is acceptable; losing it to bugs
+or incidents is not.
 
-> **Privacy note**: The relay never inspects message content. All SLIs measure metadata only (rates, durations, counts). No user-identifiable data appears in any metric.
+> **Privacy note**: The relay never inspects message content. All SLIs measure
+metadata only (rates, durations, counts). No user-identifiable data appears in
+any metric.
 
 ---
 
@@ -17,9 +25,11 @@ SLOs set a shared expectation between operators and users. They also define **er
 
 ### SLI-1 — Delivery Success Rate
 
-**What it measures**: Fraction of received messages that were accepted (not rejected due to rate limits, size violations, or policy).
+**What it measures**: Fraction of received messages that were accepted (not
+rejected due to rate limits, size violations, or policy).
 
 **PromQL**:
+
 ```promql
 1 - (
   rate(relay_messages_rejected_total[5m])
@@ -30,39 +40,50 @@ SLOs set a shared expectation between operators and users. They also define **er
 
 **SLO**: >= **99.9%** over a 30-day window
 
-**Error budget (30d)**: 0.1% × 30 × 24 × 60 min = **43.2 minutes** of fully-degraded delivery per month
+**Error budget (30d)**: 0.1% × 30 × 24 × 60 min = **43.2 minutes** of
+fully-degraded delivery per month
 
 **Notes**:
-- Returns `NaN` when `relay_messages_received_total` rate is zero (no traffic). Treat `NaN` as "not applicable" rather than a violation.
-- Rejections include rate-limited clients (`relay_rate_limited_total`) and oversized messages. Legitimate spam rejection does not count against this SLO — consider splitting if needed.
+
+- Returns `NaN` when `relay_messages_received_total` rate is zero (no traffic). Treat `NaN` as "not applicable" rather
+than a violation.
+- Rejections include rate-limited clients (`relay_rate_limited_total`) and oversized messages. Legitimate
+spam rejection does not count against this SLO — consider splitting if needed.
 
 ---
 
 ### SLI-2 — Relay Availability
 
-**What it measures**: Fraction of time the `/health` endpoint returns HTTP 200, measured by an external synthetic probe (Blackbox Exporter or equivalent).
+**What it measures**: Fraction of time the `/health` endpoint returns HTTP 200, measured
+by an external synthetic probe (Blackbox Exporter or equivalent).
 
 **PromQL** (requires `probe_success` from Blackbox Exporter):
+
 ```promql
 avg_over_time(probe_success{job="vauchi-relay-health"}[30d])
 ```
 
 **SLO**: >= **99.5%** over a 30-day window
 
-**Error budget (30d)**: 0.5% × 30 × 24 × 60 min = **216 minutes** (~3.6 hours) per month
+**Error budget (30d)**: 0.5% × 30 × 24 × 60 min = **216 minutes** (~3.6 hours)
+per month
 
 **Notes**:
+
 - Configure Blackbox Exporter to probe `http://<relay-host>:8081/health` every 30 seconds.
 - Expected response: `{"status":"ok"}` with HTTP 200.
-- Distinguish planned maintenance windows from unplanned outages in your SLO reporting.
+- Distinguish planned maintenance windows from unplanned outages in your SLO
+reporting.
 
 ---
 
 ### SLI-3 — P99 Message Latency
 
-**What it measures**: 99th-percentile end-to-end message processing time (receive → acknowledge).
+**What it measures**: 99th-percentile end-to-end message processing time
+(receive → acknowledge).
 
 **PromQL**:
+
 ```promql
 histogram_quantile(
   0.99,
@@ -73,6 +94,7 @@ histogram_quantile(
 **SLO**: < **200 ms** over a 30-day window
 
 **Supplementary queries**:
+
 ```promql
 # P95 latency (operational baseline)
 histogram_quantile(0.95, rate(relay_message_duration_seconds_bucket[5m]))
@@ -81,27 +103,39 @@ histogram_quantile(0.95, rate(relay_message_duration_seconds_bucket[5m]))
 histogram_quantile(0.50, rate(relay_message_duration_seconds_bucket[5m]))
 ```
 
-**Error budget**: Defined as fraction of 5-minute windows where P99 exceeds 200 ms, not exceeding **0.5%** of windows in 30 days (~216 minutes of exceedance).
+**Error budget**: Defined as fraction of 5-minute windows where P99 exceeds 200
+ms, not exceeding **0.5%** of windows in 30 days (~216 minutes of exceedance).
 
 **Notes**:
-- The RUNBOOKS.md threshold table lists p95 warning at 50 ms and critical at 200 ms. The SLO targets p99 < 200 ms — consistent with critical threshold being a hard SLO boundary.
-- Latency spikes during SQLite vacuums are expected; schedule vacuums during low-traffic windows.
+
+- The RUNBOOKS.md threshold table lists p95 warning at 50 ms and critical at
+200 ms. The SLO targets p99 < 200 ms — consistent with critical threshold being
+a hard SLO boundary.
+- Latency spikes during SQLite vacuums are expected; schedule vacuums during
+low-traffic windows.
 
 ---
 
 ### SLI-4 — Federation Bidirectional Throughput Balance (TODO: placeholder)
 
 > **TODO**: A proper federation delivery SLI requires a `relay_federation_offloads_acked_total`
-> counter that is incremented when a peer relay explicitly acknowledges successful storage of an
-> offloaded blob. This counter does not exist yet. Until it is added, SLI-4 is a **proxy
-> metric** only — it measures bidirectional federation throughput balance, not delivery success.
+> counter that is incremented when a peer relay explicitly acknowledges
+successful storage of an
+> offloaded blob. This counter does not exist yet. Until it is added, SLI-4 is
+a **proxy
+> metric** only — it measures bidirectional federation throughput balance, not
+delivery success.
 
-**What it measures**: Ratio of inbound federation offloads to outbound federation offloads,
-used as a federation health proxy. A balanced federation has roughly symmetric traffic; a
-large imbalance may indicate a one-sided overload or peer rejection cascade. This does **not**
+**What it measures**: Ratio of inbound federation offloads to outbound
+federation offloads,
+used as a federation health proxy. A balanced federation has roughly symmetric
+traffic; a
+large imbalance may indicate a one-sided overload or peer rejection cascade.
+This does **not**
 measure whether outbound offloads were successfully stored by peers.
 
 **PromQL** (health proxy — not a true delivery SLI):
+
 ```promql
 rate(relay_federation_offloads_received_total[5m])
 /
@@ -111,9 +145,11 @@ rate(relay_federation_offloads_sent_total[5m])
 **SLO**: Not applicable until `relay_federation_offloads_acked_total` is implemented.
 
 **Notes**:
+
 - Only applicable when `RELAY_FEDERATION_ENABLED=true`.
 - To implement a true delivery SLI: add a `relay_federation_offloads_acked_total` counter
-  incremented on receipt of an explicit ack message from the peer relay, then compute
+  incremented on receipt of an explicit ack message from the peer relay, then
+  compute
   `rate(acked) / rate(sent)` as the delivery success fraction.
 - Returns `NaN` when no federation traffic is present. Suppress alerts when `rate(relay_federation_offloads_sent_total[5m]) == 0`.
 
@@ -124,13 +160,16 @@ rate(relay_federation_offloads_sent_total[5m])
 **What it measures**: Cumulative panic count in the relay process.
 
 **PromQL**:
+
 ```promql
 relay_panics_total
 ```
 
 **SLO**: `relay_panics_total` == **0** at all times in production
 
-**Error budget**: None. Any panic is a P1 incident. The relay uses `panic=abort` in release mode, meaning a panic kills the process. systemd restarts within 5 seconds, but each restart is a brief outage and indicates a code defect.
+**Error budget**: None. Any panic is a P1 incident. The relay uses `panic=abort` in release
+mode, meaning a panic kills the process. systemd restarts within 5 seconds, but
+each restart is a brief outage and indicates a code defect.
 
 ---
 
@@ -160,7 +199,8 @@ relay_panics_total
 
 ## Alert Suggestions
 
-Paste these into Alertmanager rules. Adjust `for` durations and routing to match your on-call setup.
+Paste these into Alertmanager rules. Adjust `for` durations and routing to match
+your on-call setup.
 
 ### Alert: Delivery Success Rate Low
 
@@ -241,8 +281,10 @@ Paste these into Alertmanager rules. Adjust `for` durations and routing to match
 
 ### Alert: Federation Throughput Imbalance (proxy — not a delivery SLI)
 
-> **Note**: This alert is a placeholder. It fires when inbound federation traffic is
-> significantly below outbound, which may indicate peer rejections or connectivity issues.
+> **Note**: This alert is a placeholder. It fires when inbound federation
+traffic is
+> significantly below outbound, which may indicate peer rejections or
+connectivity issues.
 > It does **not** confirm delivery success. Replace with an ack-based alert once
 > `relay_federation_offloads_acked_total` is implemented.
 
@@ -279,9 +321,11 @@ Paste these into Alertmanager rules. Adjust `for` durations and routing to match
 
 ## Grafana Dashboard
 
-The pre-built dashboard at `deploy/grafana/relay-dashboard.json` includes panels for all SLIs above. Import it into Grafana and set the data source to your Prometheus instance.
+The pre-built dashboard at `deploy/grafana/relay-dashboard.json` includes panels for all SLIs above. Import it into
+Grafana and set the data source to your Prometheus instance.
 
 Recommended dashboard variables:
+
 - `$relay_job` — Prometheus job label for the relay scrape target
 - `$probe_job` — Prometheus job label for the Blackbox Exporter probe
 
