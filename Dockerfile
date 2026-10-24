@@ -56,10 +56,10 @@ RUN set -eux; \
 # Runtime stage — distroless glibc without unused OpenSSL libraries.
 # Pinned by digest so a re-pointed `latest` tag cannot change what ships
 # (same pin as ohttp-relay). The digest is the multi-arch index `latest`
-# pointed at on 2026-10-02; it must be bumped to pick up base-OS security
+# pointed at on 2026-10-24; it must be bumped to pick up base-OS security
 # patches (glibc, zlib, …) — vauchi/private#478.
 # pin-tracks: gcr.io/distroless/base-nossl-debian13:latest
-FROM gcr.io/distroless/base-nossl-debian13@sha256:af5cb8dd589b8520b8c06bebb9efb73d7e16406cab58e85c51761fff49d370a0
+FROM gcr.io/distroless/base-nossl-debian13@sha256:ca1c7e6a875e59345ae6ff182a1e0930f0ca1ffef23a9b830f8823ab348ad5dd
 
 # Rust binaries still need libgcc_s for panic unwinding; base-nossl omits it.
 # Staged arch-agnostically in the builder above (see the /staging copy).
