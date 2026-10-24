@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! The e2e test clock (#288 plan 2.8): e2e moves a relay across 24 h
 //! windows in a moment instead of waiting a day. Only an `e2e-test-clock`

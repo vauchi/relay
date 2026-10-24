@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! True two-process federation e2e: boots two real `vauchi-relay` OS
 //! processes (A and B) wired as mTLS-HTTP peers, sends a blob to A, and

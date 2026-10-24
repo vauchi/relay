@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! External config tests — moved from inline `mod tests` in config.rs.
 //! Also covers `from_env_with_warnings()` parse-warning behaviour.

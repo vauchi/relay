@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! The e2e test clock (#288 plan 2.8). The windowed gateway changes keys at
 //! each 24 h UTC boundary; e2e cannot wait a day, so an `e2e-test-clock`

@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me> -->
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 
 > **Mirror:** This repo is a read-only mirror of [gitlab.com/vauchi/relay](https://gitlab.com/vauchi/relay). Please open issues and merge requests there.
 
@@ -306,4 +306,4 @@ Vauchi is open source and community-funded — no VC money, no data harvesting.
 
 ## License
 
-GPL-3.0-or-later
+AGPL-3.0-or-later

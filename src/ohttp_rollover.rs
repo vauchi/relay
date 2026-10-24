@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! The relay's anchor rollover chain (#288 plan 2.10, decision 0.13). Each
 //! record hands the anchor to the backup the previous step committed to and

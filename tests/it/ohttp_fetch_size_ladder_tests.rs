@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Fetch responses take one of three sizes (private#603, owner decision
 //! 2026-10-10): the padded plaintext is 4 KiB, 32 KiB or 96 KiB, so a hop

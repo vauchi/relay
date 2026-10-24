@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! The `vauchi-ohttp-anchor` ceremony CLI (#288 plan 4.1, decisions 0.7,
 //! 0.11, 0.12): the anchor seed arrives on stdin and leaves no trace; the

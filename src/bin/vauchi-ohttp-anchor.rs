@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Ceremony CLI for a relay's OHTTP anchor (#288 plan 4.1, decisions 0.7
 //! and 0.12). The anchor seed only ever arrives on stdin — argv is visible

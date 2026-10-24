@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 #
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 version = 1
 SPDX-PackageName = "vauchi-relay"
@@ -10,40 +10,40 @@ SPDX-PackageSupplier = "Mattia Egloff <mattia.egloff@pm.me>"
 [[annotations]]
 path = ["LICENSES/**"]
 SPDX-FileCopyrightText = "Free Software Foundation"
-SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 # Lock files
 [[annotations]]
 path = ["**/Cargo.lock", "**/*.lock"]
 SPDX-FileCopyrightText = "2026 Mattia Egloff <mattia.egloff@pm.me>"
-SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 # Fuzzer seed corpus files are raw parser inputs and cannot carry comments.
 [[annotations]]
 path = ["fuzz/corpus/**"]
 SPDX-FileCopyrightText = "2026 Mattia Egloff <mattia.egloff@pm.me>"
-SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 # Git and editor config files
 [[annotations]]
 path = [".gitignore", "**/.gitignore", ".DS_Store", "**/.gitkeep"]
 SPDX-FileCopyrightText = "2026 Mattia Egloff <mattia.egloff@pm.me>"
-SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 # JSON config files
 [[annotations]]
 path = ["**/*.json"]
 SPDX-FileCopyrightText = "2026 Mattia Egloff <mattia.egloff@pm.me>"
-SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 # Claude Code project instructions
 [[annotations]]
 path = ["**/CLAUDE.md"]
 SPDX-FileCopyrightText = "2026 Mattia Egloff <mattia.egloff@pm.me>"
-SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 # cargo-vet supply chain files (headers stripped by cargo-vet on regeneration)
 [[annotations]]
 path = ["supply-chain/**"]
 SPDX-FileCopyrightText = "2026 Mattia Egloff <mattia.egloff@pm.me>"
-SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-License-Identifier = "AGPL-3.0-or-later"

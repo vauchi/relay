@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! A purge erases the recovery proofs its identity uploaded, and on "erase
 //! everything" its guardian set (vauchi/private#711, plan D1-D3).

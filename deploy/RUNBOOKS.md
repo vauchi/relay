@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me> -->
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!-- markdownlint-disable line-length-backtick-exempt MD031 MD032 MD040 -->
 
 # Vauchi Relay Operational Runbooks

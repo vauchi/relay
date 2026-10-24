@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Mattia Egloff <mattia.egloff@pm.me>
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! A relay with no configured anchor makes its own (ADR-074, #288 plan 2.9):
 //! zero ceremony for self-hosters, same signature chain for clients.
