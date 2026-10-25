@@ -16,8 +16,10 @@ ARG HUB=docker.io/library
 # minute build, which is what pushed build:docker past its timeout).
 # Deriving planner and builder from one prepared base also installs
 # cargo-chef once instead of twice.
+# Pinned (same version as ohttp-relay) and --locked so a cold build does not
+# pick up whatever cargo-chef or dependency release is newest (private#807).
 FROM ${HUB}/rust:1.93-trixie AS chef
-RUN cargo install cargo-chef
+RUN cargo install cargo-chef --version 0.1.77 --locked
 WORKDIR /app
 
 # Planner stage: generate recipe.json for dependency caching
