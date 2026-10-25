@@ -764,6 +764,11 @@ build:release:
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
+  # Main and tag builds start cold: an MR pipeline can push to this
+  # project's registry, so layers MR jobs cache are no input for an image
+  # production runs. Only the MR rules turn the cache on (private#807).
+  variables:
+    KANIKO_CACHE: "false"
   before_script:
     - export BUILD_INFO="{\"sha\":\"$CI_COMMIT_SHA\",\"short_sha\":\"$CI_COMMIT_SHORT_SHA\",\"ref\":\"$CI_COMMIT_REF_NAME\",\"built\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"pipeline\":\"$CI_PIPELINE_URL\"}"
     # kaniko reads registry + dependency-proxy creds from this file. The proxy
@@ -817,7 +822,7 @@ build:docker:
         --build-arg BUILD_INFO="$BUILD_INFO" \
         $DESTS \
         --digest-file "$CI_PROJECT_DIR/image.digest" \
-        --cache=true \
+        --cache="$KANIKO_CACHE" \
         --cache-repo "$CI_REGISTRY_IMAGE/cache"
     # deploy:trigger forwards this so production can refuse the :$SHA tag
     # once a later rebuild re-pushes it (private problems/
@@ -841,6 +846,8 @@ build:docker:
         - Cargo.lock
         - Dockerfile
         - .gitlab-ci.yml
+      variables:
+        KANIKO_CACHE: "true"
 
 # Native arm64 image build on the shelly-ann (Raspberry Pi 5) runner — same
 # daemonless kaniko path as amd64, arch-suffixed destination.
@@ -848,6 +855,9 @@ build:docker:arm64:
   extends: [.kaniko-build, .timeout-long]
   stage: build
   tags: [arm64, rpi5]
+  # Main and tag builds no longer read the layer cache (private#807); a cold
+  # Rust build on the Pi has not been timed yet, so it gets twice the hour.
+  timeout: 2 hours
   script:
     - |
       /kaniko/executor \
@@ -856,7 +866,7 @@ build:docker:arm64:
         --build-arg HUB="${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}" \
         --build-arg BUILD_INFO="$BUILD_INFO" \
         --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA-arm64" \
-        --cache=true \
+        --cache="$KANIKO_CACHE" \
         --cache-repo "$CI_REGISTRY_IMAGE/cache-arm64"
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -871,6 +881,8 @@ build:docker:arm64:
       changes:
         - Dockerfile
         - .gitlab-ci.yml
+      variables:
+        KANIKO_CACHE: "true"
 
 # Stitch amd64 (:$SHA) + arm64 (:$SHA-arm64) into a multi-arch manifest with
 # crane (no daemon). :latest / :$SHA stay amd64 until arm64 deploy targets +
