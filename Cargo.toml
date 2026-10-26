@@ -35,7 +35,7 @@ flate2 = { version = "1.1", default-features = false, features = ["rust_backend"
 uuid = { version = "1.0", features = ["v4"] }
 
 # Shared protocol message types
-vauchi-protocol = { git = "https://gitlab.com/vauchi/core.git", tag = "v0.89.0", version = "=0.89.0" }
+vauchi-protocol = { git = "https://gitlab.com/vauchi/core.git", tag = "v0.90.0", version = "=0.90.0" }
 
 # Hex encoding/decoding for key hashes
 hex = "0.4"
