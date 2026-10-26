@@ -52,6 +52,22 @@ pub async fn run_now_then_every(interval: Duration, mut tick: impl FnMut()) {
     run_every(interval, tick).await;
 }
 
+/// [`run_every`] for a tick that awaits (the federation offload check);
+/// the next interval starts once the tick has finished.
+pub async fn run_every_async<F, Fut>(interval: Duration, mut tick: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    loop {
+        tokio::time::sleep(interval).await;
+        tick().await;
+    }
+}
+
+/// How often the tokio runtime gauges (alive tasks, workers) are sampled.
+pub const RUNTIME_METRICS_INTERVAL: Duration = Duration::from_secs(15);
+
 /// Logs a sweep that removed something; a sweep that found nothing is silent.
 pub fn log_removed(what: &str, removed: usize) {
     if removed > 0 {

@@ -161,9 +161,9 @@ async fn main() {
 
     {
         let tokio_metrics = metrics.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        tokio::spawn(maintenance::run_every(
+            maintenance::RUNTIME_METRICS_INTERVAL,
+            move || {
                 let rt_metrics = tokio::runtime::Handle::current().metrics();
                 tokio_metrics
                     .tokio_alive_tasks
@@ -171,8 +171,8 @@ async fn main() {
                 tokio_metrics
                     .tokio_workers
                     .set(rt_metrics.num_workers() as i64);
-            }
-        });
+            },
+        ));
     }
 
     {
@@ -368,14 +368,15 @@ async fn main() {
             });
         }
 
-        let capacity_interval = config.federation.capacity_interval_secs;
+        let capacity_interval =
+            std::time::Duration::from_secs(config.federation.capacity_interval_secs);
         let offload_mgr_task = offload_manager.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(capacity_interval)).await;
-                offload_mgr_task.check_and_offload().await;
+        tokio::spawn(maintenance::run_every_async(capacity_interval, move || {
+            let offload_mgr = offload_mgr_task.clone();
+            async move {
+                offload_mgr.check_and_offload().await;
             }
-        });
+        }));
 
         let cleanup_hints = hint_store.clone();
         let hints_cleanup_metrics = metrics.clone();
