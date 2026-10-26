@@ -146,6 +146,31 @@ fn test_verify_purge_ed25519_wrong_key_length() {
     assert!(result.unwrap_err().contains("public_key must be 32 bytes"));
 }
 
+// @scenario: relay_network :: Signature key mismatch rejected
+#[test]
+fn test_verify_purge_ed25519_rejects_a_signature_made_with_another_key() {
+    let signer = generated_key_pair();
+    let claimed = generated_key_pair();
+    let claimed_public_key = claimed.public_key().as_ref();
+    let purge_token = [0xABu8; 32];
+    let timestamp = unix_now();
+    let mut message = Vec::with_capacity(72);
+    message.extend_from_slice(claimed_public_key);
+    message.extend_from_slice(&purge_token);
+    message.extend_from_slice(&timestamp.to_be_bytes());
+    let signature = signer.sign(&message);
+
+    let result = verify::verify_purge_ed25519(
+        claimed_public_key,
+        &purge_token,
+        signature.as_ref(),
+        timestamp,
+        false,
+    );
+
+    assert_eq!(result.unwrap_err(), "invalid purge signature");
+}
+
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
