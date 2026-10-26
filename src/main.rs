@@ -643,7 +643,7 @@ async fn main() {
     let cleanup_storage = storage.clone();
     let cleanup_metrics = metrics.clone();
     let blob_ttl = config.blob_ttl();
-    tokio::spawn(maintenance::run_every(
+    tokio::spawn(maintenance::run_now_then_every(
         config.cleanup_interval(),
         move || {
             let removed =

@@ -44,6 +44,14 @@ pub async fn run_every(interval: Duration, mut tick: impl FnMut()) {
     }
 }
 
+/// Like [`run_every`], with a first call right away: a sweep whose
+/// backlog grew while the relay was down must not wait another interval
+/// (vauchi/private#691).
+pub async fn run_now_then_every(interval: Duration, mut tick: impl FnMut()) {
+    tick();
+    run_every(interval, tick).await;
+}
+
 /// Logs a sweep that removed something; a sweep that found nothing is silent.
 pub fn log_removed(what: &str, removed: usize) {
     if removed > 0 {
