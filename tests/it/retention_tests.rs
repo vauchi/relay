@@ -134,3 +134,48 @@ proptest::proptest! {
         proptest::prop_assert_eq!(store.peek("recipient").len(), usize::from(!expired));
     }
 }
+
+/// The relay was down past the moment two envelopes expired, so no hourly
+/// sweep saw them go; the first sweep after the restart removes exactly
+/// those, and reopening the database shows they are physically gone
+/// (vauchi/private#691).
+// @scenario: privacy_compliance :: Relay data expires automatically
+#[test]
+fn cleanup_after_an_outage_removes_everything_that_expired_meanwhile() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("outage.db");
+    {
+        let store = SqliteBlobStore::open(&path).unwrap();
+        store
+            .store("a", StoredBlob::with_metadata(vec![1], CREATED, 0))
+            .unwrap();
+        store
+            .store(
+                "b",
+                StoredBlob::with_metadata(vec![2], CREATED + 10 * DAY, 0),
+            )
+            .unwrap();
+        store
+            .store(
+                "c",
+                StoredBlob::with_metadata(vec![3], CREATED + 20 * DAY, 0),
+            )
+            .unwrap();
+        assert_eq!(store.cleanup_expired_at(RETENTION, CREATED + 100 * DAY), 0);
+        store.shutdown();
+    }
+
+    // Outage: no sweep ran between day 100 and day 135.
+    let store = SqliteBlobStore::open(&path).unwrap();
+    assert_eq!(store.blob_count(), 3);
+    assert_eq!(store.cleanup_expired_at(RETENTION, CREATED + 135 * DAY), 2);
+    assert_eq!(store.blob_count(), 1);
+    assert!(store.peek("a").is_empty());
+    assert!(store.peek("b").is_empty());
+    assert_eq!(store.peek("c")[0].data, vec![3]);
+    store.shutdown();
+
+    let store = SqliteBlobStore::open(&path).unwrap();
+    assert_eq!(store.blob_count(), 1);
+    assert_eq!(store.cleanup_expired_at(RETENTION, CREATED + 135 * DAY), 0);
+}

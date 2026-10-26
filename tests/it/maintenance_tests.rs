@@ -203,3 +203,29 @@ async fn drain_finishes_early_once_the_last_connection_closes() {
         start.elapsed()
     );
 }
+
+/// After an outage the backlog of expired blobs must not wait a full
+/// interval for the first sweep (vauchi/private#691).
+// @internal
+#[tokio::test(start_paused = true)]
+async fn run_now_then_every_ticks_at_once_and_then_once_per_interval() {
+    let ticks = Arc::new(AtomicUsize::new(0));
+    let counter = ticks.clone();
+    let task = tokio::spawn(maintenance::run_now_then_every(
+        Duration::from_secs(60),
+        move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        },
+    ));
+
+    tokio::task::yield_now().await;
+    let at_start = ticks.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    let before_first_interval = ticks.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    task.abort();
+
+    assert_eq!(at_start, 1);
+    assert_eq!(before_first_interval, 1);
+    assert_eq!(ticks.load(Ordering::SeqCst), 3);
+}
