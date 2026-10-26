@@ -229,3 +229,31 @@ async fn run_now_then_every_ticks_at_once_and_then_once_per_interval() {
     assert_eq!(before_first_interval, 1);
     assert_eq!(ticks.load(Ordering::SeqCst), 3);
 }
+
+/// The federation offload check awaits inside its tick; it must keep the
+/// same once-per-interval shape as the synchronous sweeps instead of a
+/// hand-rolled sleep loop (private#23, finding 5).
+// @internal
+#[tokio::test(start_paused = true)]
+async fn run_every_async_awaits_the_tick_once_per_interval() {
+    let ticks = Arc::new(AtomicUsize::new(0));
+    let counter = ticks.clone();
+    let task = tokio::spawn(maintenance::run_every_async(
+        Duration::from_secs(60),
+        move || {
+            let counter = counter.clone();
+            async move {
+                tokio::task::yield_now().await;
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+        },
+    ));
+
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    let before_first_interval = ticks.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    task.abort();
+
+    assert_eq!(before_first_interval, 0);
+    assert_eq!(ticks.load(Ordering::SeqCst), 2);
+}
