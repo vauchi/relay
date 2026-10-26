@@ -14,6 +14,8 @@ use vauchi_relay::http_api::create_v2_router;
 // ── Store ──────────────────────────────────────────────────────────
 
 // @scenario: recovery :: store and query roundtrip
+// @scenario: contact_recovery :: Relay stores recovery proof privately
+// @scenario: contact_recovery :: Relay returns recovery proof on query
 #[tokio::test]
 async fn test_recovery_store_and_query_roundtrip() {
     let state = create_test_state();
