@@ -325,6 +325,36 @@ mod tests {
         assert!(!proof_expiring_at(1, unix_now() + 1000).is_expired());
     }
 
+    // @scenario: contact_recovery :: Recovery proof expiration
+    #[test]
+    fn a_new_proof_expires_ninety_days_after_upload() {
+        let proof = StoredRecoveryProof::new([1; 32], vec![1, 2, 3]);
+
+        assert_eq!(
+            proof.expires_at_secs - proof.created_at_secs,
+            90 * 24 * 60 * 60
+        );
+    }
+
+    // @scenario: contact_recovery :: Relay handles proof expiration
+    #[test]
+    fn an_expired_proof_is_not_found() {
+        let store = SqliteRecoveryProofStore::in_memory().unwrap();
+        store
+            .store(proof_expiring_at(1, unix_now() - 24 * 60 * 60))
+            .unwrap();
+        store
+            .store(proof_expiring_at(2, unix_now() + 1000))
+            .unwrap();
+
+        assert!(store.get(&[1; 32]).is_none());
+        assert_eq!(
+            store.get(&[2; 32]).map(|p| p.proof_data),
+            Some(vec![1, 2, 3])
+        );
+    }
+
+    // @scenario: contact_recovery :: Recovery proof expiration
     // @internal
     #[test]
     fn test_cleanup_expired_counts_and_removes_only_expired_proofs() {
