@@ -110,6 +110,7 @@ fn test_verify_purge_ed25519_bad_signature() {
     assert_eq!(result.unwrap_err(), "invalid purge signature");
 }
 
+// @scenario: relay_network :: Expired timestamp rejected
 // @internal
 #[test]
 fn test_verify_purge_ed25519_expired_timestamp() {

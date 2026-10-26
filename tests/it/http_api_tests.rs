@@ -69,6 +69,7 @@ async fn test_v2_health_no_protocol_field() {
 
 // ── Send ──
 
+// @scenario: relay_network :: Anonymous token routing requires no signature
 // @internal
 #[tokio::test]
 async fn test_v2_send_stores_blob() {
@@ -98,6 +99,7 @@ async fn test_v2_send_stores_blob() {
     assert_eq!(blobs[0].data, b"base64-data");
 }
 
+// @scenario: relay_network :: Anonymous token routing requires no signature
 // @internal
 #[tokio::test]
 async fn test_v2_send_rejects_invalid_recipient_id() {
@@ -144,6 +146,7 @@ async fn test_v2_send_rejects_invalid_base64() {
 
 // ── Fetch ──
 
+// @scenario: relay_network :: Anonymous token routing requires no signature
 // @internal
 #[tokio::test]
 async fn test_v2_fetch_returns_stored_blobs() {
@@ -427,6 +430,7 @@ async fn test_v2_ack_removes_blob() {
 
 // ── Purge ──
 
+// @scenario: relay_network :: Signed operations verified without a routing identity
 // @internal
 #[tokio::test]
 async fn test_v2_purge_deletes_all_blobs() {
@@ -448,6 +452,7 @@ async fn test_v2_purge_deletes_all_blobs() {
     assert!(storage.peek(&token).is_empty());
 }
 
+// @scenario: relay_network :: Signed operations verified without a routing identity
 // @internal
 #[tokio::test]
 async fn test_v2_purge_rejects_missing_signature() {
@@ -487,6 +492,7 @@ async fn test_v2_purge_rejects_bad_signature() {
     assert!(body["error"].as_str().unwrap().contains("signature"));
 }
 
+// @scenario: relay_network :: Expired timestamp rejected
 // @internal
 #[tokio::test]
 async fn test_v2_purge_rejects_expired_timestamp() {

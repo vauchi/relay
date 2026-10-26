@@ -200,6 +200,7 @@ mod tests {
         }
     }
 
+    // @scenario: relay_network :: Relay gossip protocol
     // @internal
     #[test]
     fn test_process_advertisement_new_peers() {
@@ -374,6 +375,7 @@ mod tests {
         advertised
     }
 
+    // @scenario: relay_network :: Relay gossip protocol
     // @internal
     #[test]
     fn test_gossip_round_advertises_every_peer_but_ourselves_to_connected_peers() {
