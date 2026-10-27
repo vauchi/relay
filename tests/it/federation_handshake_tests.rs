@@ -85,7 +85,7 @@ fn handshake_with_matching_version_is_accepted() {
     );
 }
 
-// @internal
+// @scenario: relay_network :: Version mismatch between relays is an explicit refusal
 #[test]
 fn handshake_with_mismatched_version_is_rejected_with_local_version() {
     let world = World::new();
@@ -109,6 +109,13 @@ fn handshake_with_mismatched_version_is_rejected_with_local_version() {
             other => panic!("expected PeerHandshakeAck, got {other:?}"),
         }
     }
+    assert!(
+        world
+            .metrics
+            .encode()
+            .contains("relay_federation_handshakes_received_total 3"),
+        "each refused handshake is counted on the refusing relay"
+    );
 }
 
 // @internal

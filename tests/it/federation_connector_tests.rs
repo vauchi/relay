@@ -191,7 +191,7 @@ fn offload_manager_with(
     manager
 }
 
-// @internal
+// @scenario: relay_network :: Version mismatch between relays is an explicit refusal
 #[tokio::test]
 async fn connector_skips_offload_when_peer_rejects_version_handshake() {
     use axum::{Json, Router, routing::post};
