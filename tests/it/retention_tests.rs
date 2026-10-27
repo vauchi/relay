@@ -49,6 +49,7 @@ fn retention_keeps_day_100_data_across_restart_and_ack_removes_only_that_blob() 
 
 // @scenario: privacy_compliance :: Relay data expires automatically
 // @scenario: message_delivery:Message expires after TTL
+// @scenario: privacy_compliance :: Offline contact receives revocation on reconnect
 #[test]
 fn retention_expires_at_the_exact_boundary_and_preserves_a_later_envelope() {
     for elapsed in [120 * DAY - 1, 120 * DAY, 120 * DAY + 1] {
