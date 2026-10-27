@@ -186,3 +186,26 @@ async fn test_successful_response_has_empty_retry_after() {
         );
     }
 }
+
+// @scenario: relay_network :: Rate limiting on relay nodes
+#[tokio::test]
+async fn a_flooded_mailbox_is_limited_while_another_is_still_served() {
+    let app = create_v2_router(create_tight_rate_limit_state());
+    let flooded = valid_send_body(&"a".repeat(64));
+    let quiet = valid_send_body(&"b".repeat(64));
+
+    let statuses = [
+        post_json(&app, "/v2/send", &flooded).await.status(),
+        post_json(&app, "/v2/send", &flooded).await.status(),
+        post_json(&app, "/v2/send", &quiet).await.status(),
+    ];
+
+    assert_eq!(
+        statuses,
+        [
+            StatusCode::OK,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::OK
+        ]
+    );
+}

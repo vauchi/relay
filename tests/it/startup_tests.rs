@@ -36,7 +36,7 @@ fn json_logs_are_chosen_by_the_exact_word(#[case] log_format: &str, #[case] expe
     assert_eq!(startup::wants_json_logs(log_format), expected);
 }
 
-// @internal
+// @scenario: relay_network :: Plaintext connections are rejected
 #[rstest]
 #[case::loopback_without_tls("127.0.0.1:8080", false, true)]
 #[case::loopback_v6_without_tls("[::1]:8080", false, true)]

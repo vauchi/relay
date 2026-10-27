@@ -271,6 +271,7 @@ mod tests {
     }
 
     // @internal
+    // @scenario: relay_network :: Plaintext connections are rejected
     #[test]
     fn test_classify_non_federation_websocket_rejected() {
         // Client WebSocket support was removed and federation is mTLS-HTTP
