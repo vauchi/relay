@@ -9,6 +9,7 @@ use axum::http::StatusCode;
 use common::http_helpers::{create_test_state, post_json, signed_purge_json};
 use vauchi_relay::forwarding_hints::ForwardingHint;
 use vauchi_relay::http_api::create_v2_router;
+use vauchi_relay::storage::StoredBlob;
 
 fn hint(routing_id: &str, blob_id: &str) -> ForwardingHint {
     ForwardingHint {
@@ -54,4 +55,28 @@ async fn a_purge_with_a_bad_signature_keeps_the_hints() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(hints.get_hints(&mine).len(), 1);
+}
+
+// @scenario: privacy_compliance :: Relay notified on identity deletion
+#[tokio::test]
+async fn a_purge_empties_the_mailbox_at_once_and_says_how_much_it_erased() {
+    let state = create_test_state();
+    let storage = state.storage.clone();
+    let mine = "d".repeat(64);
+    for data in [b"one".to_vec(), b"two".to_vec()] {
+        storage.store(&mine, StoredBlob::new(data)).unwrap();
+    }
+    let app = create_v2_router(state);
+
+    let resp = post_json(&app, "/v2/purge", &signed_purge_json(&mine)).await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), 4096).await.unwrap())
+            .unwrap();
+    assert_eq!(
+        receipt,
+        serde_json::json!({ "status": "ok", "blobs_deleted": 2 })
+    );
+    assert!(storage.peek(&mine).is_empty());
 }
