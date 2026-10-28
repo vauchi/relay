@@ -57,6 +57,25 @@ async fn a_purge_with_a_bad_signature_keeps_the_hints() {
     assert_eq!(hints.get_hints(&mine).len(), 1);
 }
 
+// @scenario: pre_signed_operations :: Tampered pre-signed message is rejected
+#[tokio::test]
+async fn a_purge_whose_token_was_changed_after_signing_is_refused() {
+    let state = create_test_state();
+    let storage = state.storage.clone();
+    let mine = "d".repeat(64);
+    storage
+        .store(&mine, StoredBlob::new(b"kept".to_vec()))
+        .unwrap();
+    let app = create_v2_router(state);
+    let mut tampered = signed_purge_json(&mine);
+    tampered["purge_token"] = serde_json::json!("ee".repeat(32));
+
+    let resp = post_json(&app, "/v2/purge", &tampered).await;
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(storage.blob_count_for(&mine), 1);
+}
+
 // @scenario: privacy_compliance :: Relay notified on identity deletion
 #[tokio::test]
 async fn a_purge_empties_the_mailbox_at_once_and_says_how_much_it_erased() {
