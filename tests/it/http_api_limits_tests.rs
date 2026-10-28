@@ -55,6 +55,40 @@ async fn test_v2_send_accepts_blob_that_exactly_fills_the_byte_quota() {
     assert_eq!(one_byte_over.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
+// @scenario: relay_network :: No mailbox gets privileged treatment
+#[tokio::test]
+async fn the_operators_mailbox_hits_the_same_quota_as_anyone_elses() {
+    let mut state = create_test_state();
+    state.quota.max_blobs = 2;
+    let app = create_v2_router(state);
+    let send_to = |recipient: &str| {
+        serde_json::json!({
+            "version": 2,
+            "recipient_id": recipient.repeat(64),
+            "ciphertext": base64::engine::general_purpose::STANDARD.encode(vec![0u8; 8]),
+        })
+    };
+    let (operator, stranger) = (send_to("0"), send_to("9"));
+
+    let mut statuses = Vec::new();
+    for _ in 0..3 {
+        statuses.push((
+            post_json(&app, "/v2/send", &operator).await.status(),
+            post_json(&app, "/v2/send", &stranger).await.status(),
+        ));
+    }
+
+    let refused = StatusCode::TOO_MANY_REQUESTS;
+    assert_eq!(
+        statuses,
+        [
+            (StatusCode::OK, StatusCode::OK),
+            (StatusCode::OK, StatusCode::OK),
+            (refused, refused)
+        ]
+    );
+}
+
 // @internal
 #[tokio::test]
 async fn test_v2_fetch_truncated_page_uses_most_of_its_budget_without_exceeding_it() {

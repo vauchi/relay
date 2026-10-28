@@ -188,6 +188,7 @@ async fn test_successful_response_has_empty_retry_after() {
 }
 
 // @scenario: relay_network :: Rate limiting on relay nodes
+// @scenario: relay_network :: No mailbox gets privileged treatment
 #[tokio::test]
 async fn a_flooded_mailbox_is_limited_while_another_is_still_served() {
     let app = create_v2_router(create_tight_rate_limit_state());
