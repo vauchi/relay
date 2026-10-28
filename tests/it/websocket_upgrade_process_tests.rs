@@ -11,12 +11,15 @@ use crate::common::poll_until;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-struct Relay(Child, tempfile::TempDir);
+struct Relay {
+    child: Child,
+    _data_dir: tempfile::TempDir,
+}
 
 impl Drop for Relay {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -55,7 +58,10 @@ async fn a_websocket_upgrade_to_the_running_relay_gets_426_and_the_v2_api() {
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn vauchi-relay");
-    let _relay = Relay(child, data_dir);
+    let _relay = Relay {
+        child,
+        _data_dir: data_dir,
+    };
     let main_addr = format!("127.0.0.1:{main_port}");
     poll_until(
         || {
