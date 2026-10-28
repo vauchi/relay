@@ -51,3 +51,4 @@ mod security_resource_tests;
 mod startup_tests;
 mod storage_write_error_tests;
 mod version_policy_tests;
+mod websocket_upgrade_process_tests;
