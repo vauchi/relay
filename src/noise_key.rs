@@ -316,22 +316,33 @@ mod tests {
         );
     }
 
-    /// G3 (snow→x25519-dalek migration): a relay key persisted by the
-    /// pre-migration path is just 32 private bytes; loading + the Ed25519
-    /// signing-key derivation are unchanged by the generator swap, so the
-    /// relay identity does not rotate.
-    // @internal
+    /// G3 (snow→x25519-dalek migration): a key file written before the
+    /// migration loads to the same public key and federation signing key.
+    /// The expected values were computed with the derivation as it stood
+    /// before relay 9ca7e71 (the HKDF and file format are unchanged since),
+    /// so a change to either rotates the relay identity and fails here.
+    // @scenario: relay_transport_security :: Relay identity survives the Noise retirement
     #[test]
     fn test_persisted_key_signing_identity_is_stable_across_migration() {
-        // Fixed bytes stand in for a key persisted before the migration.
-        let persisted_private = [7u8; 32];
-        let sk = RelaySigningKey::from_noise_key(&persisted_private);
-        // Deterministic derivation — same bytes always yield the same key.
-        let sk_again = RelaySigningKey::from_noise_key(&persisted_private);
-        assert_eq!(sk.public_key(), sk_again.public_key());
-        // The X25519 public derives consistently via the new generator path.
-        let public = x25519_dalek::x25519(persisted_private, x25519_dalek::X25519_BASEPOINT_BYTES);
-        assert_ne!(public, [0u8; 32]);
+        const PUBLIC: &str = "13be4feaeaf204c7fd3358fc9c00721881d174278128227ec674f37f7fe97b6d";
+        const SIGNING: &str = "5290f884e4a17b993894f81ce72fe28d1e35eb8ed0258863129cb793f5327159";
+        let dir = tempfile::tempdir().unwrap();
+        let mut pre_migration_file = vec![7u8; 32];
+        pre_migration_file.extend_from_slice(&hex::decode(PUBLIC).unwrap());
+        std::fs::write(dir.path().join("relay_noise_key.bin"), &pre_migration_file).unwrap();
+
+        let loaded = load_keypair(dir.path()).unwrap();
+
+        assert_eq!(hex::encode(loaded.public), PUBLIC);
+        assert_eq!(
+            hex::encode(x25519_dalek::x25519(
+                loaded.private,
+                x25519_dalek::X25519_BASEPOINT_BYTES
+            )),
+            PUBLIC
+        );
+        let signing = RelaySigningKey::from_noise_key(&loaded.private);
+        assert_eq!(hex::encode(signing.public_key()), SIGNING);
     }
 
     // === Tracker #117: Forwarding Hint Signing ===
