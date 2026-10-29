@@ -208,3 +208,63 @@ async fn single_blob_delivery_bound_counts_the_entire_fetch_envelope() {
         assert_eq!(storage.blob_count_for(&token), 1);
     }
 }
+
+// @internal
+#[tokio::test]
+async fn escaped_hints_cannot_expand_a_fetch_past_its_wire_budget() {
+    use common::http_helpers::ohttp_decrypt;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    let mut state = create_test_state_with_ohttp();
+    state.unix_clock = Arc::new(|| 1_793_300_000);
+    let storage = state.storage.clone();
+    let token = "a".repeat(64);
+    let hint = "\u{0001}".repeat(128);
+    for _ in 0..200 {
+        storage
+            .store(
+                &token,
+                StoredBlob::new_at(vec![7], 1_793_300_000).with_origin_hint(Some(hint.clone())),
+            )
+            .unwrap();
+    }
+    let app = create_v2_router(state);
+    let key = ohttp_key_bytes(&app).await;
+    let fetch = json!({"version": 2, "action": "fetch", "mailbox_tokens": [token]});
+    let (request, response_key) = ohttp_encrypt(&key, &fetch);
+    let response = post_ohttp_bytes(&app, request).await;
+    assert_eq!(response.status(), 200);
+    let response = axum::body::to_bytes(response.into_body(), 256 * KIB)
+        .await
+        .unwrap();
+    assert_eq!(response.len(), 96 * KIB + 48);
+    let fetched = ohttp_decrypt(response_key, &response);
+    assert_eq!(fetched["truncated"], true);
+    assert_eq!(fetched["blobs"][0]["ciphertext"], "Bw==");
+    assert_eq!(fetched["blobs"][0]["origin_hint"], hint);
+    assert_eq!(storage.blob_count_for(&token), 200);
+    let first_page = fetched["blobs"].as_array().unwrap();
+    for blob in first_page {
+        let acknowledged = common::http_helpers::send_ohttp_action(
+            &app,
+            &key,
+            "ack",
+            json!({"recipient_id": token, "blob_id": blob["blob_id"]}),
+        )
+        .await;
+        assert_eq!(acknowledged["acknowledged"], true);
+    }
+    let remaining = 200 - first_page.len();
+    let next = common::http_helpers::send_ohttp_action(
+        &app,
+        &key,
+        "fetch",
+        json!({"mailbox_tokens": [token]}),
+    )
+    .await;
+    assert_eq!(next["truncated"], false);
+    assert_eq!(next["blobs"].as_array().unwrap().len(), remaining);
+    assert_eq!(next["blobs"][0]["origin_hint"], hint);
+    assert_eq!(storage.blob_count_for(&token), remaining);
+}
