@@ -948,6 +948,11 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
     }
     let blob =
         StoredBlob::new_at(ciphertext, (state.unix_clock)()).with_origin_hint(req.origin_hint);
+    let fetch = fetch_response_json(vec![fetch_blob_json(&req.recipient_id, &blob)], false);
+    // An accepted blob must fit through the same padded return path as a fetch.
+    if fetch.to_string().len().saturating_add(4) > crate::padding::FETCH_LADDER[2] {
+        return ApiResult::bad_request("ciphertext exceeds fetch delivery limit");
+    }
     let blob_id = blob.id.clone();
     if let Err(e) = state.storage.store(&req.recipient_id, blob) {
         tracing::error!("blob not stored: {e}");
@@ -1002,13 +1007,7 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
         now.checked_sub(blob.created_at_secs)
             .is_none_or(|age| age < ttl)
     }) {
-        let entry = serde_json::json!({
-            "blob_id": blob.id,
-            "ciphertext": base64::engine::general_purpose::STANDARD.encode(&blob.data),
-            "created_at": blob.created_at_secs,
-            "mailbox_token": token,
-            "origin_hint": blob.origin_hint,
-        });
+        let entry = fetch_blob_json(token, blob);
         // Estimate the serialized entry size instead of serializing each blob a
         // second time just to measure it (the entry is serialized again in the
         // final response). base64 expands data to 4*ceil(n/3); the remaining
@@ -1029,7 +1028,21 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
         used_bytes += entry_bytes;
         blob_data.push(entry);
     }
-    ApiResult::ok(serde_json::json!({ "status": "ok", "blobs": blob_data, "truncated": truncated }))
+    ApiResult::ok(fetch_response_json(blob_data, truncated))
+}
+
+fn fetch_blob_json(token: &str, blob: &StoredBlob) -> serde_json::Value {
+    serde_json::json!({
+        "blob_id": blob.id,
+        "ciphertext": base64::engine::general_purpose::STANDARD.encode(&blob.data),
+        "created_at": blob.created_at_secs,
+        "mailbox_token": token,
+        "origin_hint": blob.origin_hint,
+    })
+}
+
+fn fetch_response_json(blobs: Vec<serde_json::Value>, truncated: bool) -> serde_json::Value {
+    serde_json::json!({ "status": "ok", "blobs": blobs, "truncated": truncated })
 }
 
 #[tracing::instrument(level = "debug", skip_all, name = "relay.ack")]

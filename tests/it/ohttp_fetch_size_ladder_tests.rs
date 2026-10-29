@@ -87,3 +87,124 @@ async fn a_catch_up_page_is_96_kib() {
 async fn an_ack_keeps_the_small_bucket() {
     assert_eq!(padded_response_len(&[], "ack").await, 256);
 }
+
+/// A send accepted at ingress must fit back through the outer hop.
+// @internal
+#[tokio::test]
+async fn an_accepted_ohttp_send_remains_deliverable_on_fetch() {
+    use common::http_helpers::{ohttp_decrypt, send_ohttp_action};
+    use serde_json::json;
+
+    let state = create_test_state_with_ohttp();
+    let storage = state.storage.clone();
+    let token = "a".repeat(64);
+    let app = create_v2_router(state);
+    let key = ohttp_key_bytes(&app).await;
+    let send = json!({
+        "version": 2,
+        "action": "send",
+        "recipient_id": token,
+        "ciphertext": "A".repeat(130_680),
+    });
+    let (request, response_key) = ohttp_encrypt(&key, &send);
+    assert_eq!(request.len(), 130_871);
+    let response = post_ohttp_bytes(&app, request).await;
+    assert_eq!(response.status(), 200);
+    let response = axum::body::to_bytes(response.into_body(), 256 * KIB)
+        .await
+        .unwrap();
+    let result = ohttp_decrypt(response_key, &response);
+    if result["status"] == "error" {
+        assert_eq!(result["error"], "ciphertext exceeds fetch delivery limit");
+        assert_eq!(storage.blob_count_for(&token), 0);
+        return;
+    }
+    assert_eq!(result["status"], "ok");
+    let fetched = json!({"version": 2, "action": "fetch", "mailbox_tokens": [token]});
+    let (request, response_key) = ohttp_encrypt(&key, &fetched);
+    let response = post_ohttp_bytes(&app, request).await;
+    assert_eq!(response.status(), 200);
+    let response = axum::body::to_bytes(response.into_body(), 256 * KIB)
+        .await
+        .unwrap();
+    assert!(
+        response.len() <= 128 * KIB,
+        "accepted send produced {} response bytes, above the outer hop limit {}",
+        response.len(),
+        128 * KIB,
+    );
+    let result = ohttp_decrypt(response_key, &response);
+    assert_eq!(result["blobs"][0]["ciphertext"], send["ciphertext"]);
+    assert_eq!(storage.blob_count_for(&token), 1);
+
+    let small = send_ohttp_action(
+        &app,
+        &key,
+        "send",
+        json!({"recipient_id": "b".repeat(64), "ciphertext": "YWJj"}),
+    )
+    .await;
+    assert_eq!(small["status"], "ok");
+}
+
+// @internal
+#[tokio::test]
+async fn single_blob_delivery_bound_counts_the_entire_fetch_envelope() {
+    use common::http_helpers::{ohttp_decrypt, send_ohttp_action};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    for (hint, maximum_b64) in [
+        (None, 98_064),
+        (Some("\"".repeat(128)), 97_808),
+        (Some("\u{0001}".repeat(128)), 97_296),
+    ] {
+        let mut state = create_test_state_with_ohttp();
+        state.unix_clock = Arc::new(|| 1_793_300_000);
+        let storage = state.storage.clone();
+        let token = "a".repeat(64);
+        let app = create_v2_router(state);
+        let key = ohttp_key_bytes(&app).await;
+        let accepted = send_ohttp_action(
+            &app,
+            &key,
+            "send",
+            json!({
+                "recipient_id": token,
+                "ciphertext": "A".repeat(maximum_b64),
+                "origin_hint": hint,
+            }),
+        )
+        .await;
+        assert_eq!(accepted["status"], "ok");
+        assert_eq!(storage.blob_count_for(&token), 1);
+
+        let fetch = json!({"version": 2, "action": "fetch", "mailbox_tokens": [token]});
+        let (request, response_key) = ohttp_encrypt(&key, &fetch);
+        let response = post_ohttp_bytes(&app, request).await;
+        assert_eq!(response.status(), 200);
+        let response = axum::body::to_bytes(response.into_body(), 256 * KIB)
+            .await
+            .unwrap();
+        assert_eq!(response.len(), 96 * KIB + 48);
+        let fetched = ohttp_decrypt(response_key, &response);
+        assert_eq!(fetched["blobs"][0]["blob_id"], accepted["blob_id"]);
+        assert_eq!(fetched["blobs"][0]["ciphertext"], "A".repeat(maximum_b64));
+        assert_eq!(fetched["blobs"][0]["origin_hint"], json!(hint));
+
+        let rejected = send_ohttp_action(
+            &app,
+            &key,
+            "send",
+            json!({
+                "recipient_id": token,
+                "ciphertext": "A".repeat(maximum_b64 + 4),
+                "origin_hint": hint,
+            }),
+        )
+        .await;
+        assert_eq!(rejected["status"], "error");
+        assert_eq!(rejected["error"], "ciphertext exceeds fetch delivery limit");
+        assert_eq!(storage.blob_count_for(&token), 1);
+    }
+}
