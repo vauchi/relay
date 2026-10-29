@@ -976,14 +976,13 @@ fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
 /// encapsulation — and flag `truncated` so the client drains the rest across
 /// re-fetches. 96 KiB keeps ~32 KiB headroom under the 128 KiB cap.
 ///
-/// The page also has to fit the top fetch-ladder rung once wrapped in
-/// `{"status", "blobs", "truncated"}` and length-prefixed (private#603), so
-/// 512 bytes stay free for that.
-const MAX_FETCH_RESPONSE_BYTES: usize = crate::padding::FETCH_LADDER[2] - 512;
+/// Every fetch, including its JSON wrapper and length prefix, fits the top rung.
+const MAX_PADDED_FETCH_BYTES: usize = crate::padding::FETCH_LADDER[2];
+const FETCH_LENGTH_PREFIX_BYTES: usize = 4;
+const MAX_UNDELIVERABLE_DETAILS: usize = 2;
 
 #[tracing::instrument(level = "debug", skip_all, fields(token_count = req.mailbox_tokens.len()), name = "relay.fetch")]
 fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
-    // Rate-limit by first token (representative of the client session).
     if let Some(first) = req.mailbox_tokens.first()
         && !state.rate_limiter.consume(first)
     {
@@ -994,13 +993,15 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
     }
     let token_refs: Vec<&str> = req.mailbox_tokens.iter().map(String::as_str).collect();
     let blobs = state.storage.peek_many(&token_refs);
-    // Cap the page under the OHTTP forward limit and flag `truncated` so the
-    // client re-fetches the remainder after ACK-removing this page. Order is
-    // irrelevant to correctness: each fetch returns whatever still remains, so
-    // ACK-removal is the continuation cursor.
     let mut blob_data: Vec<serde_json::Value> = Vec::new();
-    let mut used_bytes = 0usize;
+    let mut used_bytes = fetch_response_json(Vec::new(), false)
+        .to_string()
+        .len()
+        .saturating_add(FETCH_LENGTH_PREFIX_BYTES);
+    let empty_page_bytes = used_bytes;
     let mut truncated = false;
+    let mut undeliverable_count = 0usize;
+    let mut undeliverable_details = Vec::new();
     let now = (state.unix_clock)();
     let ttl = state.blob_ttl.as_secs();
     for (token, blob) in blobs.iter().filter(|(_, blob)| {
@@ -1008,18 +1009,69 @@ fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
             .is_none_or(|age| age < ttl)
     }) {
         let entry = fetch_blob_json(token, blob);
-        // The wire length includes JSON escaping, especially in origin hints.
-        let entry_bytes = entry.to_string().len().saturating_add(1);
-        // Always emit at least one blob so an oversized single blob can still
-        // be drained; otherwise stop before the budget is exceeded.
-        if !blob_data.is_empty() && used_bytes + entry_bytes > MAX_FETCH_RESPONSE_BYTES {
-            truncated = true;
-            break;
+        let entry_bytes = entry.to_string().len();
+        if empty_page_bytes.saturating_add(entry_bytes) > MAX_PADDED_FETCH_BYTES {
+            undeliverable_count += 1;
+            if undeliverable_details.len() < MAX_UNDELIVERABLE_DETAILS {
+                undeliverable_details.push(serde_json::json!({
+                    "blob_id": blob.id,
+                    "mailbox_token": token,
+                    "reason": "exceeds_fetch_delivery_limit",
+                }));
+            }
+            continue;
         }
-        used_bytes += entry_bytes;
+        if truncated {
+            continue;
+        }
+        let separator_bytes = usize::from(!blob_data.is_empty());
+        let next_bytes = used_bytes
+            .saturating_add(entry_bytes)
+            .saturating_add(separator_bytes);
+        if next_bytes > MAX_PADDED_FETCH_BYTES {
+            truncated = true;
+            continue;
+        }
+        used_bytes = next_bytes;
         blob_data.push(entry);
     }
-    ApiResult::ok(fetch_response_json(blob_data, truncated))
+    let mut response = fetch_response_json(blob_data, truncated);
+    if undeliverable_count > 0 {
+        add_undeliverable_details(&mut response, undeliverable_count, undeliverable_details);
+    }
+    ApiResult::ok(response)
+}
+
+fn add_undeliverable_details(
+    response: &mut serde_json::Value,
+    count: usize,
+    details: Vec<serde_json::Value>,
+) {
+    response["undeliverable"] = serde_json::json!({
+        "count": count,
+        "details_truncated": count > details.len(),
+        "blobs": details,
+    });
+    while response
+        .to_string()
+        .len()
+        .saturating_add(FETCH_LENGTH_PREFIX_BYTES)
+        > MAX_PADDED_FETCH_BYTES
+    {
+        let blobs = response["blobs"]
+            .as_array_mut()
+            .expect("fetch blobs are an array");
+        if blobs.len() <= 1 {
+            // Deliver a full healthy blob first; its ACK leaves room for diagnostics next time.
+            response
+                .as_object_mut()
+                .expect("fetch response is an object")
+                .remove("undeliverable");
+            break;
+        }
+        blobs.pop();
+        response["truncated"] = serde_json::json!(true);
+    }
 }
 
 fn fetch_blob_json(token: &str, blob: &StoredBlob) -> serde_json::Value {

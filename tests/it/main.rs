@@ -37,6 +37,7 @@ mod ohttp_anchor_cli_tests;
 mod ohttp_anchor_install_tests;
 mod ohttp_anchor_rollover_cli_tests;
 mod ohttp_fetch_size_ladder_tests;
+mod ohttp_legacy_blob_tests;
 mod ohttp_self_anchor_tests;
 mod ohttp_signer_tests;
 mod ohttp_window_keys_tests;
