@@ -155,7 +155,7 @@ async fn the_store_rate_bucket_ignores_hex_case() {
 
 // @scenario: contact_recovery :: Relay keeps recovery proofs for nine days
 #[tokio::test]
-async fn a_stored_proof_is_kept_for_nine_days() {
+async fn a_stored_recovery_proof_is_dropped_after_nine_days() {
     let app = create_v2_router(create_test_state());
     assert_eq!(
         store(&app, &recovery_upload(OLD, ALICE, b"")).await,
