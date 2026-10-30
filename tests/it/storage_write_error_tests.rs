@@ -36,10 +36,14 @@ fn a_recovery_proof_that_is_not_written_is_reported() {
     let store = SqliteRecoveryProofStore::open(&db).unwrap();
     reject_inserts(&db, "recovery_proofs");
 
-    let result = store.store(StoredRecoveryProof::new([7; 32], b"proof".to_vec()));
+    let result = store.store(StoredRecoveryProof::new(
+        [7; 32],
+        b"proof".to_vec(),
+        [0xA1; 32],
+    ));
 
     assert!(result.is_err());
-    assert!(store.get(&[7; 32]).is_none());
+    assert!(store.get(&[7; 32]).is_empty());
 }
 
 // @internal
@@ -69,10 +73,7 @@ async fn the_recovery_store_endpoint_answers_500_without_internal_detail() {
     let resp = post_json(
         &app,
         "/v2/recovery/store",
-        &json!({
-            "key_hash": "aa".repeat(32),
-            "proof_data": base64::engine::general_purpose::STANDARD.encode(b"proof"),
-        }),
+        &crate::common::recovery_helpers::recovery_upload(0x0A, 0xA1, b"proof"),
     )
     .await;
 

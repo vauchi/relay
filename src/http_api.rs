@@ -1195,19 +1195,19 @@ fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest
         ));
     }
 
-    let rate_key = format!("recovery:{}", &req.key_hash);
+    let rate_key = format!("recovery:{}", req.key_hash.to_ascii_lowercase());
     if !state.recovery_rate_limiter.consume(&rate_key) {
         return ApiResult::RateLimited;
     }
 
-    let key_hash = hex_to_32bytes(&req.key_hash);
-    let key_hash = match key_hash {
+    let key_hash = match hex_to_32bytes(&req.key_hash) {
         Some(h) => h,
         None => return ApiResult::bad_request("invalid key_hash hex"),
     };
 
+    // Only the proof's new key may hold a slot (vauchi/private#927), so an
+    // unsigned upload has no one to bind it to.
     let owner = match (&req.owner_pk, req.timestamp, &req.signature) {
-        (None, None, None) => None,
         (Some(owner_pk), Some(timestamp), Some(signature)) => {
             match crate::handler::verify::verify_recovery_owner_ed25519(
                 owner_pk,
@@ -1216,9 +1216,14 @@ fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest
                 timestamp,
                 signature,
             ) {
-                Ok(owner) => Some(owner),
+                Ok(owner) => owner,
                 Err(e) => return ApiResult::unauthorized(e),
             }
+        }
+        (None, None, None) => {
+            return ApiResult::unauthorized(
+                "recovery proof upload must be signed by the proof's new key",
+            );
         }
         _ => {
             return ApiResult::bad_request(
@@ -1227,15 +1232,21 @@ fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest
         }
     };
 
-    let mut proof = crate::recovery_storage::StoredRecoveryProof::new(key_hash, proof_bytes);
-    if let Some(owner) = owner {
-        proof = proof.owned_by(owner);
+    let header = match crate::recovery_proof_header::RecoveryProofHeader::parse(&proof_bytes) {
+        Ok(header) => header,
+        Err(e) => return ApiResult::bad_request(e.to_string()),
+    };
+    if header.key_hash() != key_hash {
+        return ApiResult::bad_request("proof is not for key_hash");
     }
-    match state.recovery_storage.store_unless_owned_by_another(proof) {
-        Ok(true) => {}
-        Ok(false) => {
-            return ApiResult::unauthorized("recovery proof is owned by another key");
-        }
+    if header.new_pk != owner {
+        return ApiResult::unauthorized("owner_pk is not the proof's new key");
+    }
+
+    let proof = crate::recovery_storage::StoredRecoveryProof::new(key_hash, proof_bytes, owner);
+    match state.recovery_storage.store_in_free_slot(proof) {
+        Ok(crate::recovery_storage::SlotOutcome::Stored) => {}
+        Ok(crate::recovery_storage::SlotOutcome::Full) => return ApiResult::QuotaExceeded,
         Err(e) => {
             tracing::error!("recovery proof not stored: {e}");
             return ApiResult::StorageFailed;
@@ -1276,7 +1287,7 @@ fn handle_recovery_query_logic(state: &HttpApiState, req: V2RecoveryQueryRequest
     let results = state.recovery_storage.batch_get(&key_hashes);
 
     let proofs: Vec<serde_json::Value> = results
-        .into_values()
+        .into_iter()
         .map(|p| {
             let key_hex: String = p.key_hash.iter().map(|b| format!("{:02x}", b)).collect();
             serde_json::json!({

@@ -6,10 +6,14 @@
 
 use crate::common;
 
-use base64::Engine;
 use common::http_helpers::*;
+use common::recovery_helpers::*;
 use serde_json::json;
 use vauchi_relay::http_api::create_v2_router;
+
+const OLD: u8 = 0xAA;
+const OTHER_OLD: u8 = 0xBB;
+const ALICE: u8 = 0xA1;
 
 // ── Store ──────────────────────────────────────────────────────────
 
@@ -18,40 +22,22 @@ use vauchi_relay::http_api::create_v2_router;
 // @scenario: contact_recovery :: Relay returns recovery proof on query
 #[tokio::test]
 async fn test_recovery_store_and_query_roundtrip() {
-    let state = create_test_state();
-    let app = create_v2_router(state);
+    let app = create_v2_router(create_test_state());
+    let proof = proof_bytes(OLD, ALICE, b"recovery-proof-bytes");
 
-    let key_hash = "aa".repeat(32); // 64 hex chars = 32 bytes
-    let proof_data = base64::engine::general_purpose::STANDARD.encode(b"recovery-proof-bytes");
-
-    // Store a proof
     let resp = post_json(
         &app,
         "/v2/recovery/store",
-        &json!({ "key_hash": key_hash, "proof_data": proof_data }),
+        &recovery_upload(OLD, ALICE, b"recovery-proof-bytes"),
     )
     .await;
     assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
-    assert_eq!(body["status"], "ok");
+    assert_eq!(response_json(resp).await["status"], "ok");
 
-    // Query it back
-    let resp = post_json(
-        &app,
-        "/v2/recovery/query",
-        &json!({ "key_hashes": [key_hash] }),
-    )
-    .await;
-    assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
-    assert_eq!(body["status"], "ok");
-
-    let proofs = body["proofs"]
-        .as_array()
-        .expect("proofs should be an array");
+    let proofs = query(&app, &[key_hash_hex(OLD)]).await;
     assert_eq!(proofs.len(), 1);
-    assert_eq!(proofs[0]["key_hash"], key_hash);
-    assert_eq!(proofs[0]["proof_data"], proof_data);
+    assert_eq!(proofs[0]["key_hash"], key_hash_hex(OLD));
+    assert_eq!(proof_data_of(&proofs[0]), proof);
     assert!(proofs[0]["created_at"].as_u64().unwrap() > 0);
     assert!(proofs[0]["expires_at"].as_u64().unwrap() > proofs[0]["created_at"].as_u64().unwrap());
 }
@@ -59,8 +45,7 @@ async fn test_recovery_store_and_query_roundtrip() {
 // @scenario: recovery :: query nonexistent returns empty
 #[tokio::test]
 async fn test_recovery_query_nonexistent_returns_empty() {
-    let state = create_test_state();
-    let app = create_v2_router(state);
+    let app = create_v2_router(create_test_state());
 
     let resp = post_json(
         &app,
@@ -71,59 +56,32 @@ async fn test_recovery_query_nonexistent_returns_empty() {
     assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
     assert_eq!(body["status"], "ok");
-
-    let proofs = body["proofs"]
-        .as_array()
-        .expect("proofs should be an array");
-    assert!(proofs.is_empty());
+    assert!(body["proofs"].as_array().unwrap().is_empty());
 }
 
 // @scenario: recovery :: store overwrites existing proof
 #[tokio::test]
 async fn test_recovery_store_overwrites_existing() {
-    let state = create_test_state();
-    let app = create_v2_router(state);
+    let app = create_v2_router(create_test_state());
 
-    let key_hash = "cc".repeat(32);
-    let proof_v1 = base64::engine::general_purpose::STANDARD.encode(b"version-1");
-    let proof_v2 = base64::engine::general_purpose::STANDARD.encode(b"version-2");
+    let v1 = store(&app, &recovery_upload(OLD, ALICE, b"version-1")).await;
+    let v2 = store(&app, &recovery_upload(OLD, ALICE, b"version-2")).await;
 
-    // Store v1
-    post_json(
-        &app,
-        "/v2/recovery/store",
-        &json!({ "key_hash": key_hash, "proof_data": proof_v1 }),
-    )
-    .await;
-
-    // Store v2 (overwrite)
-    post_json(
-        &app,
-        "/v2/recovery/store",
-        &json!({ "key_hash": key_hash, "proof_data": proof_v2 }),
-    )
-    .await;
-
-    // Query should return v2
-    let resp = post_json(
-        &app,
-        "/v2/recovery/query",
-        &json!({ "key_hashes": [key_hash] }),
-    )
-    .await;
-    let body = response_json(resp).await;
-    let proofs = body["proofs"].as_array().unwrap();
-    assert_eq!(proofs.len(), 1);
-    assert_eq!(proofs[0]["proof_data"], proof_v2);
+    assert_eq!(v1, 200);
+    assert_eq!(v2, 200);
+    let proofs = query(&app, &[key_hash_hex(OLD)]).await;
+    assert_eq!(proofs.len(), 1, "the same owner replaces its own proof");
+    assert_eq!(
+        proof_data_of(&proofs[0]),
+        proof_bytes(OLD, ALICE, b"version-2")
+    );
 }
 
 // @scenario: recovery :: store rejects invalid key hash
 #[tokio::test]
 async fn test_recovery_store_rejects_invalid_key_hash() {
-    let state = create_test_state();
-    let app = create_v2_router(state);
+    let app = create_v2_router(create_test_state());
 
-    // Too short
     let resp = post_json(
         &app,
         "/v2/recovery/store",
@@ -136,28 +94,19 @@ async fn test_recovery_store_rejects_invalid_key_hash() {
 // @scenario: recovery :: store rejects oversized proof data
 #[tokio::test]
 async fn test_recovery_store_rejects_oversized_proof() {
-    let state = create_test_state();
-    let app = create_v2_router(state);
+    let app = create_v2_router(create_test_state());
+    // 4097 bytes exceeds the 4 KiB limit
+    let oversized = proof_bytes(OLD, ALICE, &vec![0u8; 4097 - 65]);
+    let upload = signed_upload_of(ALICE, &key_hash_hex(OLD), &oversized, unix_now());
 
-    let key_hash = "dd".repeat(32);
-    // 4097 bytes exceeds 4 KiB limit
-    let oversized = base64::engine::general_purpose::STANDARD.encode(vec![0u8; 4097]);
-
-    let resp = post_json(
-        &app,
-        "/v2/recovery/store",
-        &json!({ "key_hash": key_hash, "proof_data": oversized }),
-    )
-    .await;
-    assert_eq!(resp.status(), 400);
+    assert_eq!(store(&app, &upload).await, 400);
+    assert!(query(&app, &[key_hash_hex(OLD)]).await.is_empty());
 }
 
 // @scenario: recovery :: query rejects too many hashes
 #[tokio::test]
 async fn test_recovery_query_rejects_too_many_hashes() {
-    let state = create_test_state();
-    let app = create_v2_router(state);
-
+    let app = create_v2_router(create_test_state());
     // 51 hashes exceeds limit of 50
     let hashes: Vec<String> = (0..51).map(|i| format!("{:064x}", i)).collect();
 
@@ -168,39 +117,30 @@ async fn test_recovery_query_rejects_too_many_hashes() {
 // @scenario: recovery :: query returns partial results for mixed hits
 #[tokio::test]
 async fn test_recovery_query_batch_returns_partial_results() {
-    let state = create_test_state();
-    let app = create_v2_router(state);
+    let app = create_v2_router(create_test_state());
+    assert_eq!(
+        store(&app, &recovery_upload(OLD, ALICE, b"proof-1")).await,
+        200
+    );
+    assert_eq!(
+        store(&app, &recovery_upload(OTHER_OLD, ALICE, b"proof-2")).await,
+        200
+    );
 
-    let key1 = "11".repeat(32);
-    let key2 = "22".repeat(32);
-    let key3 = "33".repeat(32); // Not stored
-
-    let proof1 = base64::engine::general_purpose::STANDARD.encode(b"proof-1");
-    let proof2 = base64::engine::general_purpose::STANDARD.encode(b"proof-2");
-
-    post_json(
+    let proofs = query(
         &app,
-        "/v2/recovery/store",
-        &json!({ "key_hash": key1, "proof_data": proof1 }),
-    )
-    .await;
-    post_json(
-        &app,
-        "/v2/recovery/store",
-        &json!({ "key_hash": key2, "proof_data": proof2 }),
+        &[key_hash_hex(OLD), key_hash_hex(OTHER_OLD), "33".repeat(32)],
     )
     .await;
 
-    // Query all three — should return only 2
-    let resp = post_json(
-        &app,
-        "/v2/recovery/query",
-        &json!({ "key_hashes": [key1, key2, key3] }),
-    )
-    .await;
-    let body = response_json(resp).await;
-    let proofs = body["proofs"].as_array().unwrap();
-    assert_eq!(proofs.len(), 2);
+    let mut hashes: Vec<String> = proofs
+        .iter()
+        .map(|p| p["key_hash"].as_str().unwrap().to_string())
+        .collect();
+    hashes.sort();
+    let mut expected = vec![key_hash_hex(OLD), key_hash_hex(OTHER_OLD)];
+    expected.sort();
+    assert_eq!(hashes, expected);
 }
 
 // @scenario: recovery :: store is rate limited
@@ -211,28 +151,13 @@ async fn test_recovery_store_rate_limited() {
     // throttles recovery (vauchi/private#289).
     state.recovery_rate_limiter =
         std::sync::Arc::new(vauchi_relay::rate_limit::RateLimiter::new(1));
-
     let app = create_v2_router(state);
-    let key_hash = "ee".repeat(32);
-    let proof = base64::engine::general_purpose::STANDARD.encode(b"proof");
 
-    // First request succeeds
-    let resp = post_json(
-        &app,
-        "/v2/recovery/store",
-        &json!({ "key_hash": key_hash, "proof_data": proof }),
-    )
-    .await;
-    assert_eq!(resp.status(), 200);
+    let first = store(&app, &recovery_upload(OLD, ALICE, b"proof")).await;
+    let second = store(&app, &recovery_upload(OLD, ALICE, b"proof")).await;
 
-    // Second request hits rate limit
-    let resp = post_json(
-        &app,
-        "/v2/recovery/store",
-        &json!({ "key_hash": key_hash, "proof_data": proof }),
-    )
-    .await;
-    assert_eq!(resp.status(), 429);
+    assert_eq!(first, 200);
+    assert_eq!(second, 429);
 }
 
 // @scenario: recovery :: query is rate limited per key hash
@@ -290,16 +215,14 @@ async fn test_recovery_query_limit_is_independent_per_key_hash() {
 #[tokio::test]
 async fn test_recovery_store_accepts_proof_of_exactly_the_size_limit() {
     let app = create_v2_router(create_test_state());
-    let at_limit = base64::engine::general_purpose::STANDARD.encode(vec![0u8; 4096]);
+    let at_limit = proof_bytes(OLD, ALICE, &vec![0u8; 4096 - 65]);
+    let upload = signed_upload_of(ALICE, &key_hash_hex(OLD), &at_limit, unix_now());
 
-    let resp = post_json(
-        &app,
-        "/v2/recovery/store",
-        &json!({ "key_hash": "e1".repeat(32), "proof_data": at_limit }),
-    )
-    .await;
-
-    assert_eq!(resp.status(), 200);
+    assert_eq!(store(&app, &upload).await, 200);
+    assert_eq!(
+        proof_data_of(&query(&app, &[key_hash_hex(OLD)]).await[0]),
+        at_limit
+    );
 }
 
 // @internal

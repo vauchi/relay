@@ -103,11 +103,11 @@ fn sweep_recovery_proofs_takes_expired_proofs_off_the_active_gauge() {
     store
         .store(StoredRecoveryProof {
             expires_at_secs: unix_now() - 100,
-            ..StoredRecoveryProof::new([1; 32], vec![1, 2, 3])
+            ..StoredRecoveryProof::new([1; 32], vec![1, 2, 3], [0xA1; 32])
         })
         .unwrap();
     store
-        .store(StoredRecoveryProof::new([2; 32], vec![1, 2, 3]))
+        .store(StoredRecoveryProof::new([2; 32], vec![1, 2, 3], [0xA1; 32]))
         .unwrap();
     let metrics = RelayMetrics::new();
     metrics.recovery_proofs_active.set(2);
@@ -115,7 +115,7 @@ fn sweep_recovery_proofs_takes_expired_proofs_off_the_active_gauge() {
     let removed = maintenance::sweep_recovery_proofs(&store, &metrics);
 
     assert_eq!(removed, 1);
-    assert!(store.get(&[2; 32]).is_some());
+    assert_eq!(store.get(&[2; 32]).len(), 1);
     assert_eq!(
         metric_line(&metrics, "relay_recovery_proofs_active"),
         "relay_recovery_proofs_active 1"

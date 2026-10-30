@@ -33,6 +33,7 @@ pub mod ohttp_window_keys;
 pub mod padding;
 pub mod peer_registry;
 pub mod rate_limit;
+pub mod recovery_proof_header;
 pub mod recovery_storage;
 pub mod startup;
 pub mod storage;

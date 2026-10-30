@@ -3,71 +3,30 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! A purge erases the recovery proofs its identity uploaded, and on "erase
-//! everything" its guardian set (vauchi/private#711, plan D1-D3).
+//! everything" its guardian set (vauchi/private#711, plan D1-D3). Every
+//! proof has an owner, its new key, since vauchi/private#927.
 
 use crate::common;
-use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
 use axum::http::StatusCode;
 use base64::Engine;
 use common::http_helpers::{create_test_state, post_json, signed_purge_json_by};
+use common::recovery_helpers::*;
 use serde_json::{Value, json};
 use vauchi_relay::guardian_storage::StoredGuardianSet;
 use vauchi_relay::http_api::{HttpApiState, create_v2_router};
 
 const ALICE: u8 = 0xA1;
 const MALLORY: u8 = 0xEE;
-const PROOF: &[u8] = b"alice-recovery-proof";
-
-fn keypair(seed_byte: u8) -> Ed25519KeyPair {
-    Ed25519KeyPair::from_seed_unchecked(&[seed_byte; 32]).unwrap()
-}
-
-fn public_key(seed_byte: u8) -> Vec<u8> {
-    keypair(seed_byte).public_key().as_ref().to_vec()
-}
-
-fn sha256(parts: &[&[u8]]) -> [u8; 32] {
-    let mut ctx = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
-    for part in parts {
-        ctx.update(part);
-    }
-    ctx.finish().as_ref().try_into().unwrap()
-}
-
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-fn unowned_upload(key_hash: &[u8; 32]) -> Value {
-    json!({
-        "key_hash": hex::encode(key_hash),
-        "proof_data": base64::engine::general_purpose::STANDARD.encode(PROOF),
-    })
-}
-
-/// A proof upload signed by `owner` over
-/// `"recovery-store" || key_hash || SHA-256(proof) || timestamp_be`.
-fn owned_upload(owner: u8, key_hash: &[u8; 32], timestamp: u64) -> Value {
-    let mut message = b"recovery-store".to_vec();
-    message.extend_from_slice(key_hash);
-    message.extend_from_slice(&sha256(&[PROOF]));
-    message.extend_from_slice(&timestamp.to_be_bytes());
-    let mut body = unowned_upload(key_hash);
-    body["owner_pk"] = json!(hex::encode(public_key(owner)));
-    body["timestamp"] = json!(timestamp);
-    body["signature"] = json!(hex::encode(keypair(owner).sign(&message).as_ref()));
-    body
-}
+const OLD_1: u8 = 0x01;
+const OLD_2: u8 = 0x02;
+const OLD_3: u8 = 0x03;
 
 /// A purge by `owner` asking to erase its guardian set, the flag covered by
 /// the signature as `... || timestamp_be || "erase-guardian-set"`.
 fn erase_everything_purge(owner: u8, recipient_id: &str) -> Value {
     let mut body = signed_purge_json_by(owner, recipient_id);
     let timestamp = body["timestamp"].as_u64().unwrap();
-    let mut message = public_key(owner);
+    let mut message = public_key(owner).to_vec();
     message.extend_from_slice(&hex::decode(recipient_id).unwrap());
     message.extend_from_slice(&timestamp.to_be_bytes());
     message.extend_from_slice(b"erase-guardian-set");
@@ -100,14 +59,11 @@ async fn a_purge_erases_every_recovery_proof_its_identity_uploaded() {
     let state = create_test_state();
     let proofs = state.recovery_storage.clone();
     let app = create_v2_router(state);
-    for key_hash in [[1; 32], [2; 32]] {
-        let upload = post_json(
-            &app,
-            "/v2/recovery/store",
-            &owned_upload(ALICE, &key_hash, now()),
-        )
-        .await;
-        assert_eq!(upload.status(), StatusCode::OK);
+    for old in [OLD_1, OLD_2] {
+        assert_eq!(
+            store(&app, &recovery_upload(old, ALICE, b"")).await,
+            StatusCode::OK
+        );
     }
 
     let purge = post_json(
@@ -118,25 +74,24 @@ async fn a_purge_erases_every_recovery_proof_its_identity_uploaded() {
     .await;
 
     assert_eq!(purge.status(), StatusCode::OK);
-    assert!(proofs.get(&[1; 32]).is_none());
-    assert!(proofs.get(&[2; 32]).is_none());
+    assert!(proofs.get(&key_hash(OLD_1)).is_empty());
+    assert!(proofs.get(&key_hash(OLD_2)).is_empty());
 }
 
 // @scenario: privacy_compliance:The relay erases my recovery data on purge
 #[tokio::test]
-async fn a_purge_keeps_proofs_another_identity_or_no_one_owns() {
+async fn a_purge_keeps_proofs_another_identity_owns() {
     let state = create_test_state();
     let proofs = state.recovery_storage.clone();
     let app = create_v2_router(state);
-    let theirs = post_json(
-        &app,
-        "/v2/recovery/store",
-        &owned_upload(MALLORY, &[3; 32], now()),
-    )
-    .await;
-    let unowned = post_json(&app, "/v2/recovery/store", &unowned_upload(&[4; 32])).await;
-    assert_eq!(theirs.status(), StatusCode::OK);
-    assert_eq!(unowned.status(), StatusCode::OK);
+    assert_eq!(
+        store(&app, &recovery_upload(OLD_3, MALLORY, b"m")).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        store(&app, &recovery_upload(OLD_3, ALICE, b"a")).await,
+        StatusCode::OK
+    );
 
     let purge = post_json(
         &app,
@@ -146,8 +101,12 @@ async fn a_purge_keeps_proofs_another_identity_or_no_one_owns() {
     .await;
 
     assert_eq!(purge.status(), StatusCode::OK);
-    assert_eq!(proofs.get(&[3; 32]).unwrap().proof_data, PROOF);
-    assert_eq!(proofs.get(&[4; 32]).unwrap().proof_data, PROOF);
+    let kept: Vec<Vec<u8>> = proofs
+        .get(&key_hash(OLD_3))
+        .into_iter()
+        .map(|p| p.proof_data)
+        .collect();
+    assert_eq!(kept, vec![proof_bytes(OLD_3, MALLORY, b"m")]);
 }
 
 // @scenario: privacy_compliance:The relay erases my recovery data on purge
@@ -221,22 +180,21 @@ async fn an_upload_whose_owner_signature_does_not_verify_is_not_stored() {
     let state = create_test_state();
     let proofs = state.recovery_storage.clone();
     let app = create_v2_router(state);
-    let mut claims_alice = owned_upload(MALLORY, &[5; 32], now());
-    claims_alice["owner_pk"] = json!(hex::encode(public_key(ALICE)));
-    let mut stale = owned_upload(ALICE, &[6; 32], now() - 3600);
-    stale["timestamp"] = json!(now() - 3600);
-    let mut other_proof = owned_upload(ALICE, &[7; 32], now());
-    other_proof["proof_data"] = json!(base64::engine::general_purpose::STANDARD.encode(b"swapped"));
+    let proof = proof_bytes(OLD_1, ALICE, b"");
+    let slot = key_hash_hex(OLD_1);
+    let mut signed_by_mallory = signed_upload_of(MALLORY, &slot, &proof, unix_now());
+    signed_by_mallory["owner_pk"] = json!(hex::encode(public_key(ALICE)));
+    let stale = signed_upload_of(ALICE, &slot, &proof, unix_now() - 3600);
+    let mut other_proof = signed_upload_of(ALICE, &slot, &proof, unix_now());
+    other_proof["proof_data"] = json!(
+        base64::engine::general_purpose::STANDARD.encode(proof_bytes(OLD_1, ALICE, b"swapped"))
+    );
 
-    for (body, key_hash) in [
-        (claims_alice, [5; 32]),
-        (stale, [6; 32]),
-        (other_proof, [7; 32]),
-    ] {
+    for body in [signed_by_mallory, stale, other_proof] {
         let response = post_json(&app, "/v2/recovery/store", &body).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        assert!(proofs.get(&key_hash).is_none());
     }
+    assert!(proofs.get(&key_hash(OLD_1)).is_empty());
 }
 
 // @internal
@@ -245,7 +203,7 @@ async fn an_upload_with_only_some_owner_fields_is_rejected() {
     let state = create_test_state();
     let proofs = state.recovery_storage.clone();
     let app = create_v2_router(state);
-    let full = owned_upload(ALICE, &[8; 32], now());
+    let full = recovery_upload(OLD_1, ALICE, b"");
 
     for missing in ["owner_pk", "timestamp", "signature"] {
         let mut body = full.clone();
@@ -257,104 +215,43 @@ async fn an_upload_with_only_some_owner_fields_is_rejected() {
             "without {missing}"
         );
     }
-    assert!(proofs.get(&[8; 32]).is_none());
+    assert!(proofs.get(&key_hash(OLD_1)).is_empty());
 }
 
-fn upload_with_proof(body: Value, proof: &[u8]) -> Value {
-    let mut body = body;
-    body["proof_data"] = json!(base64::engine::general_purpose::STANDARD.encode(proof));
-    body
-}
-
-/// An upload of `proof` signed by `owner`.
-fn owned_upload_of(owner: u8, key_hash: &[u8; 32], proof: &[u8]) -> Value {
-    let timestamp = now();
-    let mut message = b"recovery-store".to_vec();
-    message.extend_from_slice(key_hash);
-    message.extend_from_slice(&sha256(&[proof]));
-    message.extend_from_slice(&timestamp.to_be_bytes());
-    let mut body = upload_with_proof(unowned_upload(key_hash), proof);
-    body["owner_pk"] = json!(hex::encode(public_key(owner)));
-    body["timestamp"] = json!(timestamp);
-    body["signature"] = json!(hex::encode(keypair(owner).sign(&message).as_ref()));
-    body
-}
-
-// Owner-locked proofs (vauchi/private#738, owner decision 2026-10-21): a
-// replacement of an owned proof must be signed by the same owner, or it
-// could strip the owner and outlive the owner's purge.
+// Owner-locked proofs (vauchi/private#738, #927): another owner's upload
+// sits beside mine and never replaces it; only I replace my own.
 // @internal
 #[tokio::test]
-async fn only_its_owner_can_replace_an_owned_proof() {
+async fn another_owner_sits_beside_my_proof_and_only_i_replace_mine() {
     let state = create_test_state();
     let proofs = state.recovery_storage.clone();
     let app = create_v2_router(state);
-    let key_hash = [9; 32];
-    let first = post_json(
-        &app,
-        "/v2/recovery/store",
-        &owned_upload(ALICE, &key_hash, now()),
-    )
-    .await;
-    assert_eq!(first.status(), StatusCode::OK);
+    let by_owner = |rows: Vec<vauchi_relay::recovery_storage::StoredRecoveryProof>| {
+        let mut rows: Vec<([u8; 32], Vec<u8>)> = rows
+            .into_iter()
+            .map(|p| (p.owner_pk, p.proof_data))
+            .collect();
+        rows.sort();
+        rows
+    };
 
-    let by_mallory = post_json(
-        &app,
-        "/v2/recovery/store",
-        &owned_upload_of(MALLORY, &key_hash, b"m"),
-    )
-    .await;
-    let unowned = post_json(
-        &app,
-        "/v2/recovery/store",
-        &upload_with_proof(unowned_upload(&key_hash), b"u"),
-    )
-    .await;
-
-    assert_eq!(by_mallory.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(unowned.status(), StatusCode::UNAUTHORIZED);
-    let kept = proofs.get(&key_hash).unwrap();
-    assert_eq!(kept.proof_data, PROOF);
-    assert_eq!(kept.owner_pk, Some(public_key(ALICE).try_into().unwrap()));
-
-    let by_alice = post_json(
-        &app,
-        "/v2/recovery/store",
-        &owned_upload_of(ALICE, &key_hash, b"a2"),
-    )
-    .await;
-
-    assert_eq!(by_alice.status(), StatusCode::OK);
-    assert_eq!(proofs.get(&key_hash).unwrap().proof_data, b"a2");
-}
-
-// Unowned proofs from clients before #711 keep last-write-wins, and a signed
-// upload may claim one.
-// @internal
-#[tokio::test]
-async fn unowned_proofs_stay_replaceable() {
-    let state = create_test_state();
-    let proofs = state.recovery_storage.clone();
-    let app = create_v2_router(state);
-    let key_hash = [10; 32];
-    let legacy = |proof: &[u8]| upload_with_proof(unowned_upload(&key_hash), proof);
-
-    let first = post_json(&app, "/v2/recovery/store", &legacy(b"old")).await;
-    let second = post_json(&app, "/v2/recovery/store", &legacy(b"new")).await;
-    assert_eq!(first.status(), StatusCode::OK);
-    assert_eq!(second.status(), StatusCode::OK);
-    assert_eq!(proofs.get(&key_hash).unwrap().proof_data, b"new");
-
-    let claimed = post_json(
-        &app,
-        "/v2/recovery/store",
-        &owned_upload_of(ALICE, &key_hash, b"a"),
-    )
-    .await;
-
-    assert_eq!(claimed.status(), StatusCode::OK);
     assert_eq!(
-        proofs.get(&key_hash).unwrap().owner_pk,
-        Some(public_key(ALICE).try_into().unwrap())
+        store(&app, &recovery_upload(OLD_1, ALICE, b"a1")).await,
+        StatusCode::OK
     );
+    assert_eq!(
+        store(&app, &recovery_upload(OLD_1, MALLORY, b"m")).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        store(&app, &recovery_upload(OLD_1, ALICE, b"a2")).await,
+        StatusCode::OK
+    );
+
+    let mut expected = vec![
+        (public_key(ALICE), proof_bytes(OLD_1, ALICE, b"a2")),
+        (public_key(MALLORY), proof_bytes(OLD_1, MALLORY, b"m")),
+    ];
+    expected.sort();
+    assert_eq!(by_owner(proofs.get(&key_hash(OLD_1))), expected);
 }
