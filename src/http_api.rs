@@ -923,11 +923,15 @@ fn verify_guardian_signature(
 
 #[tracing::instrument(level = "debug", skip_all, fields(ct_b64_len = req.ciphertext.len()), name = "relay.send")]
 fn handle_send_logic(state: &HttpApiState, req: V2SendRequest) -> ApiResult {
+    let Some(recipient_id) = crate::handler::normalized_client_id(&req.recipient_id) else {
+        return ApiResult::bad_request("recipient_id must be 64 hex characters");
+    };
+    let req = V2SendRequest {
+        recipient_id,
+        ..req
+    };
     if !state.rate_limiter.consume(&req.recipient_id) {
         return ApiResult::RateLimited;
-    }
-    if !crate::handler::validate_client_id(&req.recipient_id) {
-        return ApiResult::bad_request("recipient_id must be 64 hex characters");
     }
     let ciphertext = match base64::engine::general_purpose::STANDARD.decode(&req.ciphertext) {
         Ok(d) => d,
@@ -983,6 +987,13 @@ const MAX_UNDELIVERABLE_DETAILS: usize = 2;
 
 #[tracing::instrument(level = "debug", skip_all, fields(token_count = req.mailbox_tokens.len()), name = "relay.fetch")]
 fn handle_fetch_logic(state: &HttpApiState, req: V2FetchRequest) -> ApiResult {
+    let req = V2FetchRequest {
+        mailbox_tokens: req
+            .mailbox_tokens
+            .iter()
+            .map(|token| token.to_ascii_lowercase())
+            .collect(),
+    };
     if let Some(first) = req.mailbox_tokens.first()
         && !state.rate_limiter.consume(first)
     {
@@ -1090,10 +1101,11 @@ fn fetch_response_json(blobs: Vec<serde_json::Value>, truncated: bool) -> serde_
 
 #[tracing::instrument(level = "debug", skip_all, name = "relay.ack")]
 fn handle_ack_logic(state: &HttpApiState, req: V2AckRequest) -> ApiResult {
-    if !state.rate_limiter.consume(&req.recipient_id) {
+    let recipient_id = req.recipient_id.to_ascii_lowercase();
+    if !state.rate_limiter.consume(&recipient_id) {
         return ApiResult::RateLimited;
     }
-    let removed = state.storage.acknowledge(&req.recipient_id, &req.blob_id);
+    let removed = state.storage.acknowledge(&recipient_id, &req.blob_id);
     if removed {
         state
             .metrics
@@ -1150,11 +1162,14 @@ fn handle_purge_logic(state: &HttpApiState, req: V2PurgeRequest) -> ApiResult {
         Ok(pk) => pk,
         Err(e) => return ApiResult::unauthorized(e),
     };
-    if !state.rate_limiter.consume(&req.recipient_id) {
+    // The mailbox is the signing key's own; the body's `recipient_id` let
+    // any key pair empty any mailbox whose token it held (#944).
+    let mailbox = hex::encode(&public_key);
+    if !state.rate_limiter.consume(&mailbox) {
         return ApiResult::RateLimited;
     }
-    let deleted = state.storage.delete_all_for(&req.recipient_id);
-    state.forwarding_hints.delete_all_for(&req.recipient_id);
+    let deleted = state.storage.delete_all_for(&mailbox);
+    state.forwarding_hints.delete_all_for(&mailbox);
     if let Ok(owner) = <[u8; 32]>::try_from(public_key.as_slice()) {
         state.recovery_storage.delete_owned_by(&owner);
         if req.erase_guardian_set {

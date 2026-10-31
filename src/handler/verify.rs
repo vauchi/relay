@@ -62,11 +62,20 @@ pub(crate) fn verify_purge_ed25519(
         message.extend_from_slice(ERASE_GUARDIAN_SET_DOMAIN);
     }
 
-    let public_key =
-        aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, pk_bytes);
-    public_key
-        .verify(&message, sig_bytes)
+    verify_strict_ed25519(pk_bytes, &message, sig_bytes)
         .map_err(|_| "invalid purge signature".to_string())
+}
+
+/// Every signature the relay checks goes through dalek's `verify_strict`,
+/// as Core's do: aws-lc's verifier accepted the identity point as a key
+/// with `S = 0` for any message (#944).
+fn verify_strict_ed25519(pk_bytes: &[u8], message: &[u8], sig_bytes: &[u8]) -> Result<(), ()> {
+    let pk: [u8; 32] = pk_bytes.try_into().map_err(|_| ())?;
+    let sig = ed25519_dalek::Signature::from_slice(sig_bytes).map_err(|_| ())?;
+    ed25519_dalek::VerifyingKey::from_bytes(&pk)
+        .map_err(|_| ())?
+        .verify_strict(message, &sig)
+        .map_err(|_| ())
 }
 
 /// Domain string binding a designator key to its guardian-set hash.
@@ -141,10 +150,7 @@ pub(crate) fn verify_guardian_ed25519(
     message.extend_from_slice(&hash_bytes);
     message.extend_from_slice(&timestamp.to_be_bytes());
 
-    let public_key =
-        aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, &pk_bytes);
-    public_key
-        .verify(&message, &sig_bytes)
+    verify_strict_ed25519(&pk_bytes, &message, &sig_bytes)
         .map_err(|_| "invalid guardian signature".to_string())?;
 
     let mut hash_arr = [0u8; 32];
@@ -209,8 +215,7 @@ pub(crate) fn verify_recovery_owner_ed25519(
     message.extend_from_slice(proof_hash.as_ref());
     message.extend_from_slice(&timestamp.to_be_bytes());
 
-    aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, &owner)
-        .verify(&message, &sig_bytes)
+    verify_strict_ed25519(&owner, &message, &sig_bytes)
         .map_err(|_| "invalid recovery owner signature".to_string())?;
     Ok(owner)
 }
