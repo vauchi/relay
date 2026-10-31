@@ -140,14 +140,22 @@ pub async fn response_json_large(response: Response) -> serde_json::Value {
     serde_json::from_slice(&body_bytes).unwrap()
 }
 
-/// A `/v2/purge` body for `recipient_id`, signed by the all-zero seed key.
-pub fn signed_purge_json(recipient_id: &str) -> serde_json::Value {
-    signed_purge_json_by(0, recipient_id)
+/// The mailbox a purge empties: the hex of the signing key whose seed is 32
+/// bytes of `seed_byte`, since a purge names no mailbox of its own (#944).
+pub fn purge_mailbox_of(seed_byte: u8) -> String {
+    use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
+    let keypair = Ed25519KeyPair::from_seed_unchecked(&[seed_byte; 32]).unwrap();
+    hex::encode(keypair.public_key().as_ref())
 }
 
-/// A `/v2/purge` body for `recipient_id`, signed by the key whose seed is
+/// A `/v2/purge` body with `purge_token_hex`, signed by the all-zero seed key.
+pub fn signed_purge_json(purge_token_hex: &str) -> serde_json::Value {
+    signed_purge_json_by(0, purge_token_hex)
+}
+
+/// A `/v2/purge` body with `purge_token_hex`, signed by the key whose seed is
 /// 32 bytes of `seed_byte`.
-pub fn signed_purge_json_by(seed_byte: u8, recipient_id: &str) -> serde_json::Value {
+pub fn signed_purge_json_by(seed_byte: u8, purge_token_hex: &str) -> serde_json::Value {
     use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair};
     let keypair = Ed25519KeyPair::from_seed_unchecked(&[seed_byte; 32]).unwrap();
     let public_key = keypair.public_key();
@@ -156,9 +164,7 @@ pub fn signed_purge_json_by(seed_byte: u8, recipient_id: &str) -> serde_json::Va
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-
-    // v2 purge token is the recipient_id (32-byte hex) decoded to 32 bytes
-    let token_bytes = hex::decode(recipient_id).expect("recipient_id must be 64-char hex");
+    let token_bytes = hex::decode(purge_token_hex).expect("purge_token must be 64-char hex");
 
     let mut msg = Vec::new();
     msg.extend_from_slice(public_key.as_ref());
@@ -172,7 +178,9 @@ pub fn signed_purge_json_by(seed_byte: u8, recipient_id: &str) -> serde_json::Va
         "public_key": public_key_hex,
         "signature": signature,
         "timestamp": timestamp,
-        "purge_token": recipient_id,
-        "recipient_id": recipient_id,
+        "purge_token": purge_token_hex,
+        // Ignored by the relay since #944; required by the vauchi-protocol
+        // struct until the relay pins the release that drops it.
+        "recipient_id": purge_token_hex,
     })
 }

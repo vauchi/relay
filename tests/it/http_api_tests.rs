@@ -14,8 +14,8 @@ use vauchi_relay::http_api::create_v2_router;
 use vauchi_relay::storage::StoredBlob;
 
 use common::http_helpers::{
-    ax_body::Body, create_test_state, post_json, response_json, response_json_large,
-    signed_purge_json,
+    ax_body::Body, create_test_state, post_json, purge_mailbox_of, response_json,
+    response_json_large, signed_purge_json,
 };
 
 // ── Health ──
@@ -438,18 +438,18 @@ async fn test_v2_purge_deletes_all_blobs() {
     let storage = state.storage.clone();
     let app = create_v2_router(state);
 
-    let token = "d".repeat(64);
+    let mailbox = purge_mailbox_of(0);
     storage
-        .store(&token, StoredBlob::new(b"data1".to_vec()))
+        .store(&mailbox, StoredBlob::new(b"data1".to_vec()))
         .unwrap();
     storage
-        .store(&token, StoredBlob::new(b"data2".to_vec()))
+        .store(&mailbox, StoredBlob::new(b"data2".to_vec()))
         .unwrap();
 
-    let resp = post_json(&app, "/v2/purge", &signed_purge_json(&token)).await;
+    let resp = post_json(&app, "/v2/purge", &signed_purge_json(&"d".repeat(64))).await;
 
     assert_eq!(resp.status(), StatusCode::OK);
-    assert!(storage.peek(&token).is_empty());
+    assert!(storage.peek(&mailbox).is_empty());
 }
 
 // @scenario: relay_network :: Signed operations verified without a routing identity

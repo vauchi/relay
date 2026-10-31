@@ -243,3 +243,61 @@ fn test_verify_guardian_ed25519_accepts_timestamp_at_window_edge() {
     expected_hash.copy_from_slice(guardian_hash.as_ref());
     assert_eq!(result, Ok(expected_hash));
 }
+
+// ================================================================
+// Strict Ed25519: small-order keys forge every message (#944)
+// ================================================================
+
+/// The identity point as a public key, and `R = identity, S = 0` as the
+/// signature: a non-strict verifier accepts this pair for any message.
+const IDENTITY_POINT: [u8; 32] = {
+    let mut p = [0u8; 32];
+    p[0] = 1;
+    p
+};
+
+fn identity_point_signature() -> [u8; 64] {
+    let mut sig = [0u8; 64];
+    sig[..32].copy_from_slice(&IDENTITY_POINT);
+    sig
+}
+
+// @scenario: relay_network :: Invalid signature rejected by relay
+#[test]
+fn test_verify_purge_ed25519_rejects_the_identity_point_as_a_key() {
+    let result = verify::verify_purge_ed25519(
+        &IDENTITY_POINT,
+        &[0xABu8; 32],
+        &identity_point_signature(),
+        unix_now(),
+        false,
+    );
+    assert_eq!(result.unwrap_err(), "invalid purge signature");
+}
+
+// @scenario: relay_network :: Invalid signature rejected by relay
+#[test]
+fn test_verify_guardian_ed25519_rejects_the_identity_point_as_a_key() {
+    let hash = verify::guardian_hash_of(&IDENTITY_POINT);
+    let result = verify::verify_guardian_ed25519(
+        b"guardian-store",
+        &hex::encode(IDENTITY_POINT),
+        &hex::encode(hash),
+        unix_now(),
+        &hex::encode(identity_point_signature()),
+    );
+    assert_eq!(result.unwrap_err(), "invalid guardian signature");
+}
+
+// @scenario: relay_network :: Invalid signature rejected by relay
+#[test]
+fn test_verify_recovery_owner_ed25519_rejects_the_identity_point_as_a_key() {
+    let result = verify::verify_recovery_owner_ed25519(
+        &hex::encode(IDENTITY_POINT),
+        &[0x11u8; 32],
+        b"proof",
+        unix_now(),
+        &hex::encode(identity_point_signature()),
+    );
+    assert_eq!(result.unwrap_err(), "invalid recovery owner signature");
+}
