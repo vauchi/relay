@@ -1236,9 +1236,6 @@ fn handle_recovery_store_logic(state: &HttpApiState, req: V2RecoveryStoreRequest
         Ok(header) => header,
         Err(e) => return ApiResult::bad_request(e.to_string()),
     };
-    if header.key_hash() != key_hash {
-        return ApiResult::bad_request("proof is not for key_hash");
-    }
     if header.new_pk != owner {
         return ApiResult::unauthorized("owner_pk is not the proof's new key");
     }

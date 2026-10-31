@@ -2,25 +2,22 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The prefix of a Core `RecoveryProof` the relay reads before storing it
-//! (spec Social Recovery B3). Postcard writes the `version: u8`, then the
-//! transparent 32-byte `old_pk` and `new_pk` with no length prefix. The
-//! relay binds the slot and the uploader to this header and treats the
-//! rest as opaque (vauchi/private#927).
+//! The prefix of a sealed Core `RecoveryProof` the relay reads before
+//! storing it (spec Social Recovery B3): the version byte, then the 32-byte
+//! `new_pk`. Everything after is encrypted to the old key, so the relay
+//! binds the uploader to this header and learns nothing else
+//! (vauchi/private#927, #936).
 
 use std::fmt;
 
-use sha2::{Digest, Sha256};
-
 /// The only proof schema whose header the relay knows how to read.
-pub const RECOVERY_PROOF_VERSION: u8 = 2;
+pub const RECOVERY_PROOF_VERSION: u8 = 3;
 
-const HEADER_LEN: usize = 1 + 32 + 32;
+const HEADER_LEN: usize = 1 + 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecoveryProofHeader {
     pub version: u8,
-    pub old_pk: [u8; 32],
     pub new_pk: [u8; 32],
 }
 
@@ -53,20 +50,9 @@ impl RecoveryProofHeader {
         if version != RECOVERY_PROOF_VERSION {
             return Err(HeaderError::UnsupportedVersion(version));
         }
-        let mut old_pk = [0u8; 32];
-        old_pk.copy_from_slice(&proof[1..33]);
         let mut new_pk = [0u8; 32];
-        new_pk.copy_from_slice(&proof[33..65]);
-        Ok(Self {
-            version,
-            old_pk,
-            new_pk,
-        })
-    }
-
-    /// The slot this proof belongs under: SHA-256 of its old key.
-    pub fn key_hash(&self) -> [u8; 32] {
-        Sha256::digest(self.old_pk).into()
+        new_pk.copy_from_slice(&proof[1..HEADER_LEN]);
+        Ok(Self { version, new_pk })
     }
 }
 
@@ -77,35 +63,32 @@ mod tests {
 
     fn proof(version: u8, tail: &[u8]) -> Vec<u8> {
         let mut bytes = vec![version];
-        bytes.extend_from_slice(&[0x0A; 32]);
         bytes.extend_from_slice(&[0x0B; 32]);
         bytes.extend_from_slice(tail);
         bytes
     }
 
-    // @scenario: contact_recovery :: Relay refuses a recovery proof upload the new key did not sign
+    // @scenario: contact_recovery :: Relay stores recovery proof privately
     #[test]
-    fn the_header_is_the_version_then_the_old_and_new_keys() {
-        let header = RecoveryProofHeader::parse(&proof(2, b"vouchers")).unwrap();
+    fn the_header_is_the_version_then_the_new_key_and_nothing_more() {
+        let header = RecoveryProofHeader::parse(&proof(3, b"sealed body")).unwrap();
 
-        assert_eq!(header.version, 2);
-        assert_eq!(header.old_pk, [0x0A; 32]);
+        assert_eq!(header.version, 3);
         assert_eq!(header.new_pk, [0x0B; 32]);
-        let expected: [u8; 32] = Sha256::digest([0x0A; 32]).into();
-        assert_eq!(header.key_hash(), expected);
+        assert_eq!(HEADER_LEN, 33, "the relay reads 33 bytes, no old key");
     }
 
     // @scenario: contact_recovery :: Relay refuses a recovery proof upload the new key did not sign
     #[test]
     fn a_short_proof_or_another_version_does_not_parse() {
         assert_eq!(
-            RecoveryProofHeader::parse(&proof(2, b"")[..64]),
+            RecoveryProofHeader::parse(&proof(3, b"")[..32]),
             Err(HeaderError::TooShort)
         );
         assert_eq!(
-            RecoveryProofHeader::parse(&proof(3, b"")),
-            Err(HeaderError::UnsupportedVersion(3))
+            RecoveryProofHeader::parse(&proof(2, b"")),
+            Err(HeaderError::UnsupportedVersion(2))
         );
-        assert!(RecoveryProofHeader::parse(&proof(2, b"")).is_ok());
+        assert!(RecoveryProofHeader::parse(&proof(3, b"")).is_ok());
     }
 }
