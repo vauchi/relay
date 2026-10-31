@@ -17,7 +17,6 @@ use crate::common::http_helpers::create_test_state;
 use crate::common::recovery_helpers::*;
 
 const OLD: u8 = 0x10;
-const OTHER_OLD: u8 = 0x11;
 const ALICE: u8 = 0xA1;
 const MALLORY: u8 = 0xEE;
 
@@ -38,8 +37,8 @@ async fn a_second_owner_stores_a_proof_under_the_same_key_hash() {
         .collect();
     stored.sort();
     let mut expected = vec![
-        proof_bytes(OLD, ALICE, b"alice"),
-        proof_bytes(OLD, MALLORY, b"mallory"),
+        proof_bytes(ALICE, b"alice"),
+        proof_bytes(MALLORY, b"mallory"),
     ];
     expected.sort();
     assert_eq!(
@@ -55,30 +54,13 @@ async fn a_proof_whose_owner_key_is_not_its_new_key_is_refused() {
     let squat = signed_upload_of(
         MALLORY,
         &key_hash_hex(OLD),
-        &proof_bytes(OLD, ALICE, b"alice"),
+        &proof_bytes(ALICE, b"alice"),
         unix_now(),
     );
 
     let status = store(&app, &squat).await;
 
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert!(query(&app, &[key_hash_hex(OLD)]).await.is_empty());
-}
-
-// @scenario: contact_recovery :: Relay refuses a recovery proof upload the new key did not sign
-#[tokio::test]
-async fn a_proof_whose_old_key_does_not_hash_to_the_slot_is_refused() {
-    let app = create_v2_router(create_test_state());
-    let misfiled = signed_upload_of(
-        ALICE,
-        &key_hash_hex(OLD),
-        &proof_bytes(OTHER_OLD, ALICE, b""),
-        unix_now(),
-    );
-
-    let status = store(&app, &misfiled).await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(query(&app, &[key_hash_hex(OLD)]).await.is_empty());
 }
 
@@ -93,17 +75,25 @@ async fn an_unsigned_upload_is_refused() {
     assert!(query(&app, &[key_hash_hex(OLD)]).await.is_empty());
 }
 
-// @scenario: contact_recovery :: Relay refuses a recovery proof upload the new key did not sign
+// @scenario: contact_recovery :: Relay stores recovery proof privately
 #[tokio::test]
 async fn a_proof_too_short_for_its_header_or_of_another_version_is_refused() {
     let app = create_v2_router(create_test_state());
-    let short = signed_upload_of(ALICE, &key_hash_hex(OLD), &[PROOF_VERSION; 64], unix_now());
-    let mut future = proof_bytes(OLD, ALICE, b"");
+    let short = signed_upload_of(ALICE, &key_hash_hex(OLD), &[PROOF_VERSION; 32], unix_now());
+    let mut future = proof_bytes(ALICE, b"");
     future[0] = PROOF_VERSION + 1;
     let future = signed_upload_of(ALICE, &key_hash_hex(OLD), &future, unix_now());
+    let mut plain_v2 = proof_bytes(ALICE, b"old key and helpers in the clear");
+    plain_v2[0] = 2;
+    let unsealed = signed_upload_of(ALICE, &key_hash_hex(OLD), &plain_v2, unix_now());
 
     assert_eq!(store(&app, &short).await, StatusCode::BAD_REQUEST);
     assert_eq!(store(&app, &future).await, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        store(&app, &unsealed).await,
+        StatusCode::BAD_REQUEST,
+        "a version 2 proof is the plain form the relay no longer stores"
+    );
     assert!(query(&app, &[key_hash_hex(OLD)]).await.is_empty());
 }
 
@@ -133,8 +123,8 @@ async fn a_fifth_owner_under_one_key_hash_is_refused_and_the_four_kept() {
         .map(proof_data_of)
         .collect();
     assert_eq!(stored.len(), 4);
-    assert!(stored.contains(&proof_bytes(OLD, 0xA1, b"again")));
-    assert!(!stored.contains(&proof_bytes(OLD, 0xA5, b"")));
+    assert!(stored.contains(&proof_bytes(0xA1, b"again")));
+    assert!(!stored.contains(&proof_bytes(0xA5, b"")));
 }
 
 // @internal

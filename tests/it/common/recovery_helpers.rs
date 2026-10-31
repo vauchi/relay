@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Recovery-proof fixtures shaped like Core's postcard `RecoveryProof`:
-//! the version byte, the old key, the new key, then whatever follows
-//! (spec Social Recovery B3). The relay reads only that header.
+//! Recovery-proof fixtures shaped like Core's sealed `RecoveryProof`: the
+//! version byte, the new key, then whatever follows, which in production is
+//! the body encrypted to the old key (spec Social Recovery B3). The relay
+//! reads only that header; the slot is still SHA-256(old_pk).
 
 #![allow(dead_code)]
 
@@ -16,7 +17,7 @@ use serde_json::{Value, json};
 
 use super::http_helpers::{post_json, response_json};
 
-pub const PROOF_VERSION: u8 = 2;
+pub const PROOF_VERSION: u8 = 3;
 
 pub fn keypair(seed: u8) -> Ed25519KeyPair {
     Ed25519KeyPair::from_seed_unchecked(&[seed; 32]).unwrap()
@@ -43,9 +44,8 @@ pub fn key_hash_hex(old: u8) -> String {
     hex::encode(key_hash(old))
 }
 
-pub fn proof_bytes(old: u8, new: u8, tail: &[u8]) -> Vec<u8> {
+pub fn proof_bytes(new: u8, tail: &[u8]) -> Vec<u8> {
     let mut proof = vec![PROOF_VERSION];
-    proof.extend_from_slice(&public_key(old));
     proof.extend_from_slice(&public_key(new));
     proof.extend_from_slice(tail);
     proof
@@ -81,18 +81,13 @@ pub fn signed_upload_of(signer: u8, key_hash_hex: &str, proof: &[u8], timestamp:
 
 /// The honest upload: a proof from `old` to `new`, signed by `new`.
 pub fn recovery_upload(old: u8, new: u8, tail: &[u8]) -> Value {
-    signed_upload_of(
-        new,
-        &key_hash_hex(old),
-        &proof_bytes(old, new, tail),
-        unix_now(),
-    )
+    signed_upload_of(new, &key_hash_hex(old), &proof_bytes(new, tail), unix_now())
 }
 
 pub fn unsigned_upload(old: u8, new: u8, tail: &[u8]) -> Value {
     json!({
         "key_hash": key_hash_hex(old),
-        "proof_data": b64(&proof_bytes(old, new, tail)),
+        "proof_data": b64(&proof_bytes(new, tail)),
     })
 }
 

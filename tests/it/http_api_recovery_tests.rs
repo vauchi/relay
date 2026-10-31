@@ -23,7 +23,7 @@ const ALICE: u8 = 0xA1;
 #[tokio::test]
 async fn test_recovery_store_and_query_roundtrip() {
     let app = create_v2_router(create_test_state());
-    let proof = proof_bytes(OLD, ALICE, b"recovery-proof-bytes");
+    let proof = proof_bytes(ALICE, b"recovery-proof-bytes");
 
     let resp = post_json(
         &app,
@@ -71,10 +71,7 @@ async fn test_recovery_store_overwrites_existing() {
     assert_eq!(v2, 200);
     let proofs = query(&app, &[key_hash_hex(OLD)]).await;
     assert_eq!(proofs.len(), 1, "the same owner replaces its own proof");
-    assert_eq!(
-        proof_data_of(&proofs[0]),
-        proof_bytes(OLD, ALICE, b"version-2")
-    );
+    assert_eq!(proof_data_of(&proofs[0]), proof_bytes(ALICE, b"version-2"));
 }
 
 // @scenario: recovery :: store rejects invalid key hash
@@ -96,7 +93,7 @@ async fn test_recovery_store_rejects_invalid_key_hash() {
 async fn test_recovery_store_rejects_oversized_proof() {
     let app = create_v2_router(create_test_state());
     // 4097 bytes exceeds the 4 KiB limit
-    let oversized = proof_bytes(OLD, ALICE, &vec![0u8; 4097 - 65]);
+    let oversized = proof_bytes(ALICE, &vec![0u8; 4097 - 33]);
     let upload = signed_upload_of(ALICE, &key_hash_hex(OLD), &oversized, unix_now());
 
     assert_eq!(store(&app, &upload).await, 400);
@@ -215,7 +212,7 @@ async fn test_recovery_query_limit_is_independent_per_key_hash() {
 #[tokio::test]
 async fn test_recovery_store_accepts_proof_of_exactly_the_size_limit() {
     let app = create_v2_router(create_test_state());
-    let at_limit = proof_bytes(OLD, ALICE, &vec![0u8; 4096 - 65]);
+    let at_limit = proof_bytes(ALICE, &vec![0u8; 4096 - 33]);
     let upload = signed_upload_of(ALICE, &key_hash_hex(OLD), &at_limit, unix_now());
 
     assert_eq!(store(&app, &upload).await, 200);

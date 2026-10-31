@@ -106,7 +106,7 @@ async fn a_purge_keeps_proofs_another_identity_owns() {
         .into_iter()
         .map(|p| p.proof_data)
         .collect();
-    assert_eq!(kept, vec![proof_bytes(OLD_3, MALLORY, b"m")]);
+    assert_eq!(kept, vec![proof_bytes(MALLORY, b"m")]);
 }
 
 // @scenario: privacy_compliance:The relay erases my recovery data on purge
@@ -180,15 +180,14 @@ async fn an_upload_whose_owner_signature_does_not_verify_is_not_stored() {
     let state = create_test_state();
     let proofs = state.recovery_storage.clone();
     let app = create_v2_router(state);
-    let proof = proof_bytes(OLD_1, ALICE, b"");
+    let proof = proof_bytes(ALICE, b"");
     let slot = key_hash_hex(OLD_1);
     let mut signed_by_mallory = signed_upload_of(MALLORY, &slot, &proof, unix_now());
     signed_by_mallory["owner_pk"] = json!(hex::encode(public_key(ALICE)));
     let stale = signed_upload_of(ALICE, &slot, &proof, unix_now() - 3600);
     let mut other_proof = signed_upload_of(ALICE, &slot, &proof, unix_now());
-    other_proof["proof_data"] = json!(
-        base64::engine::general_purpose::STANDARD.encode(proof_bytes(OLD_1, ALICE, b"swapped"))
-    );
+    other_proof["proof_data"] =
+        json!(base64::engine::general_purpose::STANDARD.encode(proof_bytes(ALICE, b"swapped")));
 
     for body in [signed_by_mallory, stale, other_proof] {
         let response = post_json(&app, "/v2/recovery/store", &body).await;
@@ -249,8 +248,8 @@ async fn another_owner_sits_beside_my_proof_and_only_i_replace_mine() {
     );
 
     let mut expected = vec![
-        (public_key(ALICE), proof_bytes(OLD_1, ALICE, b"a2")),
-        (public_key(MALLORY), proof_bytes(OLD_1, MALLORY, b"m")),
+        (public_key(ALICE), proof_bytes(ALICE, b"a2")),
+        (public_key(MALLORY), proof_bytes(MALLORY, b"m")),
     ];
     expected.sort();
     assert_eq!(by_owner(proofs.get(&key_hash(OLD_1))), expected);
