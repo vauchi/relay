@@ -1314,7 +1314,10 @@ fn handle_recovery_query_logic(state: &HttpApiState, req: V2RecoveryQueryRequest
     ApiResult::ok(serde_json::json!({ "status": "ok", "proofs": proofs }))
 }
 
-/// Individual entry size limit (padded to 184, but allow some margin).
+/// One sealed guardian token: a 32-byte ephemeral key, a 24-byte nonce, the
+/// postcard token (129 bytes, 133 once the timestamp varint needs five) and
+/// a 16-byte tag, so 205 today; nothing pads it (vauchi/private#929). Nine
+/// of them stay under `MAX_GUARDIAN_TOTAL_SIZE`.
 const MAX_GUARDIAN_ENTRY_SIZE: usize = 256;
 
 fn handle_guardian_store_logic(state: &HttpApiState, req: V2GuardianStoreRequest) -> ApiResult {
