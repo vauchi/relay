@@ -147,6 +147,29 @@ fn duplicate_put_returns_already_exists() {
     assert_eq!(resp, EscrowResponse::AlreadyExists);
 }
 
+// A client resends a deposit when the OHTTP relay answers 502, which it also
+// does after the deposit was stored; the resend must not cost the link
+// (vauchi/private#727).
+// @internal
+#[test]
+fn a_resent_identical_put_is_stored_once() {
+    let store = EscrowStore::new(100);
+    store.handle(make_put(&gate_hash(), &slot_init(), &small_blob(), 3600));
+
+    let resp = store.handle(make_put(&gate_hash(), &slot_init(), &small_blob(), 3600));
+
+    assert_eq!(resp, EscrowResponse::Stored);
+    assert_eq!(
+        store.handle(make_count(&gate_hash())),
+        EscrowResponse::Count { count: 1 }
+    );
+    store.handle(make_put(&gate_hash(), &slot_resp(), "cmVzcA==", 3600));
+    assert_eq!(
+        store.handle(make_get(&gate_hash(), &slot_resp())),
+        EscrowResponse::Blob { blob: small_blob() }
+    );
+}
+
 // ================================================================
 // Gate full
 // ================================================================
