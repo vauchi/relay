@@ -110,9 +110,16 @@ impl EscrowStore {
                 gates.remove(&gate_hash);
                 // Fall through to create new gate below.
             } else {
-                // Check for duplicate slot.
-                if gate.slots.iter().any(|s| s.slot_hash == slot_hash) {
-                    return EscrowResponse::AlreadyExists;
+                if let Some(existing) = gate.slots.iter().find(|s| s.slot_hash == slot_hash) {
+                    // The same deposit again is a client resending after a
+                    // 502 the OHTTP relay also gives once a put was stored;
+                    // only a different blob is a second depositor (#942,
+                    // vauchi/private#727).
+                    return if existing.blob == blob {
+                        EscrowResponse::Stored
+                    } else {
+                        EscrowResponse::AlreadyExists
+                    };
                 }
                 // Check gate capacity.
                 if gate.slots.len() >= MAX_SLOTS_PER_GATE as usize {
