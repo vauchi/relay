@@ -64,4 +64,10 @@ skip-tree = []
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://gitlab.com/vauchi/core.git"]
+allow-git = [
+    "https://gitlab.com/vauchi/contract.git",
+    "https://gitlab.com/vauchi/core.git",
+    "https://gitlab.com/vauchi/relay.git",
+    "https://gitlab.com/vauchi/utils/rqrr.git",
+    "https://gitlab.com/vauchi/utils/spake2.git",
+]
