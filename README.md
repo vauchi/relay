@@ -133,8 +133,8 @@ All endpoints above are also routable via OHTTP for IP privacy.
 
 ## Operational Capabilities
 
-Everything listed below is **implemented and tested**
-— not planned.
+Everything listed below is **implemented and tested**, except where a
+step says it is not yet (federation steps 5 and 6).
 
 ### Endpoints
 
