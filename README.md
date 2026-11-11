@@ -27,11 +27,13 @@ The relay server is an oblivious privacy-preserving message broker. It:
 - Stores encrypted messages for offline recipients
 - Automatically expires old messages (120 days default)
 - Rate limits clients to prevent abuse
-- Federates with peer relays for redundancy
+- Can offload old blobs to a peer relay over mTLS (off by default;
+  clients cannot yet retrieve offloaded blobs)
 
 **Privacy**: The server only sees encrypted blobs.
-It cannot read message contents, identify contacts,
-or access any user data.
+It cannot read message contents. It sees mailbox
+tokens, blob sizes and times, and the identity key on
+purge, recovery and guardian requests.
 
 ## Installation
 
@@ -221,11 +223,12 @@ rolling upgrade, and rollback procedures.
 
 ## Federation
 
-The relay supports static federation with peer relays
-for redundancy and scalability. When storage exceeds a
-configurable threshold (default 80%), the relay offloads
-its oldest blobs to peer relays and stores forwarding
-hints so clients can find their data.
+The relay supports static federation with peer relays.
+When storage exceeds a configurable threshold (default
+80%), the relay offloads its oldest blobs to a peer
+relay and stores a forwarding hint. Clients cannot
+follow that hint yet (vauchi/private#835), so an
+offloaded blob does not reach its recipient today.
 
 ### How It Works
 
@@ -234,14 +237,14 @@ hints so clients can find their data.
 2. When over the offload threshold, the relay POSTs blobs
    to peers over mTLS-HTTP (`/v2/federation/message`)
 3. When storage exceeds the offload threshold, the
-   `OffloadManager` sends blobs to peers with
-   available capacity
+   `OffloadManager` sends blobs to the first
+   configured peer
 4. Source relay stores forwarding hints
    (routing_id to peer relay mapping)
-5. When clients connect, they receive forwarding hints
-   alongside any pending blobs
-6. Clients follow hints to retrieve offloaded blobs
-   from peer relays
+5. The relay stores the hint, but `/v2/fetch` does
+   not return it yet
+6. Clients cannot follow hints yet; an offloaded blob
+   is unreachable to its recipient (vauchi/private#835)
 
 ### Example: Two-Relay Setup
 
