@@ -110,4 +110,35 @@ else
     failures=$((failures + 1))
 fi
 
+mutation_job=$(job_block mutation:nightly)
+if printf '%s\n' "$mutation_job" | grep -q '^    MUTATION_SHARDS: "4"$'; then
+    echo "PASS: mutation:nightly rotates through four nightly shards"
+else
+    echo "FAIL: mutation:nightly must set MUTATION_SHARDS to 4" >&2
+    failures=$((failures + 1))
+fi
+
+if printf '%s\n' "$mutation_job" | grep -q '^  timeout:'; then
+    echo "FAIL: mutation:nightly must inherit the template's bounded timeout" >&2
+    failures=$((failures + 1))
+else
+    echo "PASS: mutation:nightly inherits the template timeout"
+fi
+
+scripts_ref=$(sed -n 's/^    ref: \(ci-templates-v[0-9][0-9.]*\)$/\1/p' "$ci_config")
+runtime_ref=$(sed -n 's/^  VAUCHI_SCRIPTS_REF: "\([^"]*\)"$/\1/p' "$ci_config")
+version=${scripts_ref#ci-templates-v}
+year=${version%%.*}
+remainder=${version#*.}
+month=${remainder%%.*}
+day=${remainder#*.}
+if [ "$scripts_ref" = "$runtime_ref" ] &&
+    [ "$scripts_ref" != "$version" ] &&
+    [ "$year$month$day" -ge 20261116 ] 2>/dev/null; then
+    echo "PASS: the pinned scripts template supports mutation shards"
+else
+    echo "FAIL: both scripts refs must name ci-templates-v2026.11.16 or newer" >&2
+    failures=$((failures + 1))
+fi
+
 [ "$failures" -eq 0 ]
