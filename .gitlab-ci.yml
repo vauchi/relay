@@ -309,8 +309,8 @@ mutation:nightly:
   before_script:
     - !reference [.self-hosted, before_script]
     - !reference [.git-credentials, before_script]
-  timeout: 12h
   variables:
+    MUTATION_SHARDS: "4"
     # 120s accommodates test_connect_with_tls_invalid_host (~60s TCP timeout to non-routable IP)
     MUTATION_TIMEOUT_NIGHTLY: "120"
 
