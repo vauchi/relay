@@ -390,3 +390,16 @@ fn a_record_of_the_wrong_size_or_class_is_refused() {
         .expect("published");
     assert_eq!(notices.records, 0, "content records go to their own batch");
 }
+
+// The notice core writes 80 notices and 5 content records in a background
+// session and 40 and 2 in an open-app tick (protocol section 8); the
+// relay's quota must take exactly those.
+// @internal
+#[test]
+fn the_alpha_quota_takes_the_slots_a_session_writes() {
+    let limits = CohortLimits::alpha();
+    assert_eq!(limits.slots(Tier::Background, SizeClass::Notice), 80);
+    assert_eq!(limits.slots(Tier::Background, SizeClass::Content), 5);
+    assert_eq!(limits.slots(Tier::Fast, SizeClass::Notice), 40);
+    assert_eq!(limits.slots(Tier::Fast, SizeClass::Content), 2);
+}
