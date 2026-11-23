@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 pub mod cohort;
+pub mod cohort_api;
 pub mod config;
 pub mod connection_limit;
 pub mod content_proxy;

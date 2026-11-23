@@ -52,6 +52,7 @@ fn test_state() -> HttpApiState {
         guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
         forwarding_hints: Arc::new(SqliteForwardingHintStore::in_memory().unwrap()),
         content_proxy: None,
+        cohort_store: None,
     }
 }
 
@@ -81,6 +82,7 @@ fn test_state_strict_rate_limit() -> HttpApiState {
         guardian_storage: Arc::new(SqliteGuardianStore::in_memory().unwrap()),
         forwarding_hints: Arc::new(SqliteForwardingHintStore::in_memory().unwrap()),
         content_proxy: None,
+        cohort_store: None,
     }
 }
 

@@ -271,6 +271,7 @@ mod middleware {
                 vauchi_relay::forwarding_hints::SqliteForwardingHintStore::in_memory().unwrap(),
             ),
             content_proxy: None,
+            cohort_store: None,
         }
     }
 
@@ -585,6 +586,7 @@ mod adversarial {
                 vauchi_relay::forwarding_hints::SqliteForwardingHintStore::in_memory().unwrap(),
             ),
             content_proxy: None,
+            cohort_store: None,
         }
     }
 

@@ -189,6 +189,10 @@ impl CohortStore {
         })
     }
 
+    pub fn period_seconds(&self, tier: Tier) -> u64 {
+        tier.period_seconds(&self.limits)
+    }
+
     pub fn register(&self, cohort: u32, device: &DeviceKey) -> Result<(), Refused> {
         let connection = self.connection.lock();
         if member(&connection, cohort, device)? {

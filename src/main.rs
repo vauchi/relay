@@ -605,6 +605,9 @@ async fn main() {
                     .map_err(|e| warn!("RELAY_CONTENT_ORIGIN '{origin}': {e}; no content proxy"))
                     .ok()
                 }),
+            // Mailbox cohorts are an executable specification until
+            // ADR-081 is accepted: no deployment serves them.
+            cohort_store: None,
         };
 
         #[cfg(feature = "e2e-test-clock")]

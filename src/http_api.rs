@@ -81,6 +81,9 @@ pub struct HttpApiState {
     /// Serves CDN content over OHTTP (vauchi/private#733 D11); `None`
     /// answers the `content` action with an error.
     pub content_proxy: Option<Arc<crate::content_proxy::ContentProxy>>,
+    /// Mailbox cohorts (ADR-081, proposed); `None` answers the cohort
+    /// actions with `not_enabled`, as every deployment does for now.
+    pub cohort_store: Option<Arc<crate::cohort::CohortStore>>,
 }
 
 /// Envelope used inside an OHTTP request body.
@@ -675,6 +678,14 @@ async fn dispatch_ohttp_action(
     action: &str,
     payload: serde_json::Value,
 ) -> serde_json::Value {
+    if crate::cohort_api::is_cohort_action(action) {
+        return crate::cohort_api::cohort_action(
+            state.cohort_store.as_deref(),
+            action,
+            payload,
+            (state.unix_clock)(),
+        );
+    }
     match action {
         "content" => {
             crate::content_proxy::content_action(state.content_proxy.as_deref(), payload).await
