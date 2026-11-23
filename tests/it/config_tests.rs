@@ -794,3 +794,30 @@ fn the_content_origin_defaults_to_the_cdn_and_can_be_changed_or_turned_off() {
     );
     assert_eq!(off.http_api.content_origin, None);
 }
+
+/// Mailbox cohorts (ADR-081, proposed) are off unless the operator names a
+/// store; the end-to-end test turns them on (vauchi/private#1281).
+// @internal
+#[test]
+fn the_cohort_store_is_off_unless_named() {
+    use vauchi_relay::config::CohortStoreSetting;
+    let named = |value: &str| {
+        RelayConfig::from_map(&HashMap::from([(
+            "RELAY_COHORT_STORE".to_string(),
+            value.to_string(),
+        )]))
+        .0
+        .http_api
+        .cohort_store
+    };
+    let (default, _) = RelayConfig::from_map(&HashMap::new());
+    assert_eq!(default.http_api.cohort_store, None);
+    assert_eq!(named(""), None);
+    assert_eq!(named("memory"), Some(CohortStoreSetting::Memory));
+    assert_eq!(
+        named("/var/lib/vauchi/cohorts.db"),
+        Some(CohortStoreSetting::File(
+            "/var/lib/vauchi/cohorts.db".into()
+        ))
+    );
+}
