@@ -5,6 +5,7 @@
 //! Consolidated integration test binary for vauchi-relay.
 
 #[allow(dead_code)]
+mod cohort_batch_tests;
 mod common;
 mod config_tests;
 mod content_proxy_tests;
