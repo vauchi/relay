@@ -83,15 +83,16 @@ pub struct CohortLimits {
 impl CohortLimits {
     /// Alpha and beta (owner, 2026-11-18 to 2026-11-22): one cohort of at
     /// most 330 devices; a one-minute tick of 40 notice and 2 content
-    /// slots; a background session of 80 notice slots. The background
-    /// period and its content slots wait on questions 1 and 12.
+    /// slots; a background session of 80 notice and 5 content slots, as
+    /// the notice core writes them (protocol section 8). The background
+    /// period waits on question 1.
     pub fn alpha() -> Self {
         Self {
             devices: 330,
             fast_period_seconds: 60,
             background_period_seconds: 4 * 3_600,
             fast_slots: [40, 2],
-            background_slots: [80, 4],
+            background_slots: [80, 5],
         }
     }
 
