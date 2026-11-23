@@ -43,6 +43,29 @@ use vauchi_relay::startup;
 use vauchi_relay::storage::{BlobStore, StorageBackend, create_blob_store};
 
 // TODO(PFC): main() is a monolithic side-effect orchestrator — see 2026-07-06-relay-pfc-violations R1
+fn open_cohort_store(
+    setting: Option<&vauchi_relay::config::CohortStoreSetting>,
+) -> Option<std::sync::Arc<vauchi_relay::cohort::CohortStore>> {
+    use vauchi_relay::cohort::{CohortLimits, CohortStore};
+    use vauchi_relay::config::CohortStoreSetting;
+    let opened = match setting? {
+        CohortStoreSetting::Memory => CohortStore::in_memory(CohortLimits::alpha()),
+        CohortStoreSetting::File(path) => CohortStore::open(path, CohortLimits::alpha()),
+    };
+    match opened {
+        Ok(store) => {
+            warn!(
+                "RELAY_COHORT_STORE is set: serving mailbox cohorts (ADR-081, proposed; not for deployment)"
+            );
+            Some(std::sync::Arc::new(store))
+        }
+        Err(e) => {
+            warn!("RELAY_COHORT_STORE: {e}; no cohort store");
+            None
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     // Initialize logging. With the `flame` feature, swap in a tracing-flame
@@ -606,8 +629,9 @@ async fn main() {
                     .ok()
                 }),
             // Mailbox cohorts are an executable specification until
-            // ADR-081 is accepted: no deployment serves them.
-            cohort_store: None,
+            // ADR-081 is accepted: off unless RELAY_COHORT_STORE names a
+            // store, which only the end-to-end test does.
+            cohort_store: open_cohort_store(config.http_api.cohort_store.as_ref()),
         };
 
         #[cfg(feature = "e2e-test-clock")]

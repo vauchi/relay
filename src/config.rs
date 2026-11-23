@@ -222,6 +222,18 @@ pub struct HttpApiConfig {
     /// The CDN origin the OHTTP `content` action proxies
     /// (vauchi/private#733 D11). `RELAY_CONTENT_ORIGIN`; empty turns it off.
     pub content_origin: Option<String>,
+    /// Where mailbox cohorts are kept (ADR-081, proposed;
+    /// vauchi/private#1281). `RELAY_COHORT_STORE`: unset or empty is off,
+    /// `memory` or a file path is on. Off in every deployment until
+    /// ADR-081 is accepted; it exists for the end-to-end test.
+    pub cohort_store: Option<CohortStoreSetting>,
+}
+
+/// Where the relay keeps mailbox cohorts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CohortStoreSetting {
+    Memory,
+    File(PathBuf),
 }
 
 impl Default for HttpApiConfig {
@@ -240,6 +252,7 @@ impl Default for HttpApiConfig {
             exchange_max_offers: 10_000,
             exchange_default_ttl_secs: 300, // 5 minutes
             content_origin: Some("https://cdn.vauchi.app/v1".to_string()),
+            cohort_store: None,
         }
     }
 }
@@ -600,6 +613,14 @@ impl RelayConfig {
 
         if let Some(val) = vars.get("RELAY_CONTENT_ORIGIN") {
             config.http_api.content_origin = (!val.is_empty()).then(|| val.clone());
+        }
+
+        if let Some(val) = vars.get("RELAY_COHORT_STORE") {
+            config.http_api.cohort_store = match val.as_str() {
+                "" => None,
+                "memory" => Some(CohortStoreSetting::Memory),
+                path => Some(CohortStoreSetting::File(PathBuf::from(path))),
+            };
         }
 
         if let Some(val) = vars.get("RELAY_OHTTP_GATEWAY_ADDR") {
