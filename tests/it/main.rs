@@ -6,6 +6,7 @@
 
 #[allow(dead_code)]
 mod cohort_batch_tests;
+mod cohort_ohttp_tests;
 mod common;
 mod config_tests;
 mod content_proxy_tests;
