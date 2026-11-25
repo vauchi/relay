@@ -215,10 +215,6 @@ criteria = "safe-to-deploy"
 version = "0.3.17"
 criteria = "safe-to-deploy"
 
-[[exemptions.minimal-lexical]]
-version = "0.2.1"
-criteria = "safe-to-run"
-
 [[exemptions.miniz_oxide]]
 version = "0.9.1"
 criteria = "safe-to-deploy"

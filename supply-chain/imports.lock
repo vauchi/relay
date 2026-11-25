@@ -772,6 +772,12 @@ criteria = "safe-to-deploy"
 delta = "0.1.0 -> 0.2.0"
 notes = "Some unsafe code, but not more than before. Nothing awry."
 
+[[audits.bytecode-alliance.audits.minimal-lexical]]
+who = "Adam Bratschi-Kaye <ark.email@gmail.com>"
+criteria = "safe-to-run"
+version = "0.2.1"
+notes = "No build scripts, no I/O operations. Inline assembly is just for FP precision settings and unsafe code is just for improved performance."
+
 [[audits.bytecode-alliance.audits.percent-encoding]]
 who = "Alex Crichton <alex@alexcrichton.com>"
 criteria = "safe-to-deploy"
