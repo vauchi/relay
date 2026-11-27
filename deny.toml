@@ -65,14 +65,14 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
-    "https://gitlab.com/vauchi/cli.git",
+    "https://gitlab.com/vauchi/cli-display.git",
     "https://gitlab.com/vauchi/contract.git",
     "https://gitlab.com/vauchi/core.git",
     "https://gitlab.com/vauchi/gtk-display.git",
     "https://gitlab.com/vauchi/linux-hw.git",
     "https://gitlab.com/vauchi/qt-display.git",
     "https://gitlab.com/vauchi/relay.git",
-    "https://gitlab.com/vauchi/tui.git",
+    "https://gitlab.com/vauchi/tui-display.git",
     "https://gitlab.com/vauchi/utils/rqrr.git",
     "https://gitlab.com/vauchi/utils/spake2.git",
 ]
